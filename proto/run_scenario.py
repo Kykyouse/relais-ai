@@ -120,6 +120,40 @@ SCENARIOS = {
         "attendu": {"score": 1, "categorie": "prioritaire", "rdv": False,
                      "texte_agent": "je peux tout organiser pour vous"},
     },
+    "R09_commune_sans_cp": {
+        # amélioration (cas "Juvisy" trouvé par Geoffrey) : l'appelant donne sa VILLE,
+        # pas son CP — les communes de la zone sont résolues sans redemander.
+        "lignes": [
+            "fuite urgente, ça coule",
+            "Je suis à Saint-Maur",
+            "Garcia, 06 12 34 56 78",
+            "Oui",
+            "Le premier",
+        ],
+        "attendu": {"score": 5, "categorie": "rdv_reserve", "rdv": True, "cp": "94100"},
+    },
+    "R10_commune_inconnue_demande_cp": {
+        # une commune hors table (Juvisy) → on demande le CP, puis refus hors zone propre.
+        "lignes": [
+            "Bonjour, je voudrais un devis pour une pompe à chaleur",
+            "Juvisy-sur-Orge",
+            "91260",
+        ],
+        "attendu": {"score": 0, "categorie": "hors_zone", "rdv": False, "cp": "91260"},
+    },
+    "R11_dispo_samedi_respectee": {
+        # bug T03-LLM : le client dit "que le samedi matin", l'agent proposait lundi/mardi.
+        # Les créneaux proposés doivent respecter les disponibilités exprimées.
+        "lignes": [
+            "Je veux un entretien de chaudière, mais uniquement le samedi matin",
+            "Nogent 94130",
+            "Diallo, 07 88 11 22 33",
+            "Oui",
+            "Le premier",
+        ],
+        "attendu": {"score": 4, "categorie": "rdv_reserve", "rdv": True,
+                     "texte_agent": "samedi"},
+    },
     "T11_refus_numero": {
         "lignes": [
             "Bonjour, j'ai une petite fuite au robinet de la cuisine",

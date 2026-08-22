@@ -18,7 +18,8 @@ import sys
 
 try:
     from dotenv import load_dotenv
-    load_dotenv(pathlib.Path(__file__).resolve().parent.parent / ".env")
+    # override=True : le .env du repo fait foi (une variable Windows résiduelle ne le masque pas)
+    load_dotenv(pathlib.Path(__file__).resolve().parent.parent / ".env", override=True)
 except ImportError:
     pass
 

@@ -42,6 +42,11 @@ class Conversation:
             "nom_entreprise": self.cfg["entreprise"]["nom"],
             "prestations": self.cfg["prestations"]["couvertes"],
             "dernier_tour": self.transcript[-1][1] if self.transcript else "",
+            # contexte pour l'EXTRACTEUR : sans ça, il ne peut pas comprendre
+            # "le matin entre 8h et 10h" comme le choix de la proposition n°1 (bug R09-LLM)
+            "dernier_agent": next((t for w, t in reversed(self.transcript)
+                                   if w == "agent"), ""),
+            "propositions": [s["label"] for s in self._proposes],
         }
 
     def _dernier_client(self) -> str:
@@ -51,17 +56,22 @@ class Conversation:
         tel = self.slots["telephone_rappel"] or ""
         return " ".join(tel[i:i + 2] for i in range(0, len(tel), 2))
 
-    def _say(self, instruction: str) -> str:
+    def _say(self, instruction: str, verbatim: bool = False) -> str:
         # consigne sécurité en attente (ex. "coupez l'eau") : ne JAMAIS la perdre,
         # même quand la conversation saute des étapes (tout donné d'un coup)
         prefix = self.flags.pop("pending_prefix", "")
         if prefix:
             instruction = prefix + instruction
-        texte = self.llm.reply(instruction, self._ctx)
+        # verbatim : phrases critiques (réservation, promesse de rappel) prononcées
+        # telles quelles — le formuleur n'a pas le droit de réécrire une date ou un engagement
+        texte = instruction if verbatim else self.llm.reply(instruction, self._ctx)
         violations = check_output(texte, self.cfg)
         if violations:
             self.flags["violations"].extend(violations)
-            texte = safe_fallback(violations, self.cfg)
+            # repli = l'instruction du contrôleur elle-même (sûre par construction),
+            # pas une phrase générique hors sujet — sauf si elle est elle-même fautive
+            texte = instruction if not check_output(instruction, self.cfg) \
+                else safe_fallback(violations, self.cfg)
         self.transcript.append(("agent", texte))
         return texte
 
@@ -114,6 +124,7 @@ class Conversation:
 
         extracted = self.llm.extract(user_text, self._ctx)
         self._merge(extracted)
+        self._resoudre_commune(user_text)  # "je suis à Saint-Maur" → CP sans redemander
 
         # correction de commune en cours d'appel : revalider la zone immédiatement
         if extracted.get("code_postal") and self.flags["zone"] is not None:
@@ -171,6 +182,40 @@ class Conversation:
             return self._s2({})
         return self._say("Vous êtes sur quelle commune ?")
 
+    @staticmethod
+    def _normalise(texte: str) -> str:
+        import unicodedata
+        t = unicodedata.normalize("NFD", texte.lower())
+        t = "".join(c for c in t if unicodedata.category(c) != "Mn")  # sans accents
+        return t.replace("-", " ")
+
+    def _resoudre_commune(self, texte: str) -> None:
+        """Reconnaît une commune de la zone (couverte ou limitrophe) citée dans la phrase
+        et en déduit le CP — l'appelant donne sa ville, pas son code postal (cas Juvisy).
+        Commune inconnue de la table = on demandera le CP, comportement inchangé.
+        Déterministe, dans le contrôleur : marche aussi en mode dégradé."""
+        if self.slots["code_postal"] is not None:
+            return
+        phrase = " " + self._normalise(texte) + " "
+        # noms les plus longs d'abord ("le perreux sur marne" avant "perreux")
+        for nom, cp in sorted(self.cfg["zone"].get("communes", {}).items(),
+                              key=lambda kv: -len(kv[0])):
+            if " " + self._normalise(nom) + " " in phrase:
+                self.slots["commune"] = nom
+                self.slots["code_postal"] = cp
+                return
+
+    JOURS_SEMAINE = {"lundi": 0, "mardi": 1, "mercredi": 2, "jeudi": 3,
+                     "vendredi": 4, "samedi": 5, "dimanche": 6}
+
+    def _contraintes_dispo(self) -> tuple[set[int] | None, str | None]:
+        """Contraintes de créneaux tirées des disponibilités exprimées par l'appelant."""
+        d = self._normalise(self.slots.get("disponibilites") or "")
+        jours = {n for nom, n in self.JOURS_SEMAINE.items() if nom in d} or None
+        moment = ("matin" if "matin" in d
+                  else "apres_midi" if ("apres midi" in d or "aprem" in d) else None)
+        return jours, moment
+
     def _zone_de(self, cp: str | None) -> str:
         zone = self.cfg["zone"]
         if cp in zone["codes_postaux"]:
@@ -206,6 +251,20 @@ class Conversation:
             return self._say("Très bien. À quel nom, et sur quel numéro "
                              f"{self._prenom} peut vous confirmer le rendez-vous ?")
         if self.slots["telephone_rappel"] is None:
+            # une QUESTION (prix...) n'est pas un REFUS : on y répond avec la liste
+            # blanche et on redemande, sans consommer le quota (bug T05-LLM : Katz
+            # posait des questions de prix et perdait son RDV)
+            if ex.get("question_prix"):
+                self.flags["questions_prix"] = self.flags.get("questions_prix", 0) + 1
+                if self.flags["questions_prix"] <= 2:
+                    dep = next((t["phrase"] for t in self.cfg["tarifs"]["communicables"]
+                                if t["libelle"] == "deplacement_diagnostic"), None)
+                    prix = (dep + " Pour le reste, ça dépendra de ce que "
+                            f"{self._prenom} constatera sur place.") if dep else (
+                        f"Ça dépend de ce que {self._prenom} constatera sur place — "
+                        "je ne veux pas vous annoncer un chiffre faux.")
+                    return self._say(prix + " Et pour organiser son passage, "
+                                     "quel est votre numéro ?")
             # numéro incomplet ? (des chiffres, mais pas un numéro FR valide)
             # — en excluant un code postal donné dans la même phrase (bug B : "94000")
             import re as _re
@@ -229,7 +288,8 @@ class Conversation:
             nouveau = ex.get("telephone_rappel")
             if nouveau and nouveau != self.slots["telephone_rappel"]:
                 self.slots["telephone_rappel"] = nouveau
-                return self._say(f"Je répète votre numéro : {self._tel_espace()}. C'est bien ça ?")
+                return self._say(f"Je répète votre numéro : {self._tel_espace()}. "
+                                 f"C'est bien ça ?", verbatim=True)  # chiffres jamais réécrits
             if ex.get("confirme") is True:
                 self.slots["tel_confirme"] = True
             elif ex.get("confirme") is False:
@@ -237,7 +297,8 @@ class Conversation:
                 self.slots["telephone_rappel"] = None
                 return self._say("Au temps pour moi — redonnez-moi le bon numéro ?")
             else:
-                return self._say(f"Je répète votre numéro : {self._tel_espace()}. C'est bien ça ?")
+                return self._say(f"Je répète votre numéro : {self._tel_espace()}. "
+                                 f"C'est bien ça ?", verbatim=True)  # chiffres jamais réécrits
         self.state = State.S5_CRENEAU
         return self._s5({})
 
@@ -249,13 +310,26 @@ class Conversation:
                 choix = 1
             if choix and choix <= len(self._proposes):
                 return self._reserver(self._proposes[choix - 1])
+        # "rien de plus tôt ?" n'est PAS un rejet : on re-propose le PREMIER créneau,
+        # on n'avance pas dans le calendrier (bug T01/R09-LLM : la cliente voulait
+        # plus tôt, on lui proposait plus tard et lundi disparaissait)
+        if ex.get("veut_plus_tot") and self._proposes:
+            self.flags["tours_creneaux"] += 1
+            if self.flags["tours_creneaux"] <= 2:
+                return self._say(
+                    f"Je n'ai malheureusement rien de plus tôt : le premier créneau "
+                    f"disponible est {self._proposes[0]['label']}. "
+                    f"Voulez-vous que je vous le réserve ?")
         # (re)proposer — max 2 tours (invariant 6)
         if self.flags["tours_creneaux"] >= 2:
             return self._sans_rdv()
         urgent = bool(self.slots["urgence_reelle"]) and self.slots["intent"] == "urgence"
+        # respecter les disponibilités exprimées ("que le samedi matin" — bug T03-LLM)
+        jours, moment = self._contraintes_dispo()
         # 2e tour = créneaux SUIVANTS, jamais les mêmes reproposés
         self._proposes = self.cal.get_slots(self.slots["prestation"], urgent, n=2,
-                                            skip=2 * self.flags["tours_creneaux"])
+                                            skip=2 * self.flags["tours_creneaux"],
+                                            jours=jours, moment=moment)
         self.flags["tours_creneaux"] += 1
         if not self._proposes:
             return self._sans_rdv()
@@ -278,7 +352,8 @@ class Conversation:
         texte = self._say(
             f"Parfait, je vous réserve {slot['label']}. Vous recevrez un SMS de "
             f"confirmation de {self._prenom} d'ici {delai} {heures}. "
-            f"Si quoi que ce soit coince, on vous rappelle. Bonne journée !")
+            f"Si quoi que ce soit coince, on vous rappelle. Bonne journée !",
+            verbatim=True)  # LA phrase du script : date et engagement jamais réécrits
         self.state = State.S11_CLOTURE
         return texte
 
@@ -287,7 +362,8 @@ class Conversation:
         promesse = self.cfg["accueil"]["promesse_rappel"]["ouvree"]
         texte = self._say(
             f"Je transmets tout ça à {self._prenom} dès qu'il sort d'intervention — "
-            f"il vous rappelle {promesse}. Bonne journée !")
+            f"il vous rappelle {promesse}. Bonne journée !",
+            verbatim=True)  # promesse de rappel : engagement jamais réécrit
         self.state = State.S11_CLOTURE
         return texte
 

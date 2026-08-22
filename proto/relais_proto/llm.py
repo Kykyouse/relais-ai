@@ -26,9 +26,17 @@ Réponds UNIQUEMENT un objet JSON avec les clés présentes dans la phrase (omet
 - disponibilites: contraintes de dispo si exprimées
 - danger_gaz: true si odeur/fuite de gaz évoquée
 - confirme: true/false si la phrase est une confirmation/refus de ce que l'agent vient de proposer
-- creneau_choisi: 1 ou 2 si l'appelant choisit une des propositions
+- creneau_choisi: 1 ou 2 si l'appelant choisit une des propositions en cours
+- veut_plus_tot: true si l'appelant demande un créneau PLUS TÔT que les propositions
+- question_prix: true si l'appelant demande un prix, un tarif ou une fourchette
 - veut_humain: true si l'appelant demande à parler à un humain/au patron
-Ne déduis rien qui ne soit pas dans la phrase."""
+Ne déduis rien qui ne soit pas dans la phrase.
+
+Contexte de la conversation :
+- L'agent vient de dire : "{dernier_agent}"
+- Propositions de créneaux en cours : {propositions}
+Si la phrase de l'appelant désigne une des propositions (par son heure, son jour ou
+son rang — "le matin", "plutôt lundi", "le premier"), renvoie creneau_choisi (1 ou 2)."""
 
 REPLY_SYSTEM = """Tu es l'assistant vocal de {nom_entreprise} ({metier}), au téléphone.
 Tu parles pour un appel VOCAL : phrases courtes, chaleureuses, naturelles. UNE seule question à la fois.
@@ -37,6 +45,9 @@ Règles absolues :
 - Jamais de diagnostic technique. Jamais "c'est confirmé".
 - Ne promets rien qui n'est pas dans l'instruction : n'annonce JAMAIS un rappel,
   une transmission ou un rendez-vous que l'instruction ne contient pas explicitement.
+- Si l'instruction PROPOSE des créneaux, présente-les comme des propositions et pose la
+  question — ne dis jamais "c'est noté" ou "c'est réservé" à la place d'une proposition.
+- Recopie les dates et horaires EXACTEMENT tels que l'instruction les donne.
 Instruction du contrôleur (mets-la en mots naturellement, sans rien ajouter d'engageant) :
 {instruction}"""
 
@@ -90,6 +101,10 @@ class MockLLM:
             out["creneau_choisi"] = 2
         if any(w in u for w in ["un humain", "quelqu'un", "le patron", "parler à julien"]):
             out["veut_humain"] = True
+        if any(w in u for w in ["plus tôt", "rien avant", "pas avant"]):
+            out["veut_plus_tot"] = True
+        if any(w in u for w in ["combien", "prix", "tarif", "fourchette", "coûte", "euros"]):
+            out["question_prix"] = True
         return out
 
     def reply(self, instruction: str, context: dict) -> str:
@@ -117,7 +132,9 @@ class AnthropicLLM:
         msg = self.client.messages.create(
             model=self.model, max_tokens=1500,
             system=EXTRACT_SYSTEM.format(
-                metier=context["metier"], prestations=context["prestations"]),
+                metier=context["metier"], prestations=context["prestations"],
+                dernier_agent=context.get("dernier_agent", ""),
+                propositions=context.get("propositions", []) or "aucune"),
             messages=[{"role": "user", "content": utterance}],
         )
         text = _texte_de(msg)
