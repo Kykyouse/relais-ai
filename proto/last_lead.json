@@ -1,0 +1,36 @@
+{
+  "horodatage": "2026-08-21T23:24:28",
+  "source": "appel_telephonique",
+  "base_legale": "demande_entrante",
+  "categorie": "autre",
+  "zone": null,
+  "score": 1,
+  "raisons": [],
+  "slots": {
+    "urgence_reelle": true
+  },
+  "rdv": null,
+  "violations_gardes_fous": [],
+  "transcript": [
+    [
+      "agent",
+      "Bonjour, vous êtes bien chez Dupont Chauffage. Je suis son assistant vocal — Julien est en intervention, mais je peux tout organiser avec vous. Que se passe-t-il ?"
+    ],
+    [
+      "client",
+      "je sens que c'est pas un humain qui me réponds, j'en ai marre de l'IA, est ce qu'il y a un humain de disponible?"
+    ],
+    [
+      "agent",
+      "Je comprends tout à fait, et je vous rassure sur un point : votre demande sera bien lue et traitée par une vraie personne chez Dupont Chauffage.\n\nLà tout de suite, Julien est en intervention chez un client, donc il ne peut pas prendre l'appel. Mais je suis là pour noter votre demande précisément, pour qu'il puisse vous répondre au mieux.\n\nDites-moi ce qui vous arrive ?"
+    ],
+    [
+      "client",
+      "👤 vous me cassez la tête vous pouvez venir tout de suite s'il vous plait?"
+    ],
+    [
+      "agent",
+      "Je comprends, je suis désolée que vous soyez dans cette situation. Pour bien orienter votre demande, pouvez-vous me dire rapidement ce qui se passe ? Une fuite, un problème de chauffage, ou autre chose ?"
+    ]
+  ]
+}

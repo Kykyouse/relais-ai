@@ -1,0 +1,71 @@
+{
+  "entreprise": {
+    "nom": "Dupont Chauffage",
+    "prenom_patron": "Julien",
+    "metier": "plombier_chauffagiste",
+    "adresse_base": { "cp": "94130", "ville": "Nogent-sur-Marne" }
+  },
+  "accueil": {
+    "formule": null,
+    "promesse_rappel": {
+      "ouvree": "sous 2 heures",
+      "soir_weekend": "demain matin avant 9h"
+    }
+  },
+  "prestations": {
+    "couvertes": ["fuite", "chaudiere_panne", "chauffe_eau", "wc_evacuation", "robinetterie", "devis_chaudiere", "devis_pac", "devis_sdb", "entretien_chaudiere"],
+    "refusees": ["debouchage_colonne_immeuble", "gaz_installation_neuve"],
+    "confreres_recommandation": null
+  },
+  "zone": {
+    "codes_postaux": ["94130", "94170", "94300", "94100", "94320"],
+    "codes_postaux_limitrophes": ["94000", "93360"],
+    "message_hors_zone": null
+  },
+  "agenda": {
+    "mode_sans_calendrier": true,
+    "horaires_rdv": {
+      "lun-ven": [{ "de": "08:00", "a": "18:00" }],
+      "sam": [{ "de": "09:00", "a": "13:00" }],
+      "dim": []
+    },
+    "durees_min": {
+      "fuite": 90, "chaudiere_panne": 90, "chauffe_eau": 90, "wc_evacuation": 60,
+      "robinetterie": 60, "devis_chaudiere": 60, "devis_pac": 60, "devis_sdb": 60,
+      "entretien_chaudiere": 60, "defaut": 90
+    },
+    "buffer_trajet_min": 30,
+    "urgences": {
+      "acceptees": true,
+      "fenetres_reservees": [{ "jours": "lun-ven", "de": "17:00", "a": "19:00" }],
+      "max_par_jour": 2
+    },
+    "max_rdv_agent_par_jour": 4,
+    "granularite_proposition": "fenetre_2h"
+  },
+  "validation": {
+    "delai_max_heures_ouvrees": 4,
+    "delai_max_urgence_heures": 1,
+    "auto_validation": "jamais"
+  },
+  "tarifs": {
+    "communicables": [
+      { "libelle": "deplacement_diagnostic", "prix_ttc": 90,
+        "phrase": "Le déplacement avec diagnostic est à 90 € TTC, déduits si vous faites les travaux." },
+      { "libelle": "entretien_chaudiere", "prix_ttc": 120,
+        "phrase": "L'entretien annuel chaudière est à 120 € TTC." }
+    ],
+    "majoration_soir_weekend": null
+  },
+  "securite": {
+    "consignes_autorisees": {
+      "couper_eau": "Si vous le pouvez, coupez l'arrivée d'eau en attendant — le robinet général est souvent sous l'évier ou près du compteur.",
+      "gaz_aerer_et_grdf": "Par sécurité : aérez, ne touchez pas aux interrupteurs, et appelez Urgence Sécurité Gaz au 0 800 47 33 33."
+    },
+    "transfert_si_danger": true
+  },
+  "transfert": {
+    "actif": true,
+    "horaires": { "lun-ven": [{ "de": "08:00", "a": "19:00" }] }
+  }
+}
