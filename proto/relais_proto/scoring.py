@@ -21,6 +21,7 @@ def build_lead(convo) -> dict:
         "slots": {k: v for k, v in s.items() if v is not None},
         "rdv": f["hold"],
         "violations_gardes_fous": f["violations"],
+        "degradations_llm": list(getattr(convo.llm, "degradations", [])),
         "transcript": convo.transcript,
     }
 

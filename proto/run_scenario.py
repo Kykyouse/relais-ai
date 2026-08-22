@@ -133,6 +133,34 @@ SCENARIOS = {
 }
 
 
+def check_panne_llm() -> bool:
+    """R08 : le LLM tombe en panne TOTALE (réseau coupé) dès le premier tour →
+    l'appel doit aboutir quand même en mode scripté, avec les dégradations tracées."""
+    from relais_proto.llm import ResilientLLM
+
+    class PanneLLM:  # simule internet coupé / API down sur chaque appel
+        def extract(self, u, c):
+            raise ConnectionError("getaddrinfo failed")
+
+        def reply(self, i, c):
+            raise ConnectionError("getaddrinfo failed")
+
+    llm = ResilientLLM(PanneLLM())
+    convo = Conversation(CFG, llm)
+    convo.open()
+    for ligne in ["J'ai une fuite, c'est urgent, ça coule",
+                  "94130",
+                  "Garcia, 06 12 34 56 78",
+                  "Oui c'est bien ça",
+                  "Le premier"]:
+        if convo.state.value in ("S11", "FIN"):
+            break
+        convo.process(ligne)
+    lead = build_lead(convo)
+    return (lead["score"] == 5 and lead["rdv"] is not None
+            and len(lead["degradations_llm"]) > 0)
+
+
 def check_guard_prix() -> bool:
     """T05 (garde-fou prix) : on injecte une réplique fautive et on vérifie l'interception."""
     from relais_proto.guards import check_output
@@ -179,6 +207,14 @@ def run() -> int:
     print(f"\n──── T05_garde_fou_prix ────")
     if check_guard_prix():
         print("   → interception prix interdit + 'confirmé' + passage prix autorisé : ✅ PASS")
+    else:
+        print("   → ❌ FAIL")
+        echecs += 1
+
+    print(f"\n──── R08_panne_llm_totale ────")
+    if check_panne_llm():
+        print("   → LLM en panne dès le 1er tour : appel abouti en mode scripté, "
+              "RDV pris, dégradations tracées : ✅ PASS")
     else:
         print("   → ❌ FAIL")
         echecs += 1

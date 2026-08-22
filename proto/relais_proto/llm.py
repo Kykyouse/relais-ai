@@ -106,7 +106,9 @@ def _texte_de(msg) -> str:
 class AnthropicLLM:
     def __init__(self, model: str | None = None):
         import anthropic  # import tardif : optionnel en mode mock
-        self.client = anthropic.Anthropic()
+        # timeout court + 1 retry : au téléphone, mieux vaut dégrader vite que faire
+        # attendre l'appelant (le SDK attendrait sinon bien plus longtemps)
+        self.client = anthropic.Anthropic(timeout=10.0, max_retries=1)
         self.model = model or os.environ.get("RELAIS_MODEL", "claude-haiku-4-5")
 
     def extract(self, utterance: str, context: dict) -> dict:
@@ -139,7 +141,40 @@ class AnthropicLLM:
         return texte or instruction
 
 
+class ResilientLLM:
+    """Dégradation gracieuse : si le LLM primaire échoue (réseau coupé, API en panne,
+    timeout), l'appel CONTINUE en mode scripté — extraction par règles (MockLLM) et
+    répliques = instructions du contrôleur. Moins naturel, jamais muet.
+
+    Chaque dégradation est journalisée et remonte dans le lead
+    (`degradations_llm`) : l'artisan a un lead un peu moins bien qualifié,
+    nous avons l'alerte monitoring. En prod, s'y ajoutera l'étage voix.
+    """
+
+    def __init__(self, primary, fallback=None):
+        self.primary = primary
+        self.fallback = fallback or MockLLM()
+        self.degradations: list[str] = []
+
+    def _degrade(self, quoi: str, exc: Exception) -> None:
+        self.degradations.append(f"{quoi}:{type(exc).__name__}")
+
+    def extract(self, utterance: str, context: dict) -> dict:
+        try:
+            return self.primary.extract(utterance, context)
+        except Exception as exc:  # réseau, API, timeout : on ne laisse JAMAIS tomber l'appel
+            self._degrade("extract", exc)
+            return self.fallback.extract(utterance, context)
+
+    def reply(self, instruction: str, context: dict) -> str:
+        try:
+            return self.primary.reply(instruction, context)
+        except Exception as exc:
+            self._degrade("reply", exc)
+            return self.fallback.reply(instruction, context)  # = l'instruction, prononçable
+
+
 def make_llm(mock: bool = False):
     if mock or not os.environ.get("ANTHROPIC_API_KEY"):
         return MockLLM()
-    return AnthropicLLM()
+    return ResilientLLM(AnthropicLLM())

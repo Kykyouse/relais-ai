@@ -60,6 +60,8 @@ def main() -> None:
               f"{lead['rdv']['statut']})")
     if lead["violations_gardes_fous"]:
         print(f"  ⚠ violations interceptées : {lead['violations_gardes_fous']}")
+    if lead["degradations_llm"]:
+        print(f"  ⚠ mode dégradé (LLM indisponible) : {lead['degradations_llm']}")
     print("=" * 60)
     out = pathlib.Path("last_lead.json")
     out.write_text(json.dumps(lead, ensure_ascii=False, indent=2), encoding="utf-8")
