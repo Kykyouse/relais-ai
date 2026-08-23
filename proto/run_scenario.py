@@ -1368,6 +1368,32 @@ def check_adaptateur_ovh() -> bool:
         print(f"   la raison n'est pas exploitable en monitoring : {relu.derniere_erreur!r}")
         return False
 
+    # (d bis) le DIAGNOSTIC des erreurs, sur les messages RÉELLEMENT reçus d'OVH le 24/08.
+    # Cette fonction s'est trompée trois fois de suite avant d'être mise sous test : deux
+    # motifs manquants, puis un motif générique masquant un motif spécifique. Les entrées
+    # ci-dessous sont des observations, pas des inventions.
+    from relais_proto.envoi_ovh import diagnostic
+    reels = [
+        # celui-ci était diagnostiqué « nom de service faux » : « does not exist » masquait
+        # « sender ». C'est LE cas qui a motivé l'ordre du plus spécifique au plus générique.
+        ("APIError: Sms sender DupontChauf does not exists. Please create it first",
+         "EXPÉDITEUR"),
+        ("EchecEnvoi: ResourceNotFoundError: This service does not exist", "SERVICE SMS"),
+        ("NotGrantedCall: This call has not been granted", "PORTÉE"),
+        ("InvalidKey: This application key is invalid", "IDENTIFIANTS"),
+    ]
+    for message_ovh, attendu in reels:
+        obtenu = diagnostic(message_ovh)
+        if attendu not in obtenu:
+            print(f"   diagnostic · {message_ovh[:48]!r}\n"
+                  f"     attendu une piste « {attendu} », obtenu : {obtenu[:70]}")
+            return False
+    # un motif inconnu doit tout de même orienter, pas répondre « je ne sais pas »
+    repli = diagnostic("PouetError: quelque chose de neuf")
+    if "probabilité" not in repli or "Query-ID" not in repli:
+        print(f"   le repli du diagnostic n'oriente pas : {repli[:80]}")
+        return False
+
     # (e) et un échec TRANSITOIRE consomme bien ses trois tentatives
     depot2 = DepotMemoire()
     m2, _ = depot2.enfiler_message(
@@ -1512,7 +1538,8 @@ def run() -> int:
     print(f"\n──── R22_adaptateur_ovh ────")
     if check_adaptateur_ovh():
         print("   → format E.164, corps de requête (noStopClause), échec définitif "
-              "immédiat vs transitoire réessayé : ✅ PASS")
+              "immédiat vs transitoire réessayé, diagnostic sur les erreurs réelles "
+              "d'OVH : ✅ PASS")
     else:
         print("   → ❌ FAIL")
         echecs += 1

@@ -883,3 +883,33 @@ disponible pour qui a accordé ce droit, mais ce n'est plus le chemin conseillé
 remplit à chaque échec réel. Le repli « motif non reconnu » ne doit donc pas laisser sans
 prise — il liste maintenant les quatre familles par ordre de probabilité. Un diagnostic
 incomplet est normal ; un diagnostic qui n'oriente pas est un défaut.
+
+### 24/08 — la plomberie OVH répond, et le diagnostic passe enfin sous test
+
+**Progression réelle.** Service `sms-hb237083-1` trouvé dans l'espace client (pas via
+`--comptes`, dont l'appel `GET /sms` n'est pas dans la portée de la clé — et c'est très bien
+ainsi). La requête atteint désormais le service et est acceptée. Nouvelle erreur :
+`APIError: Sms sender DupontChauf does not exists. Please create it first`.
+
+**Ce qui est donc CONFIRMÉ par des appels réels** : l'authentification, le nom du service,
+et l'acceptation du corps de requête tel que l'adaptateur le construit. **Pas encore
+confirmé** : la forme de la réponse en cas de succès (`ids` / `validReceivers` /
+`invalidReceivers`) — il manque l'expéditeur pour aller jusque-là.
+
+**Troisième ratage du diagnostic, et le plus instructif.** Le message contient
+« does not exists », qui déclenchait la piste « nom de service faux », alors que le mot
+`sender` y figure explicitement. **Un motif générique masquait un motif spécifique**, parce
+que les motifs sont testés dans l'ordre. Ce n'était pas une ligne à ajouter mais un défaut
+de structure. Deux corrections :
+- ordre **du plus spécifique au plus générique**, `sender` en tête ;
+- le motif générique resserré : « **service** does not exist » et non « does not exist ».
+
+**Et surtout : le diagnostic est déplacé dans `envoi_ovh.py` et mis sous test.** Une
+taxonomie d'erreurs est une connaissance du fournisseur, sa place est dans l'adaptateur, pas
+dans un script — et elle devient ainsi couverte par R22, avec les **quatre erreurs
+réellement reçues** comme cas de régression. Trois erreurs de suite dans une fonction hors
+suite : le vrai défaut était de l'avoir laissée hors suite.
+
+**Prochain essai côté Geoffrey** : créer l'expéditeur `DupontChauf` (Telecom > SMS >
+Expéditeurs), puis relancer. Attention, un expéditeur alphanumérique passe par une
+validation opérateur — le délai peut être de quelques jours.

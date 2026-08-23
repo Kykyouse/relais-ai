@@ -9,12 +9,13 @@ donc réellement à nous, donc réellement testable hors ligne — c'est :
     « +33612345678 ») ;
   * le corps de la requête, dont `noStopClause` ;
   * la **classification des échecs** : un numéro invalide est définitif (le réessayer
-    n'y changera rien), une panne réseau est transitoire.
+    n'y changera rien), une panne réseau est transitoire ;
+  * le **diagnostic** des erreurs de l'API, qui est une connaissance du fournisseur.
 
-⚠️ **Le contrat d'API d'OVH encodé ici est une HYPOTHÈSE tant qu'aucun envoi réel n'a eu
-lieu.** Les doubles de test reproduisent la forme de réponse que j'attends
-(`ids` / `validReceivers` / `invalidReceivers`) : le premier appel réel la confirmera ou la
-démentira. À vérifier dans leur documentation avant la première salve.
+⚠️ **Le contrat d'API encodé ici reste une HYPOTHÈSE tant qu'aucun envoi n'a abouti.**
+Au 24/08, sont confirmés par des appels réels : l'authentification, le nom du service, et
+l'acceptation de la requête. Ne l'est PAS : la forme de la réponse en cas de succès
+(`ids` / `validReceivers` / `invalidReceivers`) — il manquait l'expéditeur.
 """
 from __future__ import annotations
 
@@ -47,7 +48,7 @@ def en_e164(numero: str) -> str:
 class EnvoyeurOVH:
     def __init__(self, transport, compte: str):
         """`transport(chemin, **corps) -> dict` : en prod, `client.post` du SDK `ovh`.
-        `compte` est le service SMS (forme « sms-xx11111-1 »)."""
+        `compte` est le service SMS (forme « sms-xy12345-1 »)."""
         self.transport = transport
         self.compte = compte
 
@@ -82,6 +83,49 @@ class EnvoyeurOVH:
         if not ids:
             raise EchecEnvoi(f"OVH n'a rendu aucun identifiant d'envoi : {reponse!r}")
         return f"ovh:{ids[0]}"
+
+
+# ------------------------------------------------------- diagnostic des erreurs
+# Table construite à partir des erreurs RÉELLEMENT observées. Elle ne saura jamais tout
+# d'avance : elle se remplit à chaque échec.
+#
+# ORDRE = DU PLUS SPÉCIFIQUE AU PLUS GÉNÉRIQUE, et c'est essentiel. Le 24/08, le message
+# « Sms sender DupontChauf does not exists » a été diagnostiqué « nom de service faux »
+# parce qu'un motif générique (« does not exist ») était testé AVANT le motif spécifique
+# (« sender »). Un motif générique doit donc être à la fois tardif et étroit.
+_PISTES: list[tuple[tuple[str, ...], str]] = [
+    (("sender", "Sender", "expediteur"),
+     "→ L'EXPÉDITEUR n'existe pas encore côté OVH, ou n'est pas validé. Le créer dans "
+     "l'espace client (Telecom > SMS > Expéditeurs). Un expéditeur alphanumérique doit "
+     "être déclaré auprès des opérateurs (Charte AF2M du 01/03/2026) : compter un délai, "
+     "et un motif d'usage à justifier."),
+    (("NotGrantedCall", "not been granted"),
+     "→ PORTÉE du consumer key : la clé est valide, mais cet appel n'est pas dans ses "
+     "règles d'accès. Le plus sûr est de lire ce dont tu as besoin dans l'espace client "
+     "plutôt que d'élargir la clé."),
+    (("credit", "Credit", "insufficient"),
+     "→ Plus de CRÉDITS SMS : en recharger dans l'espace client."),
+    # motif volontairement ÉTROIT : « service does not exist », et non « does not exist »
+    (("service does not exist", "ResourceNotFound"),
+     "→ Le NOM DU SERVICE SMS est faux, ou le service n'a pas été commandé. Créer un "
+     "compte OVH ne crée PAS de service SMS. Nom visible dans l'espace client "
+     "(Telecom > SMS), forme « sms-xy12345-1 »."),
+    (("InvalidKey", "InvalidSignature", "InvalidCredential", "Forbidden", "Unauthorized"),
+     "→ IDENTIFIANTS : vérifier le triplet application key / secret / consumer key, et "
+     "que le consumer key n'a pas expiré."),
+]
+
+
+def diagnostic(texte: str) -> str:
+    """Oriente vers la cause probable. Un diagnostic incomplet est normal ; un diagnostic
+    qui n'oriente pas est un défaut — d'où un repli qui nomme les familles."""
+    for motifs, piste in _PISTES:
+        if any(m in texte for m in motifs):
+            return piste
+    return ("→ Motif non reconnu. Par ordre de probabilité : expéditeur non créé ou non "
+            "validé · service SMS non commandé ou mal nommé · portée du consumer key trop "
+            "étroite · crédits épuisés. Rapporte le message et le Query-ID : ils "
+            "enrichiront cette table.")
 
 
 def transport_sdk(endpoint: str = "ovh-eu"):
