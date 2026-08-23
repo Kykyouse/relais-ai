@@ -588,11 +588,11 @@ def _appel_avec_rdv(depot, nom_scenario: str, maintenant: dt.datetime):
     return lead, rdv
 
 
-def check_worker_expiration() -> bool:
+def check_worker_expiration(fabrique=DepotMemoire) -> bool:
     """R16 : worker d'expiration (spec §3.6) — créneau libéré, lead en alerte, SMS de
     repli au client, relance artisan. Deux propriétés critiques : il est idempotent, et
     il ne vole jamais une décision à l'artisan."""
-    depot = DepotMemoire()
+    depot = fabrique()
     worker = WorkerExpiration(depot, CFG)
 
     # (a) dépôt vide : un passage ne doit rien inventer
@@ -729,6 +729,52 @@ def check_worker_expiration() -> bool:
     return True
 
 
+def check_contrat_depot() -> bool:
+    """R17 : la suite de CONTRAT du port `Depot`, jouée contre l'implémentation en
+    mémoire. La même suite tourne contre Postgres via `run_depot_pg.py` : c'est elle qui
+    dira si l'adaptateur est réellement substituable."""
+    from contrat_depot import verifier
+    ecarts = verifier(DepotMemoire, CFG)
+    for e in ecarts:
+        print(f"   {e}")
+    return not ecarts
+
+
+def check_conformite_depot() -> bool:
+    """R18 : chaque implémentation du port expose la même surface que le Protocol, avec
+    les mêmes noms de paramètres (ils sont appelés par mot-clé un peu partout).
+
+    Tourne SANS base : c'est le seul contrôle de l'adaptateur Postgres possible hors
+    ligne, et il attrape la dérive la plus courante — une méthode oubliée, renommée, ou
+    dont un paramètre a changé de nom d'un côté seulement."""
+    import inspect
+
+    from relais_proto.depot import Depot, DepotMemoire as Memoire
+    from relais_proto.depot_pg import DepotPostgres
+
+    attendu = {nom: list(inspect.signature(getattr(Depot, nom)).parameters)
+               for nom in dir(Depot)
+               if not nom.startswith("_") and callable(getattr(Depot, nom))}
+    if len(attendu) < 10:
+        print(f"   le port ne déclare que {len(attendu)} méthodes : contrôle creux")
+        return False
+
+    ok = True
+    for impl in (Memoire, DepotPostgres):
+        for nom, params in sorted(attendu.items()):
+            methode = getattr(impl, nom, None)
+            if methode is None:
+                print(f"   {impl.__name__} n'implémente pas {nom}()")
+                ok = False
+                continue
+            obtenus = list(inspect.signature(methode).parameters)
+            if obtenus != params:
+                print(f"   {impl.__name__}.{nom} : paramètres {obtenus} "
+                      f"au lieu de {params}")
+                ok = False
+    return ok
+
+
 def check_guard_prix() -> bool:
     """T05 (garde-fou prix) : on injecte une réplique fautive et on vérifie l'interception."""
     from relais_proto.guards import check_output
@@ -807,6 +853,22 @@ def run() -> int:
     if check_worker_expiration():
         print("   → créneau libéré, lead en alerte, SMS de repli + relance artisan, "
               "idempotence sur passage interrompu, course artisan fermée : ✅ PASS")
+    else:
+        print("   → ❌ FAIL")
+        echecs += 1
+
+    print(f"\n──── R17_contrat_depot ────")
+    if check_contrat_depot():
+        print("   → port Depot : aller-retour exact, files filtrées, idempotence de la "
+              "file sortante (contre DepotMemoire) : ✅ PASS")
+    else:
+        print("   → ❌ FAIL")
+        echecs += 1
+
+    print(f"\n──── R18_conformite_adaptateurs ────")
+    if check_conformite_depot():
+        print("   → DepotMemoire et DepotPostgres exposent la surface du port, "
+              "mêmes noms de paramètres : ✅ PASS")
     else:
         print("   → ❌ FAIL")
         echecs += 1

@@ -291,3 +291,63 @@ du projet : le test d'abord).
 
 **Prochaine étape convenue :** brique 3, l'adaptateur Postgres derrière le port `Depot`,
 ou l'API FastAPI — au choix.
+
+---
+
+## Session du 23/08/2026 (suite) — brique 3 : adaptateur Postgres (⚠️ non exécuté)
+
+**Contexte matériel.** La machine n'a ni `psycopg`, ni Docker, ni serveur Postgres
+(port 5432 fermé). Décision : instance **managée UE** (Neon/Supabase, cible de la spec §9)
+créée par Geoffrey, et **psycopg brut + migrations `.sql`** plutôt que SQLAlchemy — une
+dépendance, du SQL explicite, et le port `Depot` fournit déjà l'abstraction qu'un ORM
+apporterait.
+
+**⚠️ ÉTAT RÉEL : l'adaptateur Postgres n'a JAMAIS tourné.** Aucun serveur n'était joignable.
+Ce qui est validé hors ligne : la surface du port (R18) et le contrat métier (R17, contre le
+dépôt en mémoire). Ce qui ne l'est pas : chaque requête SQL. Tant que
+`python run_depot_pg.py --migrer` n'est pas vert, `depot_pg.py` est un brouillon crédible,
+pas du code éprouvé.
+
+**Fait.**
+- `migrations/001_initial.sql` : `appel`, `lead`, `rdv`, `message_sortant`. Index partiels
+  sur les deux requêtes chaudes (file du worker, boîte de validation). Contraintes `check`
+  sur les statuts. Unicité sur `cle_idempotence` : **c'est la base qui refuse le double SMS**,
+  pas la prudence de l'appelant.
+- `relais_proto/depot_pg.py` : l'adaptateur. Ids générés en Python (le domaine a besoin de
+  l'id avant l'insert), `INSERT ... ON CONFLICT DO NOTHING` pour la file sortante.
+- `contrat_depot.py` : **la suite de contrat du port, écrite une fois, jouée contre les deux
+  implémentations.** C'est la vraie livraison de cette brique : elle valide aujourd'hui
+  `DepotMemoire` (R17) et validera `DepotPostgres` d'un seul coup.
+- `run_depot_pg.py` : lanceur. Sort **2** (jamais 0) si aucune base n'est joignable, avec le
+  mode d'emploi — un succès vide est pire qu'un échec.
+- Tests **R17** (contrat) et **R18** (conformité structurelle des deux adaptateurs au
+  Protocol, noms de paramètres compris — le seul contrôle possible hors ligne). Suite : **22
+  PASS**. Mutations : 5/5 sur R17-R18, et 10/11/9 toujours sur R14/R15/R16.
+
+**Décisions.**
+- **`DATABASE_URL_TEST`, distincte de `DATABASE_URL`.** Le lanceur TRONQUE les tables : deux
+  variables séparées rendent l'accident impossible plutôt qu'improbable. Le script refuse
+  aussi une base dont le nom contient prod/production/live.
+- **`timestamp` sans fuseau**, pour coller au domaine (datetime naïfs, heure locale FR) et
+  garantir l'aller-retour exact.
+- **Pas de `FOR UPDATE SKIP LOCKED` dans `rdvs_echus()`.** Il faudrait tenir une transaction
+  ouverte pendant tout le traitement, ce que le port n'exprime pas — et ce n'est pas
+  nécessaire à la justesse : deux workers concurrents ne peuvent ni doubler un SMS
+  (unicité en base) ni voler une décision (`valider()` refuse un RDV échu). Au pire deux
+  entrées d'historique. Optimisation à ajouter quand plusieurs workers tourneront.
+
+**⚠️ À TRANCHER AVANT LA PROD — fuseaux et changement d'heure.** Le domaine est en datetime
+naïfs. Avec un délai de validation de 24 h en heures réelles, une échéance posée la veille
+du basculement d'heure vaut 23 h ou 25 h. Ça touche aussi les libellés de créneau prononcés
+à l'appelant. Passer le domaine en tz-aware est une décision de conception, pas un détail
+d'implémentation — et c'est plus simple à faire maintenant qu'après la première prod.
+
+**Reste pour clore la phase backend.**
+1. Créer l'instance Neon/Supabase (UE), brancher `DATABASE_URL_TEST`, lancer
+   `run_depot_pg.py --migrer` → **c'est ce qui transforme la brique 3 en brique finie.**
+2. API FastAPI : `build_lead()` figé en schéma Pydantic, auth artisan + auth webhook
+   distinctes, T01 rejoué en HTTP (un tour = une requête).
+3. Adaptateur d'envoi SMS + plage de non-envoi 21 h–08 h.
+4. Correctif `MockLLM` (regex de nom sans `IGNORECASE`) avec son test R19.
+
+**Prochaine étape convenue :** Geoffrey crée l'instance ; ensuite `run_depot_pg.py`.

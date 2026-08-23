@@ -15,11 +15,13 @@ Cible V1 : plombiers/chauffagistes FR. Solo dev : Geoffrey (binôme Claude) ; ma
 ```bash
 cd proto
 pip install -r requirements.txt     # anthropic, python-dotenv (inutiles en mock)
-python run_scenario.py              # suite de non-régression (mock, sans clé, ~2 s) — 18 tests
+python run_scenario.py              # suite de non-régression (mock, sans clé, ~2 s) — 22 tests
 python run_llm_eval.py --mock       # plomberie de l'éval appelant-simulé (sans clé)
 python run_llm_eval.py [--n 3] [--only T05]   # éval LLM réel → evals/results-*.json
 python chat.py [--mock]             # conversation interactive (tu joues l'appelant)
 python explore.py                   # banc d'essai libre (cas A–F)
+python run_depot_pg.py [--migrer]   # contrat du port Depot contre un vrai Postgres
+                                    # (DATABASE_URL_TEST dans .env ; sort 2 si absente)
 ```
 
 Clé API : fichier `.env` à la racine (voir `.env.example`). JAMAIS commité, JAMAIS dans le code.
@@ -29,6 +31,7 @@ Clé API : fichier `.env` à la racine (voir `.env.example`). JAMAIS commité, J
 1. **Le LLM ne décide jamais** : transitions, prix, créneaux, promesses viennent du contrôleur
    (`engine.py`) et des listes blanches de la config. Le LLM extrait et formule, c'est tout.
 2. **Toute sortie passe par `guards.check_output`** — ne jamais contourner `_say()`.
+   Vaut aussi pour l'écrit : les SMS passent par `guards` avant d'entrer en file (`messages.py`).
 3. **Aucun changement de prompt ou d'engine sans rejouer `run_scenario.py` en entier.**
 4. **Chaque bug trouvé devient un test R<n>** dans `run_scenario.py` avant d'être corrigé
    (le commentaire du test dit qui l'a trouvé et quoi).
@@ -36,6 +39,11 @@ Clé API : fichier `.env` à la racine (voir `.env.example`). JAMAIS commité, J
 6. Textes agent et code commentés en **français** (produit FR, équipe FR).
 
 ## Architecture (proto/)
+
+`rdv.py` cycle de vie du RDV (tampon→validé/refusé/expiré, horloge injectée) · `depot.py` port de
+persistance + implémentation mémoire · `depot_pg.py` adaptateur Postgres · `expiration.py` worker
+(effets idempotents AVANT le changement d'état) · `messages.py` file sortante, templates fermés.
+`contrat_depot.py` : suite de contrat jouée contre les DEUX implémentations du port.
 
 `engine.py` contrôleur déterministe S0–S11 · `llm.py` extracteur+formuleur (Anthropic/Mock/Resilient,
 dégradation gracieuse : jamais muet) · `guards.py` invariants en code · `calendar_stub.py` règles

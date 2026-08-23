@@ -79,6 +79,9 @@ class Depot(Protocol):
 
     def messages(self, statut: StatutMessage | None = None) -> list[MessageSortant]: ...
 
+    def marquer_message_envoye(self, message_id: str,
+                              maintenant: dt.datetime) -> None: ...
+
 
 class DepotMemoire:
     """Implémentation de test. Identifiants séquentiels : les tests restent lisibles,
