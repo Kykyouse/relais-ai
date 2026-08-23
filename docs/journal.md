@@ -485,3 +485,61 @@ valider — **404, pas 403** : ne pas révéler qu'un RDV existe chez un autre a
 5. `FOR UPDATE SKIP LOCKED` quand plusieurs workers tourneront.
 
 **Prochaine étape convenue :** l'envoi SMS réel, ou l'app mobile qui consomme `GET /rdv`.
+
+---
+
+## Session du 23/08/2026 (suite) — brique 5 : expédition des messages sortants
+
+**⚠️ AUCUN FOURNISSEUR SMS N'EST CÂBLÉ.** Ce qui est construit : la plage de silence, les
+réessais, l'échec définitif, et le **port fournisseur**. `EnvoyeurJournal` journalise sans
+rien envoyer — volontaire tant que le fournisseur n'est pas choisi. Rien ne part réellement.
+
+**Fait.**
+- `relais_proto/envoi.py` : `heure_d_envoi_autorisee` (plage de silence), port `Envoyeur`,
+  `EnvoyeurJournal`, worker `Expediteur`.
+- `message_sortant` gagne `essais`, `derniere_erreur`, `envoyer_apres`, `reference`
+  (migration 002, appliquée et vérifiée sur Supabase).
+- `worker.py` : un passage expiration + expédition, pour un cron.
+- Test **R20** + contrat étendu (les 3 nouvelles méthodes du dépôt tournent aussi contre
+  Postgres). Mutations : **8/8 détectées**. Suite : **24 PASS**. Postgres : vert.
+
+**La plage de silence est la vraie substance de cette brique.** Depuis que les délais sont
+comptés en heures réelles (24 h / 2 h), une échéance peut tomber à 3 h du matin — et
+l'expiration déclenche un SMS au client. Règles retenues :
+- plage `21:00 → 08:00`, **configurable par artisan** (`sms.plage_silence`) ;
+- elle ne s'applique qu'aux messages **CLIENT** : la relance de l'artisan est son outil de
+  travail, et c'est lui qui a choisi de prendre les urgences la nuit ;
+- une plage à cheval sur minuit se teste avec un **OU**, pas un ET — l'erreur qui rendrait
+  la plage vide est explicitement couverte par une mutation.
+
+**Validé sur données réelles, par accident heureux.** Premier passage de `worker.py` contre
+Supabase à 22 h 11 : 6 messages en file → **3 push artisan envoyés, 3 SMS client différés**.
+Exactement le comportement voulu, observé sans l'avoir mis en scène.
+
+**Défaut inter-locataires transformé en refus explicite.** `message_sortant` ne porte pas
+d'`artisan_id` : l'expéditeur ne peut pas savoir de quel artisan relève un message et
+appliquerait la plage de silence du premier à tous. Plutôt que de laisser dormir ce bug,
+`worker.py` **refuse de tourner si le registre contient plus d'un artisan**. Correctif :
+colonne `artisan_id` sur `message_sortant` (migration 003) + résolution de la config par
+message. À faire avant le deuxième artisan, pas avant la prod.
+
+**Contradiction de specs à trancher — bloquante pour le choix du fournisseur.**
+`config-artisan-v1.md` prévoit `sms.expediteur: "DupontChauf"`, un sender ID
+**alphanumérique**. Or la spec produit §3.5bis et §4 exigent de **lire les réponses SMS du
+client** (« Répondez OUI pour confirmer »). Un sender alphanumérique est **unidirectionnel
+par construction** : il ne reçoit rien. Conséquence : le SMS doit partir **du numéro
+Relais** (qui vit dans le registre, pas dans la config artisan), et `sms.expediteur` n'a
+plus de sens en V1. Avertissement ajouté dans le schéma documenté.
+À prévoir aussi : les sender IDs alphanumériques doivent être déclarés auprès des
+opérateurs français via le fournisseur — délai calendaire, comme la vérification OAuth
+Google. Sans objet si l'on part sur un numéro.
+
+**Reste pour clore la phase backend.**
+1. **Choix du fournisseur SMS** (contrainte : numéro FR bidirectionnel, hébergement UE) —
+   décision business, puis adaptateur derrière le port `Envoyeur`.
+2. Lecture des SMS entrants (spec §3.5bis) : réponses OUI/NON sur le fil de confirmation.
+3. `artisan_id` sur `message_sortant` (migration 003).
+4. Push réel vers l'app.
+5. Correctif `MockLLM` (`IGNORECASE`) + test R21. Décision fuseaux/DST.
+
+**Prochaine étape :** trancher sender alphanumérique vs numéro, et choisir le fournisseur.

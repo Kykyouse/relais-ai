@@ -200,5 +200,43 @@ def verifier(fabrique, cfg: dict) -> list[str]:
     exiger_leve(Introuvable,
                 lambda: depot.marquer_message_envoye(ID_ABSENT, LUNDI_9H),
                 "marquer_message_envoye(id inconnu) doit lever Introuvable")
+    envoye = depot.messages(StatutMessage.ENVOYE)[0]
+    exiger(envoye.reference is None, "reference devrait être vide sans accusé fournisseur")
+
+    # ---- envoi : différé, réessais, échec définitif ----
+    m3, _ = depot.enfiler_message(_brouillon("contrat:3"), LUNDI_9H)
+    plus_tard = LUNDI_9H + dt.timedelta(hours=5)
+    depot.differer_message(m3.id, plus_tard)
+    relu3 = next(m for m in depot.messages() if m.id == m3.id)
+    exiger(relu3.envoyer_apres == plus_tard,
+           f"differer_message : envoyer_apres = {relu3.envoyer_apres}, attendu {plus_tard}")
+    exiger(relu3.statut is StatutMessage.A_ENVOYER,
+           "un message différé doit rester à envoyer, pas changer de statut")
+
+    depot.marquer_message_echec(m3.id, "TimeoutError: fournisseur muet", LUNDI_9H)
+    relu3 = next(m for m in depot.messages() if m.id == m3.id)
+    exiger(relu3.essais == 1, f"marquer_message_echec : essais = {relu3.essais}, attendu 1")
+    exiger(relu3.derniere_erreur and "Timeout" in relu3.derniere_erreur,
+           "marquer_message_echec : l'erreur n'est pas conservée")
+    exiger(relu3.statut is StatutMessage.A_ENVOYER,
+           "un échec transitoire doit laisser le message en file pour réessai")
+
+    depot.marquer_message_echec(m3.id, "définitif", LUNDI_9H, definitif=True)
+    relu3 = next(m for m in depot.messages() if m.id == m3.id)
+    exiger(relu3.essais == 2, f"le compteur d'essais n'est pas cumulatif ({relu3.essais})")
+    exiger(relu3.statut is StatutMessage.ECHEC,
+           "un échec définitif doit sortir le message de la file")
+
+    m4, _ = depot.enfiler_message(_brouillon("contrat:4"), LUNDI_9H)
+    depot.marquer_message_envoye(m4.id, LUNDI_9H, reference="ref-fournisseur-42")
+    relu4 = next(m for m in depot.messages() if m.id == m4.id)
+    exiger(relu4.reference == "ref-fournisseur-42",
+           f"l'accusé du fournisseur n'est pas conservé ({relu4.reference})")
+
+    for nom, action in (("marquer_message_echec",
+                         lambda: depot.marquer_message_echec(ID_ABSENT, "x", LUNDI_9H)),
+                        ("differer_message",
+                         lambda: depot.differer_message(ID_ABSENT, LUNDI_9H))):
+        exiger_leve(Introuvable, action, f"{nom}(id inconnu) doit lever Introuvable")
 
     return ecarts

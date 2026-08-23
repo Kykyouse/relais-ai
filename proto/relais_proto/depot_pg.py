@@ -193,14 +193,16 @@ class DepotPostgres:
 
     # ---- file sortante ----
     _COLS_MSG = ("id, cle_idempotence, destinataire, canal, cible, texte, statut, "
-                 "cree_a, envoye_a")
+                 "cree_a, envoye_a, essais, derniere_erreur, envoyer_apres, reference")
 
     @staticmethod
     def _msg_de_ligne(l: tuple) -> MessageSortant:
         return MessageSortant.from_dict({
             "id": str(l[0]), "cle_idempotence": l[1], "destinataire": l[2], "canal": l[3],
             "cible": l[4], "texte": l[5], "statut": l[6],
-            "cree_a": l[7].isoformat(), "envoye_a": l[8].isoformat() if l[8] else None})
+            "cree_a": l[7].isoformat(), "envoye_a": l[8].isoformat() if l[8] else None,
+            "essais": l[9], "derniere_erreur": l[10],
+            "envoyer_apres": l[11].isoformat() if l[11] else None, "reference": l[12]})
 
     def enfiler_message(self, brouillon: Brouillon,
                         maintenant: dt.datetime) -> tuple[MessageSortant, bool]:
@@ -209,11 +211,11 @@ class DepotPostgres:
         nouvel_id = self._id()
         cree = self._executer(
             f"insert into message_sortant ({self._COLS_MSG}) "
-            "values (%s,%s,%s,%s,%s,%s,%s,%s,%s) "
+            "values (%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s) "
             "on conflict (cle_idempotence) do nothing",
             (nouvel_id, brouillon.cle_idempotence, brouillon.destinataire.value,
              brouillon.canal.value, brouillon.cible, brouillon.texte,
-             StatutMessage.A_ENVOYER.value, maintenant, None))
+             StatutMessage.A_ENVOYER.value, maintenant, None, 0, None, None, None))
         ligne = self._un(
             f"select {self._COLS_MSG} from message_sortant where cle_idempotence = %s",
             (brouillon.cle_idempotence,), brouillon.cle_idempotence)
@@ -227,9 +229,35 @@ class DepotPostgres:
             f"select {self._COLS_MSG} from message_sortant where statut = %s "
             "order by cree_a, id", (statut.value,))]
 
-    def marquer_message_envoye(self, message_id: str, maintenant: dt.datetime) -> None:
+    def marquer_message_envoye(self, message_id: str, maintenant: dt.datetime,
+                               reference: str | None = None) -> None:
         message_id = self._uuid(message_id, message_id)
         if not self._executer(
-                "update message_sortant set statut = %s, envoye_a = %s where id = %s",
-                (StatutMessage.ENVOYE.value, maintenant, message_id)):
+                "update message_sortant set statut = %s, envoye_a = %s, reference = %s "
+                "where id = %s",
+                (StatutMessage.ENVOYE.value, maintenant, reference, message_id)):
+            raise Introuvable(message_id)
+
+    def marquer_message_echec(self, message_id: str, erreur: str,
+                              maintenant: dt.datetime,
+                              definitif: bool = False) -> None:
+        """`essais` incrémenté EN SQL (`essais + 1`) et non depuis la valeur lue : deux
+        expéditeurs concurrents ne doivent pas se marcher dessus sur le compteur."""
+        message_id = self._uuid(message_id, message_id)
+        if definitif:
+            sql = ("update message_sortant set essais = essais + 1, derniere_erreur = %s, "
+                   "statut = %s where id = %s")
+            params = (erreur, StatutMessage.ECHEC.value, message_id)
+        else:
+            sql = ("update message_sortant set essais = essais + 1, derniere_erreur = %s "
+                   "where id = %s")
+            params = (erreur, message_id)
+        if not self._executer(sql, params):
+            raise Introuvable(message_id)
+
+    def differer_message(self, message_id: str, envoyer_apres: dt.datetime) -> None:
+        message_id = self._uuid(message_id, message_id)
+        if not self._executer(
+                "update message_sortant set envoyer_apres = %s where id = %s",
+                (envoyer_apres, message_id)):
             raise Introuvable(message_id)

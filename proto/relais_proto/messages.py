@@ -61,22 +61,33 @@ class MessageSortant:
     cree_a: dt.datetime
     statut: StatutMessage = StatutMessage.A_ENVOYER
     envoye_a: dt.datetime | None = None
+    essais: int = 0                        # tentatives d'envoi déjà consommées
+    derniere_erreur: str | None = None
+    envoyer_apres: dt.datetime | None = None   # différé par la plage de silence
+    reference: str | None = None           # accusé du fournisseur
+
+    HORODATAGES = ("cree_a", "envoye_a", "envoyer_apres")
 
     def to_dict(self) -> dict:
-        return {"id": self.id, "cle_idempotence": self.cle_idempotence,
-                "destinataire": self.destinataire.value, "canal": self.canal.value,
-                "cible": self.cible, "texte": self.texte, "statut": self.statut.value,
-                "cree_a": self.cree_a.isoformat(),
-                "envoye_a": self.envoye_a.isoformat() if self.envoye_a else None}
+        d = {"id": self.id, "cle_idempotence": self.cle_idempotence,
+             "destinataire": self.destinataire.value, "canal": self.canal.value,
+             "cible": self.cible, "texte": self.texte, "statut": self.statut.value,
+             "essais": self.essais, "derniere_erreur": self.derniere_erreur,
+             "reference": self.reference}
+        for c in self.HORODATAGES:
+            h = getattr(self, c)
+            d[c] = h.isoformat() if h else None
+        return d
 
     @classmethod
     def from_dict(cls, d: dict) -> MessageSortant:
+        horodatages = {c: dt.datetime.fromisoformat(d[c]) if d.get(c) else None
+                       for c in cls.HORODATAGES}
         return cls(id=d["id"], cle_idempotence=d["cle_idempotence"],
                    destinataire=Destinataire(d["destinataire"]), canal=Canal(d["canal"]),
                    cible=d["cible"], texte=d["texte"], statut=StatutMessage(d["statut"]),
-                   cree_a=dt.datetime.fromisoformat(d["cree_a"]),
-                   envoye_a=dt.datetime.fromisoformat(d["envoye_a"]) if d["envoye_a"]
-                   else None)
+                   essais=d.get("essais", 0), derniere_erreur=d.get("derniere_erreur"),
+                   reference=d.get("reference"), **horodatages)
 
 
 # --------------------------------------------------------------- catalogue fermé

@@ -113,7 +113,14 @@ Version 0.1 — 21/08/2026 · Compagnon de `script-conversation-v1.md`
   },
 
   "sms": {
-    "expediteur": "DupontChauf",              // 11 caractères max (norme sender ID)
+    "expediteur": "DupontChauf",              // 11 car. max (sender ID alphanumérique)
+                                              // ATTENTION : un sender alphanumérique ne
+                                              // REÇOIT PAS de réponse. Incompatible avec
+                                              // le SMS bidirectionnel exigé par la spec
+                                              // produit §3.5bis — arbitrage à trancher.
+    "plage_silence": { "de": "21:00", "a": "08:00" },  // aucun SMS CLIENT dans cette plage :
+                                              // une échéance peut tomber à 3 h du matin
+    "essais_max": 3,                          // au-delà : message en échec, visible en monitoring
     "rappel_rdv": "j-1_18h",                  // et H-2 pour les urgences (fixe V1)
     "templates_personnalises": null           // V2 — V1 : templates globaux avec variables
   },

@@ -79,8 +79,15 @@ class Depot(Protocol):
 
     def messages(self, statut: StatutMessage | None = None) -> list[MessageSortant]: ...
 
-    def marquer_message_envoye(self, message_id: str,
-                              maintenant: dt.datetime) -> None: ...
+    def marquer_message_envoye(self, message_id: str, maintenant: dt.datetime,
+                               reference: str | None = None) -> None: ...
+
+    def marquer_message_echec(self, message_id: str, erreur: str,
+                              maintenant: dt.datetime,
+                              definitif: bool = False) -> None: ...
+
+    def differer_message(self, message_id: str,
+                         envoyer_apres: dt.datetime) -> None: ...
 
 
 class DepotMemoire:
@@ -194,10 +201,27 @@ class DepotMemoire:
         tous = [MessageSortant.from_dict(d) for d in self._messages.values()]
         return [m for m in tous if statut is None or m.statut is statut]
 
-    def marquer_message_envoye(self, message_id: str, maintenant: dt.datetime) -> None:
+    def marquer_message_envoye(self, message_id: str, maintenant: dt.datetime,
+                               reference: str | None = None) -> None:
         brut = self._exige(self._messages, message_id)
         brut["statut"] = StatutMessage.ENVOYE.value
         brut["envoye_a"] = maintenant.isoformat()
+        brut["reference"] = reference
+
+    def marquer_message_echec(self, message_id: str, erreur: str,
+                              maintenant: dt.datetime,
+                              definitif: bool = False) -> None:
+        """Un échec transitoire laisse le message en file (réessai) ; au-delà de
+        `essais_max` il passe en `echec` — visible en monitoring plutôt que réessayé
+        indéfiniment."""
+        brut = self._exige(self._messages, message_id)
+        brut["essais"] = brut.get("essais", 0) + 1
+        brut["derniere_erreur"] = erreur
+        if definitif:
+            brut["statut"] = StatutMessage.ECHEC.value
+
+    def differer_message(self, message_id: str, envoyer_apres: dt.datetime) -> None:
+        self._exige(self._messages, message_id)["envoyer_apres"] =             envoyer_apres.isoformat()
 
     # ---- utils ----
     @staticmethod

@@ -18,7 +18,7 @@ from relais_proto.engine import Conversation
 from relais_proto.expiration import WorkerExpiration
 from relais_proto.guards import check_output
 from relais_proto.llm import MockLLM, ResilientLLM
-from relais_proto.messages import Destinataire
+from relais_proto.messages import Destinataire, MessageSortant
 from relais_proto.rdv import (Rdv, StatutRdv, TransitionInterdite,
                               calculer_expiration)
 from relais_proto.scoring import build_lead
@@ -933,6 +933,131 @@ def check_api_http() -> bool:
     return True
 
 
+def check_expedition() -> bool:
+    """R20 : l'expédition des messages sortants — plage de silence, réessais, échec
+    définitif. La règle qui compte : depuis que les délais sont en heures réelles, une
+    échéance peut tomber à 3 h du matin ; on ne réveille pas le client d'un artisan."""
+    from relais_proto.envoi import (EnvoyeurJournal, Expediteur,
+                                    heure_d_envoi_autorisee)
+    from relais_proto.messages import Brouillon, Canal, StatutMessage
+
+    def brouillon(cle: str, dest: Destinataire) -> Brouillon:
+        return Brouillon(cle_idempotence=cle, destinataire=dest,
+                         canal=Canal.SMS if dest is Destinataire.CLIENT else Canal.PUSH,
+                         cible="0612345678", texte="texte de test")
+
+    # (a) la plage 21h–08h traverse minuit : c'est le piège, un ET au lieu d'un OU la
+    # rendrait vide. Et elle ne concerne QUE le client.
+    jour = dt.date(2026, 8, 24)
+    cas = [
+        (Destinataire.CLIENT, dt.time(3, 0), dt.datetime.combine(jour, dt.time(8, 0))),
+        (Destinataire.CLIENT, dt.time(7, 59), dt.datetime.combine(jour, dt.time(8, 0))),
+        (Destinataire.CLIENT, dt.time(21, 0),
+         dt.datetime.combine(jour + dt.timedelta(days=1), dt.time(8, 0))),
+        (Destinataire.CLIENT, dt.time(23, 30),
+         dt.datetime.combine(jour + dt.timedelta(days=1), dt.time(8, 0))),
+        (Destinataire.CLIENT, dt.time(8, 0), None),      # None = tout de suite
+        (Destinataire.CLIENT, dt.time(20, 59), None),
+        # l'artisan est un professionnel qui a choisi ses horaires : jamais différé
+        (Destinataire.ARTISAN, dt.time(3, 0), None),
+    ]
+    for dest, heure, attendu in cas:
+        t = dt.datetime.combine(jour, heure)
+        msg = MessageSortant(id="m", cle_idempotence="k", destinataire=dest,
+                             canal=Canal.SMS, cible="06", texte="t", cree_a=t)
+        obtenu = heure_d_envoi_autorisee(msg, CFG, t)
+        vise = attendu or t
+        if obtenu != vise:
+            print(f"   plage · {dest.value} à {heure} : {obtenu}, attendu {vise}")
+            return False
+
+    # (b) envoi nominal, en pleine journée
+    depot = DepotMemoire()
+    journal = EnvoyeurJournal()
+    expediteur = Expediteur(depot, journal, CFG)
+    midi = dt.datetime.combine(jour, dt.time(12, 0))
+    m_client, _ = depot.enfiler_message(brouillon("r20:client", Destinataire.CLIENT), midi)
+    rapport = expediteur.passer(midi)
+    if rapport.envoyes != [m_client.id] or len(journal.envoyes) != 1:
+        print(f"   envoi nominal : {rapport}")
+        return False
+    envoye = depot.messages(StatutMessage.ENVOYE)
+    if len(envoye) != 1 or not envoye[0].reference:
+        print("   le message envoyé n'a pas d'accusé fournisseur")
+        return False
+    # deuxième passage : rien à renvoyer (le statut sort le message de la file)
+    if expediteur.passer(midi + dt.timedelta(minutes=1)) or len(journal.envoyes) != 1:
+        print("   un message déjà envoyé est renvoyé au passage suivant")
+        return False
+
+    # (c) 3 h du matin : le SMS client attend 8 h, le push artisan part tout de suite
+    depot2 = DepotMemoire()
+    journal2 = EnvoyeurJournal()
+    exp2 = Expediteur(depot2, journal2, CFG)
+    nuit = dt.datetime.combine(jour, dt.time(3, 0))
+    mc, _ = depot2.enfiler_message(brouillon("r20:nuit-client", Destinataire.CLIENT), nuit)
+    ma, _ = depot2.enfiler_message(brouillon("r20:nuit-artisan", Destinataire.ARTISAN), nuit)
+    rapport = exp2.passer(nuit)
+    if rapport.envoyes != [ma.id] or rapport.differes != [mc.id]:
+        print(f"   3 h du matin : envoyés={rapport.envoyes}, différés={rapport.differes}")
+        return False
+    if [m.destinataire for m in journal2.envoyes] != [Destinataire.ARTISAN]:
+        print("   un SMS client est parti en pleine nuit")
+        return False
+    # à 8 h, le client reçoit enfin
+    rapport = exp2.passer(dt.datetime.combine(jour, dt.time(8, 0)))
+    if rapport.envoyes != [mc.id]:
+        print(f"   à 8 h le SMS client n'est pas parti : {rapport}")
+        return False
+
+    # (d) réessais puis échec définitif — un échec transitoire ne perd pas le message
+    class EnvoyeurEnPanne:
+        def envoyer(self, message, cfg):
+            raise ConnectionError("fournisseur injoignable")
+
+    depot3 = DepotMemoire()
+    exp3 = Expediteur(depot3, EnvoyeurEnPanne(), CFG)
+    m3, _ = depot3.enfiler_message(brouillon("r20:panne", Destinataire.CLIENT), midi)
+    essais_max = CFG["sms"]["essais_max"]
+    for tour in range(1, essais_max + 1):
+        rapport = exp3.passer(midi)
+        relu = next(m for m in depot3.messages() if m.id == m3.id)
+        dernier = tour == essais_max
+        if relu.essais != tour:
+            print(f"   réessai {tour} : essais = {relu.essais}")
+            return False
+        if dernier and (rapport.echecs != [m3.id]
+                        or relu.statut is not StatutMessage.ECHEC):
+            print(f"   au {essais_max}e essai le message devrait être en échec : {relu.statut}")
+            return False
+        if not dernier and (rapport.reessais != [m3.id]
+                            or relu.statut is not StatutMessage.A_ENVOYER):
+            print(f"   essai {tour} : le message devrait rester en file ({relu.statut})")
+            return False
+    if exp3.passer(midi + dt.timedelta(hours=1)):
+        print("   un message en échec définitif est encore réessayé")
+        return False
+    if not next(m for m in depot3.messages() if m.id == m3.id).derniere_erreur:
+        print("   l'erreur du fournisseur n'est pas visible pour le monitoring")
+        return False
+
+    # (e) la chaîne complète : expiration à 3 h du matin → client différé, artisan prévenu
+    depot4 = DepotMemoire()
+    journal4 = EnvoyeurJournal()
+    lead4, rdv4 = _appel_avec_rdv(depot4, "T01_urgence_fuite", nuit)
+    rdv4.notifier(nuit)
+    depot4.sauver_rdv(rdv4)
+    WorkerExpiration(depot4, CFG).passer(rdv4.expire_a)
+    rapport = Expediteur(depot4, journal4, CFG).passer(rdv4.expire_a)
+    if len(rapport.differes) != 1 or len(rapport.envoyes) != 1:
+        print(f"   chaîne complète à 3 h : {rapport}")
+        return False
+    if journal4.envoyes[0].destinataire is not Destinataire.ARTISAN:
+        print("   la chaîne a réveillé le client")
+        return False
+    return True
+
+
 def check_guard_prix() -> bool:
     """T05 (garde-fou prix) : on injecte une réplique fautive et on vérifie l'interception."""
     from relais_proto.guards import check_output
@@ -1036,6 +1161,14 @@ def run() -> int:
         print("   → deux portes d'auth étanches, T01 rejoué en HTTP (un tour = une "
               "requête, app neuve à chaque fois), étanchéité entre artisans, "
               "409 sur échéance dépassée : ✅ PASS")
+    else:
+        print("   → ❌ FAIL")
+        echecs += 1
+
+    print(f"\n──── R20_expedition_sms ────")
+    if check_expedition():
+        print("   → plage de silence 21h–08h (client seulement, à cheval sur minuit), "
+              "réessais, échec définitif, chaîne expiration→envoi à 3 h : ✅ PASS")
     else:
         print("   → ❌ FAIL")
         echecs += 1

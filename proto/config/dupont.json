@@ -54,6 +54,8 @@
   },
   "sms": {
     "expediteur": "DupontChauf",
+    "plage_silence": { "de": "21:00", "a": "08:00" },
+    "essais_max": 3,
     "rappel_rdv": "j-1_18h",
     "templates_personnalises": null
   },
