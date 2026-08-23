@@ -84,6 +84,23 @@ class CalendarStub:
         return {"date": d.isoformat(), "de": de, "a": a, "urgence": urgence,
                 "label": f"{label_jour} entre {de.replace(':00', 'h')} et {a.replace(':00', 'h')}"}
 
+    # ---- sérialisation (l'état d'appel doit survivre au process : cf. Conversation.to_dict) ----
+    def to_dict(self) -> dict:
+        return {"now": self.now.isoformat(),
+                "urgences_consommees": self.urgences_consommees,
+                "jours_pleins": self.jours_pleins,
+                "holds": [dict(h) for h in self.holds]}
+
+    @classmethod
+    def from_dict(cls, data: dict, config: dict) -> CalendarStub:
+        # `now` est RECHARGÉ, jamais relu à l'horloge : sinon les libellés déjà
+        # prononcés ("demain", "samedi 29/08") changeraient de sens d'un tour à l'autre.
+        cal = cls(config, now=dt.datetime.fromisoformat(data["now"]),
+                  urgences_consommees_aujourdhui=data["urgences_consommees"],
+                  jours_pleins=data["jours_pleins"])
+        cal.holds = [dict(h) for h in data["holds"]]
+        return cal
+
     def hold_slot(self, slot: dict, prestation: str | None) -> dict:
         """Bloque le créneau dans le calendrier tampon (statut : en attente de validation)."""
         hold = {**slot, "duree_min": self._duree(prestation),

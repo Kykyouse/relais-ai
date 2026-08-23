@@ -90,6 +90,50 @@ class Conversation:
                                     else "entretien" if p == "entretien_chaudiere"
                                     else "devis_travaux")
 
+    # ------------------------------------------------------- sérialisation
+    # En prod, chaque tour d'appel arrivera comme un webhook HTTP, potentiellement sur
+    # un AUTRE process que le tour précédent : l'état de la conversation doit donc
+    # pouvoir vivre hors mémoire (Redis/Postgres) et revenir à l'identique.
+    # Ne sont PAS sérialisés : la config artisan et le client LLM — ce sont des
+    # dépendances injectées au rechargement, pas de l'état d'appel.
+    ETAT_VERSION = 1
+
+    def to_dict(self) -> dict:
+        """État complet de l'appel, JSON-sérialisable. Version explicite : ce dict
+        sera stocké en base, il évoluera plus vite que le code qui le lit."""
+        return {
+            "v": self.ETAT_VERSION,
+            "state": self.state.value,
+            "slots": dict(self.slots),
+            "transcript": [[qui, texte] for qui, texte in self.transcript],
+            "flags": dict(self.flags),
+            "proposes": [dict(s) for s in self._proposes],
+            "silences": self._silences,
+            "calendrier": self.cal.to_dict(),
+            # les dégradations vivent sur le CLIENT LLM mais appartiennent à l'appel
+            # (elles remontent dans le lead) : elles voyagent donc avec l'état, sinon
+            # un appel dégradé rechargé produit un lead faussement « propre ».
+            "degradations_llm": list(getattr(self.llm, "degradations", [])),
+        }
+
+    @classmethod
+    def from_dict(cls, data: dict, config: dict, llm) -> Conversation:
+        if data.get("v") != cls.ETAT_VERSION:
+            raise ValueError(f"état de conversation v{data.get('v')} non supporté "
+                             f"(attendu v{cls.ETAT_VERSION})")
+        convo = cls(config, llm,
+                    calendar=CalendarStub.from_dict(data["calendrier"], config))
+        convo.state = State(data["state"])
+        # EMPTY_SLOTS en base : un état écrit avant l'ajout d'un slot doit rester lisible
+        convo.slots = {**EMPTY_SLOTS, **data["slots"]}
+        convo.transcript = [(qui, texte) for qui, texte in data["transcript"]]
+        convo.flags = dict(data["flags"])
+        convo._proposes = [dict(s) for s in data["proposes"]]
+        convo._silences = data["silences"]
+        if isinstance(getattr(llm, "degradations", None), list):
+            llm.degradations = list(data.get("degradations_llm", []))
+        return convo
+
     # ------------------------------------------------------------- ouverture
     def open(self) -> str:
         """Première réplique (S0) — l'annonce IA est DANS le texte, non négociable."""
@@ -184,26 +228,58 @@ class Conversation:
 
     @staticmethod
     def _normalise(texte: str) -> str:
+        import re as _re
         import unicodedata
         t = unicodedata.normalize("NFD", texte.lower())
         t = "".join(c for c in t if unicodedata.category(c) != "Mn")  # sans accents
-        return t.replace("-", " ")
+        # ponctuation → espaces : « c'est Saint-Maur. » doit matcher « saint maur »
+        # (bug LLM-run3 : la virgule/le point cassaient la correspondance)
+        return _re.sub(r"\s+", " ", _re.sub(r"[^a-z0-9]+", " ", t)).strip()
+
+    _COMMUNES_IDF: dict | None = None  # table France Île-de-France (base officielle Etalab)
+
+    @classmethod
+    def _communes_idf(cls) -> dict:
+        if cls._COMMUNES_IDF is None:
+            import json
+            import pathlib
+            chemin = pathlib.Path(__file__).parent / "data" / "communes_idf.json"
+            cls._COMMUNES_IDF = json.loads(chemin.read_text(encoding="utf-8")) \
+                if chemin.exists() else {}
+        return cls._COMMUNES_IDF
 
     def _resoudre_commune(self, texte: str) -> None:
-        """Reconnaît une commune de la zone (couverte ou limitrophe) citée dans la phrase
-        et en déduit le CP — l'appelant donne sa ville, pas son code postal (cas Juvisy).
-        Commune inconnue de la table = on demandera le CP, comportement inchangé.
-        Déterministe, dans le contrôleur : marche aussi en mode dégradé."""
+        """Reconnaît une commune citée dans la phrase et en déduit le CP — l'appelant
+        donne sa ville, pas son code postal. Deux tables : celle de la zone artisan
+        (avec ses alias configurés), puis la base Île-de-France complète (1 500 entrées,
+        base officielle des codes postaux) — une commune IdF hors zone est ainsi
+        classée hors_zone immédiatement, sans demander le CP.
+        Déterministe, dans le contrôleur : le LLM n'a JAMAIS le droit de deviner un CP."""
         if self.slots["code_postal"] is not None:
             return
         phrase = " " + self._normalise(texte) + " "
-        # noms les plus longs d'abord ("le perreux sur marne" avant "perreux")
-        for nom, cp in sorted(self.cfg["zone"].get("communes", {}).items(),
-                              key=lambda kv: -len(kv[0])):
-            if " " + self._normalise(nom) + " " in phrase:
-                self.slots["commune"] = nom
-                self.slots["code_postal"] = cp
-                return
+
+        def _cherche(table: dict) -> tuple[str, list[str]] | None:
+            # noms les plus longs d'abord ("le perreux sur marne" avant "perreux")
+            for nom in sorted(table, key=len, reverse=True):
+                if " " + self._normalise(nom) + " " in phrase:
+                    v = table[nom]
+                    return nom, (v if isinstance(v, list) else [v])
+            return None
+
+        trouve = _cherche(self.cfg["zone"].get("communes", {})) \
+            or _cherche(self._communes_idf())
+        if not trouve:
+            return
+        nom, cps = trouve
+        zone = self.cfg["zone"]
+        # commune multi-CP (ex. Saint-Maur : 94100/94210/94340) : préférer un CP
+        # couvert, puis limitrophe, sinon le premier (=> classement hors_zone)
+        cp = next((c for c in cps if c in zone["codes_postaux"]),
+                  next((c for c in cps if c in zone["codes_postaux_limitrophes"]),
+                       cps[0]))
+        self.slots["commune"] = nom
+        self.slots["code_postal"] = cp
 
     JOURS_SEMAINE = {"lundi": 0, "mardi": 1, "mercredi": 2, "jeudi": 3,
                      "vendredi": 4, "samedi": 5, "dimanche": 6}

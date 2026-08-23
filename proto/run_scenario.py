@@ -6,12 +6,14 @@ via le garde-fou), T11 (refus de numéro). Usage : python run_scenario.py
 """
 from __future__ import annotations
 
+import datetime as dt
 import json
 import pathlib
 import sys
 
+from relais_proto.calendar_stub import CalendarStub
 from relais_proto.engine import Conversation
-from relais_proto.llm import MockLLM
+from relais_proto.llm import MockLLM, ResilientLLM
 from relais_proto.scoring import build_lead
 
 CFG = json.loads((pathlib.Path(__file__).parent / "config" / "dupont.json")
@@ -154,6 +156,28 @@ SCENARIOS = {
         "attendu": {"score": 4, "categorie": "rdv_reserve", "rdv": True,
                      "texte_agent": "samedi"},
     },
+    "R12_commune_avec_ponctuation": {
+        # bug LLM-run3 : « C'est Saint-Maur. » / « Saint-Maur-des-Fossés, dans le
+        # Val-de-Marne » — la ponctuation cassait la résolution commune→CP et l'agent
+        # bouclait sur la demande de commune.
+        "lignes": [
+            "Mon chauffe-eau ne marche plus, c'est urgent !",
+            "Ben c'est Saint-Maur-des-Fossés, dans le Val-de-Marne.",
+            "Petit, 06 44 55 66 77",
+            "Oui",
+            "Le premier",
+        ],
+        "attendu": {"score": 5, "categorie": "rdv_reserve", "rdv": True, "cp": "94100"},
+    },
+    "R13_commune_idf_hors_zone_directe": {
+        # table IdF complète : une commune francilienne hors zone est classée
+        # hors_zone immédiatement, sans demander le code postal (UX cas Juvisy).
+        "lignes": [
+            "Bonjour, je voudrais un devis pour une pompe à chaleur",
+            "J'habite à Juvisy-sur-Orge.",
+        ],
+        "attendu": {"score": 0, "categorie": "hors_zone", "rdv": False, "cp": "91260"},
+    },
     "T11_refus_numero": {
         "lignes": [
             "Bonjour, j'ai une petite fuite au robinet de la cuisine",
@@ -167,18 +191,17 @@ SCENARIOS = {
 }
 
 
+class PanneLLM:  # simule internet coupé / API down sur chaque appel (R08, R14)
+    def extract(self, u, c):
+        raise ConnectionError("getaddrinfo failed")
+
+    def reply(self, i, c):
+        raise ConnectionError("getaddrinfo failed")
+
+
 def check_panne_llm() -> bool:
     """R08 : le LLM tombe en panne TOTALE (réseau coupé) dès le premier tour →
     l'appel doit aboutir quand même en mode scripté, avec les dégradations tracées."""
-    from relais_proto.llm import ResilientLLM
-
-    class PanneLLM:  # simule internet coupé / API down sur chaque appel
-        def extract(self, u, c):
-            raise ConnectionError("getaddrinfo failed")
-
-        def reply(self, i, c):
-            raise ConnectionError("getaddrinfo failed")
-
     llm = ResilientLLM(PanneLLM())
     convo = Conversation(CFG, llm)
     convo.open()
@@ -193,6 +216,94 @@ def check_panne_llm() -> bool:
     lead = build_lead(convo)
     return (lead["score"] == 5 and lead["rdv"] is not None
             and len(lead["degradations_llm"]) > 0)
+
+
+def _joue(lignes: list[str], llm_neuf, cal_neuf, aller_retour: bool = False) -> Conversation:
+    """Joue un scénario. Si aller_retour, l'objet ET son client LLM sont détruits puis
+    rechargés depuis du vrai JSON avant chaque tour — comme le fera un webhook téléphonie
+    en prod, où le tour suivant tombe sur un process neuf qui ne partage rien."""
+    convo = Conversation(CFG, llm_neuf(), cal_neuf())
+    convo.open()
+    for ligne in lignes:
+        if aller_retour:
+            brut = json.dumps(convo.to_dict(), ensure_ascii=False)  # JSON réel, pas un dict
+            convo = Conversation.from_dict(json.loads(brut), CFG, llm_neuf())
+        if convo.state.value in ("S11", "FIN"):
+            break
+        convo.process(ligne)
+    return convo
+
+
+FUITE_LIGNES = ["J'ai une fuite, c'est urgent, ça coule", "94130",
+                "Garcia, 06 12 34 56 78", "Oui c'est bien ça", "Le premier"]
+
+
+def check_serialisation() -> bool:
+    """R14 : en prod chaque tour arrivera comme un webhook HTTP, potentiellement sur un
+    autre process — l'état de la conversation doit donc faire un aller-retour JSON entre
+    CHAQUE tour sans rien changer. On rejoue TOUS les scénarios ci-dessus en re-sérialisant
+    à chaque tour et on exige des leads identiques (hors horodatage)."""
+    # Horloge FIGÉE (un lundi matin) : on teste la sérialisation, pas la marche du temps.
+    # Figée et non dt.datetime.now(), parce que la fenêtre d'urgence réservée dépend du
+    # jour et de l'heure : un run lancé un dimanche soir ne testerait jamais le quota
+    # d'urgences du jour, et le trou passerait inaperçu.
+    maintenant = dt.datetime(2026, 8, 24, 9, 0)
+    compares = ("score", "categorie", "zone", "raisons", "slots", "rdv",
+                "violations_gardes_fous", "degradations_llm", "transcript")
+    cal_neuf = lambda: CalendarStub(CFG, now=maintenant)
+
+    cas = [(nom, sc["lignes"], MockLLM, cal_neuf) for nom, sc in SCENARIOS.items()]
+    # les dégradations LLM vivent sur le CLIENT, pas sur la conversation : si l'état ne
+    # les transporte pas, un appel dégradé rechargé remonte un lead faussement « propre »
+    # et on perd l'alerte monitoring. D'où la panne totale, avec client neuf à chaque tour.
+    cas.append(("R08_panne_llm_totale", FUITE_LIGNES,
+                lambda: ResilientLLM(PanneLLM()), cal_neuf))
+    # compteur de silences : sans lui dans l'état, l'appelant muet ne basculerait
+    # jamais en S9 (chaque tour se croirait le premier silence — boucle infinie)
+    cas.append(("silence_puis_repondeur", ["", "", "il y a quelqu'un ?"],
+                MockLLM, cal_neuf))
+    # quota d'urgences du jour déjà consommé : s'il n'est pas rechargé, la conversation
+    # reprise ressort la fenêtre d'urgence réservée que l'artisan a déjà donnée
+    quota = CFG["agenda"]["urgences"]["max_par_jour"]
+    cas.append(("urgences_du_jour_saturees", FUITE_LIGNES, MockLLM,
+                lambda: CalendarStub(CFG, now=maintenant,
+                                     urgences_consommees_aujourdhui=quota)))
+
+    for nom, lignes, llm_neuf, cal in cas:
+        a = build_lead(_joue(lignes, llm_neuf, cal))
+        b = build_lead(_joue(lignes, llm_neuf, cal, aller_retour=True))
+        for cle in compares:
+            if a[cle] != b[cle]:
+                print(f"   {nom} · '{cle}' diverge\n     mémoire   = {a[cle]!r}"
+                      f"\n     rechargée = {b[cle]!r}")
+                return False
+        if nom.startswith("R08") and not b["degradations_llm"]:
+            print("   le cas panne ne trace plus aucune dégradation : test creux")
+            return False
+
+    # Point fixe : recharger puis re-sérialiser doit redonner EXACTEMENT le même état.
+    # C'est ce qui protège les champs que le stub n'exploite pas encore (holds du
+    # calendrier tampon, jours_pleins) mais que le vrai calendrier lira.
+    etat = _joue(FUITE_LIGNES, MockLLM, cal_neuf).to_dict()
+    reserialise = Conversation.from_dict(json.loads(json.dumps(etat)), CFG,
+                                         MockLLM()).to_dict()
+    if reserialise != etat:
+        divergents = [c for c in set(etat) | set(reserialise)
+                      if etat.get(c) != reserialise.get(c)]
+        print(f"   aller-retour non idempotent sur : {divergents}")
+        return False
+    if not etat["calendrier"]["holds"]:
+        print("   l'état de référence ne contient aucun hold : point fixe creux")
+        return False
+
+    # un état d'une autre version doit être REFUSÉ, jamais lu de travers
+    try:
+        Conversation.from_dict({**etat, "v": 999}, CFG, MockLLM())
+        print("   un état de version inconnue a été accepté")
+        return False
+    except ValueError:
+        pass
+    return True
 
 
 def check_guard_prix() -> bool:
@@ -249,6 +360,14 @@ def run() -> int:
     if check_panne_llm():
         print("   → LLM en panne dès le 1er tour : appel abouti en mode scripté, "
               "RDV pris, dégradations tracées : ✅ PASS")
+    else:
+        print("   → ❌ FAIL")
+        echecs += 1
+
+    print(f"\n──── R14_serialisation_etat ────")
+    if check_serialisation():
+        print(f"   → {len(SCENARIOS) + 3} scénarios rejoués avec aller-retour JSON à chaque "
+              "tour (process neuf) : leads identiques, version d'état contrôlée : ✅ PASS")
     else:
         print("   → ❌ FAIL")
         echecs += 1

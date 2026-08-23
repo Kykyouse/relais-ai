@@ -18,7 +18,8 @@ Réponds UNIQUEMENT un objet JSON avec les clés présentes dans la phrase (omet
 - prestation: une de {prestations} si identifiable
 - probleme: résumé très court "équipement + symptôme" (ex: "chaudière ne démarre plus")
 - commune: nom de commune si mentionné
-- code_postal: 5 chiffres si mentionné
+- code_postal: 5 chiffres UNIQUEMENT si l'appelant les prononce — ne déduis JAMAIS
+  un code postal du nom d'une commune, même si tu le connais (c'est le système qui le résout)
 - urgence_reelle: true/false si l'appelant exprime (ou nie) un dégât/besoin immédiat
 - statut_occupant: proprietaire|locataire|syndic|autre si déductible
 - nom: nom de famille si donné
