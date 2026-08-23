@@ -12,8 +12,11 @@ import pathlib
 import sys
 
 from relais_proto.calendar_stub import CalendarStub
+from relais_proto.depot import DepotMemoire
 from relais_proto.engine import Conversation
 from relais_proto.llm import MockLLM, ResilientLLM
+from relais_proto.rdv import (Rdv, StatutRdv, TransitionInterdite,
+                              calculer_expiration)
 from relais_proto.scoring import build_lead
 
 CFG = json.loads((pathlib.Path(__file__).parent / "config" / "dupont.json")
@@ -306,6 +309,240 @@ def check_serialisation() -> bool:
     return True
 
 
+LUNDI_9H = dt.datetime(2026, 8, 24, 9, 0)  # horloge de référence des tests RDV
+
+
+def _rdv_test(statut: StatutRdv, echu: bool) -> Rdv:
+    """RDV nu dans l'état demandé, échu ou non, pour éprouver le graphe."""
+    return Rdv(id="rdv-t", lead_id="lead-t", artisan_id="art-t",
+               creneau={"date": "2026-08-25", "de": "08:00", "a": "10:00",
+                        "label": "demain entre 08h et 10h", "urgence": False},
+               duree_min=90, urgence=False, cree_a=LUNDI_9H,
+               expire_a=LUNDI_9H + dt.timedelta(hours=-1 if echu else 4),
+               statut=statut)
+
+
+def check_cycle_vie_rdv() -> bool:
+    """R15 : cycle de vie du RDV (tampon → en_attente_validation → validé/refusé/expiré).
+
+    Le pendant backend des garde-fous : un RDV en base est un engagement pris envers un
+    client, donc les transitions illégales doivent lever, pas être tolérées."""
+    actions = {StatutRdv.EN_ATTENTE_VALIDATION: Rdv.notifier, StatutRdv.VALIDE: Rdv.valider,
+               StatutRdv.REFUSE: Rdv.refuser, StatutRdv.EXPIRE: Rdv.expirer}
+
+    # Matrice attendue écrite EN DUR, volontairement pas lue dans rdv.TRANSITIONS : un
+    # test qui dérive ses attentes de la table qu'il vérifie ne teste que la cohérence du
+    # code avec lui-même. Si quelqu'un ouvre « expiré → validé » dans la table, on veut
+    # un échec ici, pas un test qui suit le changement.
+    attendus = {
+        StatutRdv.TAMPON: {StatutRdv.EN_ATTENTE_VALIDATION, StatutRdv.EXPIRE},
+        StatutRdv.EN_ATTENTE_VALIDATION: {StatutRdv.VALIDE, StatutRdv.REFUSE,
+                                          StatutRdv.EXPIRE},
+        StatutRdv.VALIDE: set(),
+        StatutRdv.REFUSE: set(),
+        StatutRdv.EXPIRE: set(),
+    }
+
+    # (a) graphe complet : chaque paire est acceptée si et seulement si elle est autorisée
+    for depuis in StatutRdv:
+        for vers, action in actions.items():
+            attendu = vers in attendus[depuis]
+            rdv = _rdv_test(depuis, echu=(vers is StatutRdv.EXPIRE))
+            try:
+                action(rdv, LUNDI_9H)
+                obtenu = True
+            except TransitionInterdite:
+                obtenu = False
+            if obtenu != attendu:
+                print(f"   graphe : {depuis.value} → {vers.value} "
+                      f"{'accepté' if obtenu else 'refusé'} alors qu'il devrait être "
+                      f"{'accepté' if attendu else 'refusé'}")
+                return False
+
+    # (b) heures ouvrées (lun-ven 08–18, sam 09–13, dim fermé) : un RDV pris le vendredi
+    # soir ne doit pas expirer pendant la nuit sans que l'artisan ait pu le voir
+    cas_ouvrees = [
+        ("lundi 09:00 (en pleine fenêtre)", dt.datetime(2026, 8, 24, 9, 0),
+         dt.datetime(2026, 8, 24, 13, 0)),
+        ("lundi 07:00 (avant ouverture)", dt.datetime(2026, 8, 24, 7, 0),
+         dt.datetime(2026, 8, 24, 12, 0)),
+        ("lundi 17:00 (déborde sur mardi)", dt.datetime(2026, 8, 24, 17, 0),
+         dt.datetime(2026, 8, 25, 11, 0)),
+        ("vendredi 17:00 (déborde sur samedi court)", dt.datetime(2026, 8, 28, 17, 0),
+         dt.datetime(2026, 8, 29, 12, 0)),
+        ("samedi 12:00 (dimanche fermé, saute au lundi)", dt.datetime(2026, 8, 29, 12, 0),
+         dt.datetime(2026, 8, 31, 11, 0)),
+        ("dimanche 10:00 (jour fermé)", dt.datetime(2026, 8, 30, 10, 0),
+         dt.datetime(2026, 8, 31, 12, 0)),
+    ]
+    for libelle, depuis, attendu in cas_ouvrees:
+        obtenu = calculer_expiration(CFG, urgence=False, depuis=depuis)
+        if obtenu != attendu:
+            print(f"   heures ouvrées · {libelle} : {obtenu} au lieu de {attendu}")
+            return False
+
+    # urgence = heures RÉELLES : une fuite prise dimanche 22 h n'attend pas lundi 8 h
+    urgent = calculer_expiration(CFG, urgence=True, depuis=dt.datetime(2026, 8, 30, 22, 0))
+    if urgent != dt.datetime(2026, 8, 30, 23, 0):
+        print(f"   urgence : {urgent}, attendu dimanche 23:00 (heures réelles)")
+        return False
+
+    # les deux mêmes règles, mais traversées par Rdv.depuis_hold et à une heure où
+    # ouvrées et réelles DIVERGENT : vendredi 17 h + 4 h ouvrées = samedi 12 h (et non
+    # vendredi 21 h), tandis que l'urgence reste à vendredi 18 h.
+    vendredi_17h = dt.datetime(2026, 8, 28, 17, 0)
+    hold_nu = {"date": "2026-09-01", "de": "08:00", "a": "10:00", "urgence": False,
+               "label": "mardi 01/09 entre 08h et 10h", "duree_min": 90}
+    for urgence_reelle, echeance in ((None, dt.datetime(2026, 8, 29, 12, 0)),
+                                     (True, dt.datetime(2026, 8, 28, 18, 0))):
+        obtenu = Rdv.depuis_hold(
+            hold_nu, id="rdv-v", lead_id="lead-v", artisan_id="art-t",
+            lead={"slots": {"tel_confirme": True, "urgence_reelle": urgence_reelle}},
+            cfg=CFG, maintenant=vendredi_17h).expire_a
+        if obtenu != echeance:
+            print(f"   depuis_hold(urgence_reelle={urgence_reelle}) → {obtenu}, "
+                  f"attendu {echeance}")
+            return False
+
+    # (c) la course critique : l'artisan tape juste après l'échéance, le worker n'est pas
+    # encore passé — la décision doit être refusée quand même
+    rdv = _rdv_test(StatutRdv.EN_ATTENTE_VALIDATION, echu=False)
+    juste_apres = rdv.expire_a + dt.timedelta(seconds=1)
+    for nom, action in (("valider", Rdv.valider), ("refuser", Rdv.refuser)):
+        try:
+            action(_rdv_test(StatutRdv.EN_ATTENTE_VALIDATION, echu=False), juste_apres)
+        except TransitionInterdite:
+            continue
+        print(f"   {nom}() accepté 1 s après l'échéance : la décision dépendrait du cron")
+        return False
+    # symétriquement, on n'expire pas un RDV encore dans les temps
+    try:
+        _rdv_test(StatutRdv.EN_ATTENTE_VALIDATION, echu=False).expirer(LUNDI_9H)
+        print("   expirer() accepté avant l'échéance")
+        return False
+    except TransitionInterdite:
+        pass
+
+    # (d) bout en bout : T01 (urgence) joué en mock → dépôt → tampon → notifié → validé
+    depot = DepotMemoire()
+    convo = Conversation(CFG, MockLLM(), CalendarStub(CFG, now=LUNDI_9H))
+    convo.open()
+    for ligne in SCENARIOS["T01_urgence_fuite"]["lignes"]:
+        if convo.state.value in ("S11", "FIN"):
+            break
+        convo.process(ligne)
+    lead_donnees = build_lead(convo)
+    appel = depot.ouvrir_appel("art-dupont", LUNDI_9H)
+    depot.enregistrer_etat(appel.id, convo.to_dict())   # état sérialisé (R14) en base
+    lead = depot.cloturer_appel(appel.id, lead_donnees, LUNDI_9H)
+    rdv = depot.creer_rdv(lead_id=lead.id, hold=lead_donnees["rdv"],
+                          lead_donnees=lead_donnees, cfg=CFG, maintenant=LUNDI_9H)
+    if rdv.statut is not StatutRdv.TAMPON:
+        print(f"   RDV créé en {rdv.statut.value} au lieu de tampon")
+        return False
+
+    # l'échéance en base doit correspondre à la promesse PRONONCÉE à l'appelant
+    urgence_appel = bool(lead_donnees["slots"].get("urgence_reelle"))
+    if rdv.expire_a != calculer_expiration(CFG, urgence_appel, LUNDI_9H):
+        print(f"   échéance {rdv.expire_a} incohérente avec la config validation")
+        return False
+    delai = CFG["validation"]["delai_max_urgence_heures" if urgence_appel
+                              else "delai_max_heures_ouvrees"]
+    paroles = " ".join(t for qui, t in lead_donnees["transcript"] if qui == "agent")
+    if f"d'ici {delai} heure" not in paroles:
+        print(f"   l'agent n'a pas promis {delai} h : la base et la parole divergent")
+        return False
+
+    # (e) le dépôt ne rend jamais l'instance vivante : muter sans sauver ne persiste rien
+    fantome = depot.rdv(rdv.id)
+    fantome.notifier(LUNDI_9H)
+    if depot.rdv(rdv.id).statut is not StatutRdv.TAMPON:
+        print("   le dépôt rend l'instance vivante : un test passerait sans sauver_rdv()")
+        return False
+
+    rdv.notifier(LUNDI_9H + dt.timedelta(minutes=5))
+    depot.sauver_rdv(rdv)
+    if [r.id for r in depot.rdvs_en_attente("art-dupont")] != [rdv.id]:
+        print("   le RDV notifié n'est pas dans la boîte de validation")
+        return False
+    rdv.valider(LUNDI_9H + dt.timedelta(minutes=30))
+    depot.sauver_rdv(rdv)
+    if depot.rdvs_en_attente("art-dupont"):
+        print("   un RDV validé reste dans la boîte de validation")
+        return False
+
+    # (f) le chemin d'expiration : R11 (non urgent) laissé sans réponse
+    convo2 = Conversation(CFG, MockLLM(), CalendarStub(CFG, now=LUNDI_9H))
+    convo2.open()
+    for ligne in SCENARIOS["R11_dispo_samedi_respectee"]["lignes"]:
+        if convo2.state.value in ("S11", "FIN"):
+            break
+        convo2.process(ligne)
+    lead2_donnees = build_lead(convo2)
+    appel2 = depot.ouvrir_appel("art-dupont", LUNDI_9H)
+    lead2 = depot.cloturer_appel(appel2.id, lead2_donnees, LUNDI_9H)
+    rdv2 = depot.creer_rdv(lead_id=lead2.id, hold=lead2_donnees["rdv"],
+                           lead_donnees=lead2_donnees, cfg=CFG, maintenant=LUNDI_9H)
+    if rdv2.expire_a != dt.datetime(2026, 8, 24, 13, 0):  # 4 h ouvrées depuis lundi 9 h
+        print(f"   échéance non urgente {rdv2.expire_a}, attendu lundi 13:00")
+        return False
+    if depot.rdvs_echus(LUNDI_9H + dt.timedelta(hours=3)):
+        print("   un RDV non échu est remonté dans la file du worker")
+        return False
+    echus = depot.rdvs_echus(rdv2.expire_a)
+    if [r.id for r in echus] != [rdv2.id]:
+        print(f"   file du worker à l'échéance : {[r.id for r in echus]}, attendu [{rdv2.id}]")
+        return False
+    # un tampon jamais notifié doit expirer aussi (push échoué → pas de créneau fantôme)
+    if echus[0].statut is not StatutRdv.TAMPON:
+        print("   le cas 'tampon jamais notifié' n'est plus couvert : test creux")
+        return False
+    echus[0].expirer(rdv2.expire_a)
+    depot.sauver_rdv(echus[0])
+    if depot.rdvs_echus(rdv2.expire_a) or depot.rdv(rdv2.id).statut is not StatutRdv.EXPIRE:
+        print("   le RDV expiré reste dans la file du worker")
+        return False
+
+    # (g) urgence RÉELLE mais créneau hors fenêtre d'urgence (quota du jour épuisé) :
+    # l'échéance suit urgence_reelle (1 h réelle), pas le drapeau du créneau — sinon la
+    # base accorde 4 h ouvrées là où l'agent a promis « d'ici 1 heure » au téléphone.
+    # C'est le seul cas où les deux sources divergent, d'où ce scénario dédié.
+    quota = CFG["agenda"]["urgences"]["max_par_jour"]
+    convo_u = Conversation(CFG, MockLLM(),
+                           CalendarStub(CFG, now=LUNDI_9H,
+                                        urgences_consommees_aujourdhui=quota))
+    convo_u.open()
+    for ligne in SCENARIOS["T01_urgence_fuite"]["lignes"]:
+        if convo_u.state.value in ("S11", "FIN"):
+            break
+        convo_u.process(ligne)
+    lead_u = build_lead(convo_u)
+    if not lead_u["slots"].get("urgence_reelle") or lead_u["rdv"]["urgence"]:
+        print("   cas urgence/créneau non divergent : quota épuisé sans effet, test creux")
+        return False
+    appel_u = depot.ouvrir_appel("art-dupont", LUNDI_9H)
+    ref_u = depot.cloturer_appel(appel_u.id, lead_u, LUNDI_9H)
+    rdv_u = depot.creer_rdv(lead_id=ref_u.id, hold=lead_u["rdv"], lead_donnees=lead_u,
+                            cfg=CFG, maintenant=LUNDI_9H)
+    if rdv_u.expire_a != LUNDI_9H + dt.timedelta(hours=1):
+        print(f"   échéance {rdv_u.expire_a} : suit le créneau et non urgence_reelle "
+              f"(attendu lundi 10:00)")
+        return False
+
+    # (h) invariant produit : jamais de RDV sans téléphone confirmé, même en base
+    sans_tel = {**lead_donnees, "slots": {**lead_donnees["slots"], "tel_confirme": None}}
+    appel3 = depot.ouvrir_appel("art-dupont", LUNDI_9H)
+    lead3 = depot.cloturer_appel(appel3.id, sans_tel, LUNDI_9H)
+    try:
+        depot.creer_rdv(lead_id=lead3.id, hold=lead_donnees["rdv"], lead_donnees=sans_tel,
+                        cfg=CFG, maintenant=LUNDI_9H)
+        print("   RDV créé sans téléphone confirmé (invariant produit violé)")
+        return False
+    except ValueError:
+        pass
+    return True
+
+
 def check_guard_prix() -> bool:
     """T05 (garde-fou prix) : on injecte une réplique fautive et on vérifie l'interception."""
     from relais_proto.guards import check_output
@@ -368,6 +605,14 @@ def run() -> int:
     if check_serialisation():
         print(f"   → {len(SCENARIOS) + 3} scénarios rejoués avec aller-retour JSON à chaque "
               "tour (process neuf) : leads identiques, version d'état contrôlée : ✅ PASS")
+    else:
+        print("   → ❌ FAIL")
+        echecs += 1
+
+    print(f"\n──── R15_cycle_vie_rdv ────")
+    if check_cycle_vie_rdv():
+        print("   → graphe de transitions complet, heures ouvrées (nuit/samedi/dimanche), "
+              "course validation-vs-expiration, T01 de bout en bout en dépôt : ✅ PASS")
     else:
         print("   → ❌ FAIL")
         echecs += 1

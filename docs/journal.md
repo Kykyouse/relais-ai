@@ -143,3 +143,59 @@ guide d'entretien livré). Cible V1 : plombiers/chauffagistes.
    RDV validé par le client qui rappelle (S12, script v0.2), LLM-juge pour le ton.
 
 **Prochaine étape convenue :** brique 1 (modèle + cycle de vie du RDV), avec son test.
+
+---
+
+## Session du 23/08/2026 (suite) — brique 1 : modèle de données + cycle de vie du RDV
+
+**Fait.**
+- `relais_proto/rdv.py` : le cycle de vie `tampon → en_attente_validation → validé /
+  refusé / expiré`, en dataclasse avec graphe de transitions explicite, historique
+  d'audit par RDV, et `to_dict`/`from_dict`.
+- `relais_proto/depot.py` : le **port** de persistance (appel / lead / RDV) + une
+  implémentation en mémoire. `DepotMemoire` sérialise à l'écriture et reconstruit à la
+  lecture — elle ne rend jamais deux fois la même instance, sinon un test passerait en
+  mutant l'objet sans appeler `sauver_rdv()` et casserait sur une vraie base.
+- Test **R15** : graphe complet (20 paires), arithmétique des heures ouvrées, course
+  validation-vs-expiration, T01 de bout en bout (conversation → état sérialisé en dépôt →
+  lead → RDV → notifié → validé), chemin d'expiration, invariants produit. Suite : **19 PASS**.
+- R15 éprouvé par mutation (10 règles cassées une à une) : **10/10 détectées**. Le premier
+  jet en laissait passer 3, dont un vrai défaut de conception du test — voir ci-dessous.
+
+**Décisions.**
+- **Urgence = heures RÉELLES, hors urgence = heures OUVRÉES.** Une fuite prise à 19 h ne
+  peut pas attendre l'ouverture du lendemain ; à l'inverse un RDV pris vendredi 17 h ne
+  doit pas expirer pendant la nuit sans que l'artisan ait eu une chance de le voir.
+- **Le chrono part de la réservation, pas du push.** C'est à la réservation que l'agent a
+  promis « un SMS d'ici 4 heures » : la promesse court dès qu'elle est prononcée. Un
+  tampon dont le push a échoué doit donc expirer aussi — sinon créneau fantôme.
+- **L'urgence de l'échéance est lue dans `slots.urgence_reelle`, pas dans le drapeau du
+  créneau.** Le hold dit seulement si le créneau vient de la fenêtre d'urgence réservée ;
+  `engine._reserver` calcule sa promesse sur `urgence_reelle`. Les deux divergent quand le
+  quota d'urgences du jour est épuisé — cas désormais testé, sinon la base accorde 4 h là
+  où l'agent a dit 1 h.
+- **La course critique est arbitrée par `expire_a`, jamais par le passage du worker** :
+  l'artisan qui tape « valider » une seconde après l'échéance est refusé. Sinon sa
+  décision dépend de la latence d'un cron, et le client reçoit deux messages
+  contradictoires (SMS de repli puis confirmation).
+- Un refus après échéance est refusé aussi : le statut doit rester `expiré` pour que le
+  funnel distingue « refusé » de « ignoré ».
+- `validation.heures_ouvrees` est lu s'il existe, sinon repli sur `agenda.horaires_rdv`.
+  **Approximation assumée à corriger un jour** : « quand il intervient » n'est pas « quand
+  il regarde son téléphone » (beaucoup valident le soir). Le champ dédié existe déjà pour
+  séparer les deux sans retoucher le code.
+
+**Leçon de méthode.** Le premier jet de R15 dérivait ses attentes de `rdv.TRANSITIONS`,
+la table qu'il était censé vérifier : tautologie. Ouvrir « expiré → validé » dans la table
+faisait suivre le test sans échec. La matrice attendue est désormais écrite **en dur** dans
+le test. À retenir pour les briques suivantes : un test ne doit jamais lire sa référence
+dans l'objet testé.
+
+**Reste à faire pour clore la phase backend** (définition de « terminé » inchangée) :
+1. Worker d'expiration au-dessus de `rdvs_echus()` (horloge injectable, déjà prête).
+2. Adaptateur Postgres derrière le port `Depot` + migrations.
+3. API FastAPI : `build_lead()` figé en schéma Pydantic, auth artisan + auth webhook
+   distinctes, T01 rejoué en HTTP (un tour = une requête, aucune session en mémoire).
+4. SMS de repli sur expiration (table `message_sortant` avec clé d'idempotence).
+
+**Prochaine étape convenue :** brique 2, le worker d'expiration.
