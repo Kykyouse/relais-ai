@@ -69,6 +69,8 @@ class Depot(Protocol):
 
     def rdvs_echus(self, maintenant: dt.datetime) -> list[Rdv]: ...
 
+    def rdv_par_confirmation(self, empreinte: str) -> Rdv: ...
+
     def lead(self, lead_id: str) -> Lead: ...
 
     def marquer_lead_alerte(self, lead_id: str, motif: str,
@@ -166,6 +168,15 @@ class DepotMemoire:
 
     def _tous_rdvs(self) -> list[Rdv]:
         return [Rdv.from_dict(d) for d in self._rdvs.values()]
+
+    def rdv_par_confirmation(self, empreinte: str) -> Rdv:
+        """Le client ne présente qu'un jeton : c'est la seule entrée dont il dispose."""
+        if not empreinte:
+            raise Introuvable("jeton vide")
+        for r in self._tous_rdvs():
+            if r.confirmation_sha256 == empreinte:
+                return r
+        raise Introuvable("jeton de confirmation inconnu")
 
     def marquer_lead_alerte(self, lead_id: str, motif: str,
                             maintenant: dt.datetime) -> None:

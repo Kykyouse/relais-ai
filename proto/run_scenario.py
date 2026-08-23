@@ -332,7 +332,9 @@ def check_cycle_vie_rdv() -> bool:
     Le pendant backend des garde-fous : un RDV en base est un engagement pris envers un
     client, donc les transitions illégales doivent lever, pas être tolérées."""
     actions = {StatutRdv.EN_ATTENTE_VALIDATION: Rdv.notifier, StatutRdv.VALIDE: Rdv.valider,
-               StatutRdv.REFUSE: Rdv.refuser, StatutRdv.EXPIRE: Rdv.expirer}
+               StatutRdv.REFUSE: Rdv.refuser, StatutRdv.EXPIRE: Rdv.expirer,
+               StatutRdv.REPROPOSE: lambda r, m: r.reproposer(
+                   {**r.creneau, "date": "2026-09-01"}, CFG, m, "a" * 64)}
 
     # Matrice attendue écrite EN DUR, volontairement pas lue dans rdv.TRANSITIONS : un
     # test qui dérive ses attentes de la table qu'il vérifie ne teste que la cohérence du
@@ -341,7 +343,11 @@ def check_cycle_vie_rdv() -> bool:
     attendus = {
         StatutRdv.TAMPON: {StatutRdv.EN_ATTENTE_VALIDATION, StatutRdv.EXPIRE},
         StatutRdv.EN_ATTENTE_VALIDATION: {StatutRdv.VALIDE, StatutRdv.REFUSE,
-                                          StatutRdv.EXPIRE},
+                                          StatutRdv.REPROPOSE, StatutRdv.EXPIRE},
+        # reproposé = en attente du CLIENT. L'artisan garde le droit de trancher
+        # lui-même (il a peut-être eu le client au téléphone), et l'échéance
+        # s'applique comme partout ailleurs.
+        StatutRdv.REPROPOSE: {StatutRdv.VALIDE, StatutRdv.REFUSE, StatutRdv.EXPIRE},
         StatutRdv.VALIDE: set(),
         StatutRdv.REFUSE: set(),
         StatutRdv.EXPIRE: set(),
@@ -1058,6 +1064,153 @@ def check_expedition() -> bool:
     return True
 
 
+def check_confirmation_lien() -> bool:
+    """R21 : reproposition par l'artisan + validation du client par LIEN (remplace le
+    « Répondez OUI » de la spec §3.5bis). Le jeton est la seule authentification du client :
+    imprévisible, stocké en empreinte, à usage unique, et l'échéance lui est opposée."""
+    try:
+        from fastapi.testclient import TestClient
+    except ImportError:
+        print("   fastapi/httpx absents : pip install -r requirements.txt")
+        return False
+
+    from relais_proto.api import creer_app
+    from relais_proto.confirmation import empreinte
+    from relais_proto.registre import Artisan, Registre, empreinte as emp_token
+
+    TOK_A, TOK_B, SECRET = "tok-dupont", "tok-martin", "secret-voix"
+    BASE = "https://relais.test"
+    registre = Registre([Artisan("art-dupont", "+33189701234", emp_token(TOK_A), CFG),
+                         Artisan("art-martin", "+33189705678", emp_token(TOK_B), CFG)],
+                        emp_token(SECRET))
+    depot = DepotMemoire()
+    pendule = [LUNDI_9H]
+
+    def cli():
+        return TestClient(creer_app(depot, registre, MockLLM, lambda: pendule[0],
+                                    base_url=BASE))
+
+    art_a = {"Authorization": f"Bearer {TOK_A}"}
+    art_b = {"Authorization": f"Bearer {TOK_B}"}
+
+    lead, rdv = _appel_avec_rdv(depot, "T01_urgence_fuite", LUNDI_9H)
+    rdv.notifier(LUNDI_9H)
+    depot.sauver_rdv(rdv)
+    nouveau = {"date": "2026-08-26", "de": "14:00", "a": "16:00"}
+
+    # (a) étanchéité et validation d'entrée
+    if cli().post(f"/rdv/{rdv.id}/reproposer", json=nouveau, headers=art_b).status_code != 404:
+        print("   Martin peut reproposer un créneau sur un RDV de Dupont")
+        return False
+    if cli().post(f"/rdv/{rdv.id}/reproposer", json=nouveau).status_code != 401:
+        print("   reproposer sans token n'est pas refusé")
+        return False
+    r = cli().post(f"/rdv/{rdv.id}/reproposer",
+                   json={**nouveau, "date": "26/08/2026"}, headers=art_a)
+    if r.status_code != 422:
+        print(f"   date mal formée : {r.status_code}, attendu 422")
+        return False
+
+    # (b) reproposition nominale. L'horloge avance d'une heure AVANT : sinon la remise à
+    # zéro de l'échéance est invisible (même instant → même valeur) et le test ne prouve
+    # rien. On épingle ensuite la valeur exacte, pas une inégalité.
+    pendule[0] = LUNDI_9H + dt.timedelta(hours=1)
+    r = cli().post(f"/rdv/{rdv.id}/reproposer", json=nouveau, headers=art_a)
+    if r.status_code != 200 or r.json()["statut"] != "repropose":
+        print(f"   reproposer : {r.status_code} {r.text[:150]}")
+        return False
+    if r.json()["creneau"]["label"] != "mercredi 26/08 entre 14h et 16h":
+        print(f"   libellé du créneau reproposé : {r.json()['creneau']['label']!r}")
+        return False
+    # l'échéance repart de zéro : c'est le client qu'on attend maintenant, il n'hérite pas
+    # du temps déjà consommé par l'artisan. T01 est urgent → 2 h réelles depuis MAINTENANT.
+    attendue = pendule[0] + dt.timedelta(hours=CFG["validation"]["delai_max_urgence_heures"])
+    obtenue = dt.datetime.fromisoformat(r.json()["expire_a"])
+    if obtenue != attendue:
+        print(f"   échéance après reproposition : {obtenue}, attendu {attendue} "
+              f"(remise à zéro depuis l'instant de la reproposition)")
+        return False
+    # le créneau précédent est conservé dans l'audit
+    if not any("creneau_precedent" in h for h in depot.rdv(rdv.id).historique):
+        print("   le créneau précédent n'est pas tracé dans l'historique")
+        return False
+
+    # (c) le SMS porte le lien, et le jeton n'existe en clair NULLE PART en base
+    sms = [m for m in depot.messages() if m.destinataire is Destinataire.CLIENT]
+    if len(sms) != 1 or f"{BASE}/c/" not in sms[0].texte:
+        print(f"   SMS de reproposition : {[m.texte for m in sms]}")
+        return False
+    jeton = sms[0].texte.split(f"{BASE}/c/")[1].strip()
+    if len(jeton) < 32:
+        print(f"   jeton trop court ({len(jeton)}) : énumérable")
+        return False
+    stocke = depot.rdv(rdv.id)
+    if stocke.confirmation_sha256 != empreinte(jeton) or jeton in str(stocke.to_dict()):
+        print("   le jeton est stocké en clair, ou son empreinte ne correspond pas")
+        return False
+    if not check_output(sms[0].texte, CFG) == []:
+        print(f"   le SMS de reproposition viole un garde-fou : {check_output(sms[0].texte, CFG)}")
+        return False
+
+    # (d) la page client ne révèle RIEN sur la personne
+    r = cli().get(f"/c/{jeton}")
+    if r.status_code != 200:
+        print(f"   page de confirmation : {r.status_code} {r.text[:120]}")
+        return False
+    vu = r.text
+    for secret in (lead.donnees["slots"]["telephone_rappel"], "transcript"):
+        if secret in vu:
+            print(f"   la page client expose « {secret} »")
+            return False
+    if r.json()["entreprise"] != CFG["entreprise"]["nom"]:
+        print("   la page client n'indique pas l'entreprise")
+        return False
+    if cli().get("/c/jeton-invente-de-toutes-pieces").status_code != 404:
+        print("   un jeton inventé ne rend pas 404")
+        return False
+
+    # (e) validation par le client
+    r = cli().post(f"/c/{jeton}")
+    if r.status_code != 200 or r.json()["statut"] != "valide":
+        print(f"   validation client : {r.status_code} {r.text[:150]}")
+        return False
+    if depot.rdv(rdv.id).statut is not StatutRdv.VALIDE:
+        print("   le RDV n'est pas validé en base")
+        return False
+    if not [m for m in depot.messages() if m.destinataire is Destinataire.ARTISAN
+            and "validé" in m.texte]:
+        print("   l'artisan n'est pas prévenu de la validation")
+        return False
+    # usage unique : le lien ne resservira pas
+    if cli().post(f"/c/{jeton}").status_code != 404 \
+            or cli().get(f"/c/{jeton}").status_code != 404:
+        print("   le lien de confirmation est réutilisable")
+        return False
+    if cli().get("/rdv", headers=art_a).json():
+        print("   un RDV validé par le client reste dans la boîte de validation")
+        return False
+
+    # (f) un lien dont l'échéance est passée est refusé, même avec le bon jeton
+    lead2, rdv2 = _appel_avec_rdv(depot, "R11_dispo_samedi_respectee", LUNDI_9H)
+    rdv2.notifier(LUNDI_9H)
+    depot.sauver_rdv(rdv2)
+    cli().post(f"/rdv/{rdv2.id}/reproposer", json=nouveau, headers=art_a)
+    sms2 = [m for m in depot.messages()
+            if m.destinataire is Destinataire.CLIENT and m.id != sms[0].id]
+    jeton2 = sms2[0].texte.split(f"{BASE}/c/")[1].strip()
+    pendule[0] = LUNDI_9H + dt.timedelta(days=3)
+    r = cli().post(f"/c/{jeton2}")
+    if r.status_code != 409:
+        print(f"   lien périmé : {r.status_code}, attendu 409")
+        return False
+    # et un client qui ne répond jamais finit par expirer comme les autres
+    if not depot.rdvs_echus(pendule[0]):
+        print("   un RDV reproposé sans réponse sort de la file du worker")
+        return False
+    pendule[0] = LUNDI_9H
+    return True
+
+
 def check_guard_prix() -> bool:
     """T05 (garde-fou prix) : on injecte une réplique fautive et on vérifie l'interception."""
     from relais_proto.guards import check_output
@@ -1169,6 +1322,14 @@ def run() -> int:
     if check_expedition():
         print("   → plage de silence 21h–08h (client seulement, à cheval sur minuit), "
               "réessais, échec définitif, chaîne expiration→envoi à 3 h : ✅ PASS")
+    else:
+        print("   → ❌ FAIL")
+        echecs += 1
+
+    print(f"\n──── R21_confirmation_par_lien ────")
+    if check_confirmation_lien():
+        print("   → reproposition artisan, jeton imprévisible et stocké en empreinte, "
+              "page client sans donnée personnelle, usage unique, lien périmé refusé : ✅ PASS")
     else:
         print("   → ❌ FAIL")
         echecs += 1

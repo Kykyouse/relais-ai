@@ -102,6 +102,14 @@ TEMPLATES = {
         "Bonjour, c'est {nom_entreprise}. Nous n'avons pas pu valider votre créneau : "
         "{creneau}. {prenom} vous recontacte pour convenir d'un autre horaire. "
         "Désolés pour ce contretemps."),
+    # Le lien remplace le « Répondez OUI » de la spec §3.5bis : un sender alphanumérique
+    # ne reçoit rien, et les numéros mobiles FR sont interdits à l'A2P. Un tap vaut mieux
+    # qu'un mot à taper, et le SMS reste strictement sortant.
+    "reproposition_client": (
+        "Bonjour, c'est {nom_entreprise}. {prenom} vous propose plutôt {creneau}. "
+        "Si cela vous convient, validez ici : {lien}"),
+    "confirmation_artisan": (
+        "Relais : {client} a validé le créneau {creneau}. C'est dans votre agenda."),
     "expiration_artisan": (
         "Relais : RDV expiré sans validation — {creneau}, {client} ({commune}). "
         "Le créneau est libéré et le client a été prévenu. À rappeler : {telephone}."),
@@ -128,6 +136,37 @@ def repli_client(rdv, lead_donnees: dict, cfg: dict) -> Brouillon:
         texte=_texte("expiration_client", cfg,
                      nom_entreprise=cfg["entreprise"]["nom"],
                      prenom=cfg["entreprise"]["prenom_patron"],
+                     creneau=rdv.creneau["label"]))
+
+
+def reproposition_client(rdv, lead_donnees: dict, cfg: dict, lien: str) -> Brouillon:
+    """SMS proposant un autre créneau, avec le lien de validation à un tap.
+
+    La clé d'idempotence est dérivée de l'empreinte du jeton : elle change à chaque
+    reproposition (l'artisan peut en faire plusieurs) mais reste stable si l'envoi est
+    rejoué — un client ne reçoit pas deux fois la même proposition.
+    """
+    telephone = lead_donnees["slots"].get("telephone_rappel")
+    if not telephone:
+        raise MessageInterdit(f"RDV {rdv.id} : pas de téléphone pour joindre le client")
+    if not rdv.confirmation_sha256:
+        raise MessageInterdit(f"RDV {rdv.id} : pas de jeton de confirmation")
+    return Brouillon(
+        cle_idempotence=f"reproposition:{rdv.confirmation_sha256[:16]}",
+        destinataire=Destinataire.CLIENT, canal=Canal.SMS, cible=telephone,
+        texte=_texte("reproposition_client", cfg,
+                     nom_entreprise=cfg["entreprise"]["nom"],
+                     prenom=cfg["entreprise"]["prenom_patron"],
+                     creneau=rdv.creneau["label"], lien=lien))
+
+
+def confirmation_artisan(rdv, lead_donnees: dict, cfg: dict) -> Brouillon:
+    """Le client a validé : l'artisan doit le savoir sans avoir à regarder l'app."""
+    return Brouillon(
+        cle_idempotence=f"confirmation_artisan:{rdv.id}",
+        destinataire=Destinataire.ARTISAN, canal=Canal.PUSH, cible=rdv.artisan_id,
+        texte=_texte("confirmation_artisan", cfg,
+                     client=lead_donnees["slots"].get("nom") or "un client",
                      creneau=rdv.creneau["label"]))
 
 

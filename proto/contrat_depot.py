@@ -170,6 +170,30 @@ def verifier(fabrique, cfg: dict) -> list[str]:
     exiger({r.id for r in depot.rdvs_en_attente("art-dupont")} == {rdv2.id},
            "rdvs_en_attente : le RDV en tampon devrait y être, et lui seul")
 
+    # ---- recherche par jeton de confirmation (la seule entrée dont dispose le client) ----
+    from relais_proto.confirmation import creer_jeton
+    jeton, emp = creer_jeton()
+    # on ne repropose que ce qui a été notifié : tampon → repropose est interdit par le
+    # graphe, et c'est voulu (l'artisan ne peut pas contre-proposer avant d'être prévenu)
+    rdv2.notifier(LUNDI_9H)
+    rdv2.reproposer({**rdv2.creneau, "date": "2026-09-01",
+                     "label": "mardi 01/09 entre 08h et 10h"}, cfg, LUNDI_9H, emp)
+    depot.sauver_rdv(rdv2)
+    exiger(depot.rdv(rdv2.id).confirmation_sha256 == emp,
+           "l'empreinte du jeton de confirmation ne fait pas l'aller-retour")
+    trouve = depot.rdv_par_confirmation(emp)
+    exiger(trouve.id == rdv2.id,
+           f"rdv_par_confirmation rend {trouve.id} au lieu de {rdv2.id}")
+    exiger(trouve.statut is StatutRdv.REPROPOSE,
+           f"le statut reproposé ne survit pas ({trouve.statut})")
+    exiger_leve(Introuvable, lambda: depot.rdv_par_confirmation("empreinte-inexistante"),
+                "rdv_par_confirmation(jeton inconnu) doit lever Introuvable")
+    exiger_leve(Introuvable, lambda: depot.rdv_par_confirmation(""),
+                "rdv_par_confirmation('') doit lever Introuvable, pas rendre un RDV")
+    # le jeton en clair ne doit JAMAIS être en base
+    exiger(jeton not in str(depot.rdv(rdv2.id).to_dict()),
+           "le jeton de confirmation est stocké en clair")
+
     # ---- file sortante : idempotence portée par le dépôt ----
     msg, nouveau = depot.enfiler_message(_brouillon("contrat:1"), LUNDI_9H)
     exiger(nouveau, "enfiler_message : premier appel devrait être neuf")

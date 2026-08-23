@@ -543,3 +543,61 @@ Google. Sans objet si l'on part sur un numéro.
 5. Correctif `MockLLM` (`IGNORECASE`) + test R21. Décision fuseaux/DST.
 
 **Prochaine étape :** trancher sender alphanumérique vs numéro, et choisir le fournisseur.
+
+---
+
+## Session du 23/08/2026 (suite) — brique 6 : validation client par LIEN (remplace §3.5bis)
+
+**Arbitrage produit.** SMS **strictement sortant**, et « Répondez OUI » remplacé par un
+**lien à un tap**. Motif : vérifié en séance, les opérateurs français réservent les numéros
+mobiles au P2P (interdits à l'A2P), le chemin bidirectionnel passe par un numéro `09 3X`
+« SMS conversationnel », et la Charte Business Messaging de l'AF2M du **1er mars 2026**
+durcit la validation des Sender ID. Le lien supprime d'un coup le numéro dédié, la
+conformité entrante et la brique « lecture des SMS reçus ». Fournisseur : Geoffrey instruit
+OVHcloud (téléphonie + SIP + Time2Chat chez le même acteur, français, UE) ; l'adaptateur
+attend des identifiants.
+
+**Fait.**
+- `rdv.py` : nouvel état **`repropose`** (en attente DU CLIENT, non terminal),
+  `reproposer()` et `confirmer_par_client()`.
+- `confirmation.py` : jetons de 32 octets d'aléa, **empreinte SHA-256 seule en base**,
+  usage unique, échéance opposée.
+- API : `POST /rdv/{id}/reproposer` (artisan), `GET /c/{jeton}` et `POST /c/{jeton}`
+  (client, sans authentification — le jeton EST son authentification).
+- `messages.py` : gabarits `reproposition_client` (avec le lien) et `confirmation_artisan`.
+- `calendar_stub.libelle_creneau` extrait : le libellé prononcé à l'appelant et celui écrit
+  dans le SMS ont désormais **une seule source**.
+- Migration 003 (colonne + index unique sur le jeton + statut au check + les deux index
+  partiels élargis), appliquée et vérifiée sur Supabase.
+- Test **R21** + mutations **7/7**. Suite : **25 PASS**. Postgres : vert.
+
+**Décisions de sécurité, toutes dans le domaine et non dans l'API.**
+- Le jeton n'existe en clair que dans le SMS. Le contrat vérifie qu'il **n'apparaît nulle
+  part en base**.
+- Usage unique : effacé à la validation. Un lien rejoué rend 404, sans distinguer « déjà
+  utilisé » de « jamais existé » — on ne renseigne pas un attaquant.
+- L'échéance est opposée au lien comme au tap de l'artisan.
+- La page client est volontairement pauvre : entreprise, prénom de l'artisan, créneau.
+  **Ni nom, ni téléphone, ni transcript** — l'URL vaut capacité, quiconque la possède ne
+  doit rien apprendre sur la personne. Vérifié par assertion.
+- `RELAIS_BASE_URL` est **exigée au démarrage** : un lien pointant sur un mauvais domaine
+  est mort chez le client sans provoquer la moindre erreur côté serveur.
+
+**Deux fois où le test avait raison contre moi.**
+1. La matrice de transitions de R15 est écrite **en dur** : ajouter `repropose` a fait
+   échouer le test, ce qui a forcé une décision explicite (l'artisan garde le droit de
+   trancher lui-même un RDV reproposé) au lieu de laisser le test suivre le code.
+2. Mon assertion « l'échéance repart de zéro » passait à tort avec une horloge figée :
+   remise à zéro depuis le même instant → même valeur. Horloge avancée d'une heure et
+   valeur exacte épinglée. Une mutation de mon script de mutation était elle aussi
+   inopérante (`hashlib` importé dans la fonction, pas au module) — corrigée, le cas
+   « lien réutilisable » est bien attrapé.
+
+**Reste pour clore la phase backend.**
+1. Adaptateur OVH derrière le port `Envoyeur` (attend les identifiants).
+2. `artisan_id` sur `message_sortant` (migration 004) — `worker.py` refuse toujours
+   plusieurs artisans.
+3. Push réel vers l'app. Correctif `MockLLM` (`IGNORECASE`). Décision fuseaux/DST.
+
+**Prochaine étape :** l'app mobile qui consomme `GET /rdv`, ou l'adaptateur OVH dès que tu
+as les accès.

@@ -143,13 +143,15 @@ class DepotPostgres:
 
     # ---- RDV ----
     _COLS_RDV = ("id, lead_id, artisan_id, creneau, duree_min, urgence, statut, "
-                 "expire_a, cree_a, notifie_a, decide_a, historique")
+                 "expire_a, cree_a, notifie_a, decide_a, historique, "
+                 "confirmation_sha256")
 
     @staticmethod
     def _rdv_de_ligne(l: tuple) -> Rdv:
         return Rdv(id=str(l[0]), lead_id=str(l[1]), artisan_id=l[2], creneau=l[3],
                    duree_min=l[4], urgence=l[5], statut=StatutRdv(l[6]), expire_a=l[7],
-                   cree_a=l[8], notifie_a=l[9], decide_a=l[10], historique=l[11])
+                   cree_a=l[8], notifie_a=l[9], decide_a=l[10], historique=l[11],
+                   confirmation_sha256=l[12])
 
     def creer_rdv(self, *, lead_id: str, hold: dict, lead_donnees: dict, cfg: dict,
                   maintenant: dt.datetime) -> Rdv:
@@ -159,10 +161,10 @@ class DepotPostgres:
                               cfg=cfg, maintenant=maintenant)
         self._executer(
             f"insert into rdv ({self._COLS_RDV}) values "
-            "(%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s)",
+            "(%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s)",
             (rdv.id, rdv.lead_id, rdv.artisan_id, _json(rdv.creneau), rdv.duree_min,
              rdv.urgence, rdv.statut.value, rdv.expire_a, rdv.cree_a, rdv.notifie_a,
-             rdv.decide_a, _json(rdv.historique)))
+             rdv.decide_a, _json(rdv.historique), rdv.confirmation_sha256))
         return rdv
 
     def rdv(self, rdv_id: str) -> Rdv:
@@ -175,9 +177,11 @@ class DepotPostgres:
         self._uuid(rdv.id, rdv.id)
         if not self._executer(
                 "update rdv set statut = %s, expire_a = %s, notifie_a = %s, "
-                "decide_a = %s, historique = %s, creneau = %s where id = %s",
+                "decide_a = %s, historique = %s, creneau = %s, "
+                "confirmation_sha256 = %s where id = %s",
                 (rdv.statut.value, rdv.expire_a, rdv.notifie_a, rdv.decide_a,
-                 _json(rdv.historique), _json(rdv.creneau), rdv.id)):
+                 _json(rdv.historique), _json(rdv.creneau),
+                 rdv.confirmation_sha256, rdv.id)):
             raise Introuvable(rdv.id)
 
     def rdvs_en_attente(self, artisan_id: str) -> list[Rdv]:
@@ -190,6 +194,13 @@ class DepotPostgres:
             f"select {self._COLS_RDV} from rdv where statut = any(%s) "
             "and expire_a <= %s order by expire_a",
             (list(_NON_TERMINAUX), maintenant))]
+
+    def rdv_par_confirmation(self, empreinte: str) -> Rdv:
+        if not empreinte:
+            raise Introuvable("jeton vide")
+        return self._rdv_de_ligne(self._un(
+            f"select {self._COLS_RDV} from rdv where confirmation_sha256 = %s",
+            (empreinte,), "jeton de confirmation inconnu"))
 
     # ---- file sortante ----
     _COLS_MSG = ("id, cle_idempotence, destinataire, canal, cible, texte, statut, "

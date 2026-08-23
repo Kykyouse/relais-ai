@@ -10,6 +10,16 @@ import datetime as dt
 JOURS_FR = ["lundi", "mardi", "mercredi", "jeudi", "vendredi", "samedi", "dimanche"]
 
 
+def libelle_creneau(d: dt.date, de: str, a: str, aujourd_hui: dt.date) -> str:
+    """Le libellé prononcé à l'appelant ET écrit dans le SMS de reproposition. UNE seule
+    source : si l'API le reconstruisait de son côté, l'agent et le SMS finiraient par ne
+    plus dire la même chose du même créneau."""
+    jour = ("aujourd'hui" if d == aujourd_hui else
+            "demain" if d == aujourd_hui + dt.timedelta(days=1) else
+            f"{JOURS_FR[d.weekday()]} {d.day:02d}/{d.month:02d}")
+    return f"{jour} entre {de.replace(':00', 'h')} et {a.replace(':00', 'h')}"
+
+
 class CalendarStub:
     def __init__(self, config: dict, now: dt.datetime | None = None,
                  urgences_consommees_aujourdhui: int = 0, jours_pleins: int = 0):
@@ -78,11 +88,8 @@ class CalendarStub:
         return slots[skip:skip + n]
 
     def _mk(self, d: dt.date, de: str, a: str, urgence: bool = False) -> dict:
-        label_jour = "aujourd'hui" if d == self.now.date() else (
-            "demain" if d == self.now.date() + dt.timedelta(days=1)
-            else f"{JOURS_FR[d.weekday()]} {d.day:02d}/{d.month:02d}")
         return {"date": d.isoformat(), "de": de, "a": a, "urgence": urgence,
-                "label": f"{label_jour} entre {de.replace(':00', 'h')} et {a.replace(':00', 'h')}"}
+                "label": libelle_creneau(d, de, a, self.now.date())}
 
     # ---- sérialisation (l'état d'appel doit survivre au process : cf. Conversation.to_dict) ----
     def to_dict(self) -> dict:

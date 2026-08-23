@@ -22,6 +22,7 @@ from enum import Enum
 class StatutRdv(str, Enum):
     TAMPON = "tampon"                                # créneau bloqué, artisan pas encore notifié
     EN_ATTENTE_VALIDATION = "en_attente_validation"  # notifié, l'artisan peut décider
+    REPROPOSE = "repropose"                          # autre créneau proposé, en attente DU CLIENT
     VALIDE = "valide"
     REFUSE = "refuse"
     EXPIRE = "expire"
@@ -34,7 +35,11 @@ TERMINAUX = frozenset({StatutRdv.VALIDE, StatutRdv.REFUSE, StatutRdv.EXPIRE})
 TRANSITIONS: dict[StatutRdv, frozenset[StatutRdv]] = {
     StatutRdv.TAMPON: frozenset({StatutRdv.EN_ATTENTE_VALIDATION, StatutRdv.EXPIRE}),
     StatutRdv.EN_ATTENTE_VALIDATION: frozenset({StatutRdv.VALIDE, StatutRdv.REFUSE,
-                                                StatutRdv.EXPIRE}),
+                                                StatutRdv.REPROPOSE, StatutRdv.EXPIRE}),
+    # en attente du client : il confirme, ou l'échéance passe et le repli s'applique.
+    # Non terminal, donc toujours dans la file du worker — un client qui ne répond pas
+    # ne laisse pas un créneau bloqué indéfiniment.
+    StatutRdv.REPROPOSE: frozenset({StatutRdv.VALIDE, StatutRdv.REFUSE, StatutRdv.EXPIRE}),
     StatutRdv.VALIDE: frozenset(),
     StatutRdv.REFUSE: frozenset(),
     StatutRdv.EXPIRE: frozenset(),
@@ -119,6 +124,10 @@ class Rdv:
     statut: StatutRdv = StatutRdv.TAMPON
     notifie_a: dt.datetime | None = None
     decide_a: dt.datetime | None = None
+    # empreinte SHA-256 du jeton de confirmation client. Jamais le jeton en clair : il part
+    # dans un SMS, il vaut capacité — une fuite de base ne doit pas permettre de confirmer
+    # des rendez-vous à la place des clients.
+    confirmation_sha256: str | None = None
     historique: list[dict] = field(default_factory=list)
 
     CHAMPS_CRENEAU = ("date", "de", "a", "label", "urgence")
@@ -189,6 +198,42 @@ class Rdv:
         self._transition(StatutRdv.REFUSE, maintenant, par)
         self.decide_a = maintenant
 
+    def reproposer(self, nouveau_creneau: dict, cfg: dict, maintenant: dt.datetime,
+                   confirmation_sha256: str, par: str = "artisan") -> None:
+        """L'artisan propose un autre créneau (spec §3.5bis). La main passe au CLIENT.
+
+        Le créneau précédent part dans l'historique : on doit pouvoir dire plus tard ce qui
+        avait été proposé, et quand. Et l'échéance REPART de zéro — c'est maintenant le
+        client qu'on attend, il ne peut pas hériter du temps déjà consommé par l'artisan.
+        """
+        manquants = [c for c in self.CHAMPS_CRENEAU if c not in nouveau_creneau]
+        if manquants:
+            raise ValueError(f"créneau incomplet, champs manquants : {manquants}")
+        self._refuser_si_echu(maintenant)
+        ancien = dict(self.creneau)
+        self._transition(StatutRdv.REPROPOSE, maintenant, par)
+        self.creneau = {c: nouveau_creneau.get(c) for c in self.CHAMPS_CRENEAU}
+        self.expire_a = calculer_expiration(cfg, self.urgence, maintenant)
+        self.confirmation_sha256 = confirmation_sha256
+        self.historique[-1]["creneau_precedent"] = ancien
+
+    def confirmer_par_client(self, jeton: str, maintenant: dt.datetime) -> None:
+        """Le client confirme via le lien reçu par SMS. Le jeton EST l'authentification :
+        il n'a pas de compte. D'où trois vérifications en dur, dans le domaine et pas dans
+        l'API — comparaison à temps constant, échéance opposée, et usage unique."""
+        import hashlib
+        import secrets as _secrets
+        if not self.confirmation_sha256:
+            raise TransitionInterdite(
+                f"RDV {self.id} : aucune confirmation client attendue")
+        empreinte = hashlib.sha256((jeton or "").encode("utf-8")).hexdigest()
+        if not _secrets.compare_digest(self.confirmation_sha256, empreinte):
+            raise TransitionInterdite(f"RDV {self.id} : jeton de confirmation invalide")
+        self._refuser_si_echu(maintenant)
+        self._transition(StatutRdv.VALIDE, maintenant, "client")
+        self.decide_a = maintenant
+        self.confirmation_sha256 = None   # usage unique : le lien ne resservira pas
+
     def expirer(self, maintenant: dt.datetime, par: str = "systeme") -> None:
         if not self.est_echu(maintenant):
             raise TransitionInterdite(
@@ -203,6 +248,7 @@ class Rdv:
         d = {"id": self.id, "lead_id": self.lead_id, "artisan_id": self.artisan_id,
              "creneau": dict(self.creneau), "duree_min": self.duree_min,
              "urgence": self.urgence, "statut": self.statut.value,
+             "confirmation_sha256": self.confirmation_sha256,
              "historique": [dict(h) for h in self.historique]}
         for c in self.HORODATAGES:
             h = getattr(self, c)
@@ -216,4 +262,5 @@ class Rdv:
         return cls(id=d["id"], lead_id=d["lead_id"], artisan_id=d["artisan_id"],
                    creneau=dict(d["creneau"]), duree_min=d["duree_min"],
                    urgence=d["urgence"], statut=StatutRdv(d["statut"]),
+                   confirmation_sha256=d.get("confirmation_sha256"),
                    historique=[dict(h) for h in d["historique"]], **horodatages)

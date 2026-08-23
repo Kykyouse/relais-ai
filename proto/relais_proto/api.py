@@ -17,7 +17,9 @@ from fastapi import Depends, FastAPI, Header, HTTPException, Request
 from fastapi.responses import JSONResponse
 from pydantic import BaseModel, Field
 
-from .calendar_stub import CalendarStub
+from . import messages
+from .calendar_stub import CalendarStub, libelle_creneau
+from .confirmation import creer_jeton, empreinte, lien
 from .depot import Introuvable
 from .engine import Conversation
 from .rdv import TransitionInterdite
@@ -77,8 +79,25 @@ class TourOut(BaseModel):
     rdv_id: str | None = None
 
 
+class ReproposerIn(BaseModel):
+    date: str                   # AAAA-MM-JJ
+    de: str                     # "14:00"
+    a: str                      # "16:00"
+
+
+class PropositionOut(BaseModel):
+    """Ce que voit le client au bout du lien. Aucune donnée le concernant : l'URL vaut
+    capacité, elle ne doit rien révéler sur la personne."""
+    entreprise: str
+    prenom: str
+    creneau: dict
+    statut: str
+    expire_a: dt.datetime
+
+
 # ------------------------------------------------------------------ fabrique
-def creer_app(depot, registre: Registre, fabrique_llm, horloge=None) -> FastAPI:
+def creer_app(depot, registre: Registre, fabrique_llm, horloge=None,
+              base_url: str = "https://relais.example") -> FastAPI:
     """Collaborateurs injectés explicitement plutôt que par variables globales : les tests
     passent un dépôt mémoire, un MockLLM et une horloge figée, la prod un dépôt Postgres."""
     maintenant = horloge or (lambda: dt.datetime.now())
@@ -210,5 +229,79 @@ def creer_app(depot, registre: Registre, fabrique_llm, horloge=None) -> FastAPI:
     @app.post("/rdv/{rdv_id}/refuser", response_model=RdvOut)
     def refuser(rdv_id: str, artisan: Artisan = Depends(artisan_authentifie)) -> RdvOut:
         return _decider(rdv_id, artisan, "refuser")
+
+    @app.post("/rdv/{rdv_id}/reproposer", response_model=RdvOut)
+    def reproposer(rdv_id: str, corps: ReproposerIn,
+                   artisan: Artisan = Depends(artisan_authentifie)) -> RdvOut:
+        """L'artisan propose un autre créneau (spec §3.5bis). Le client reçoit un SMS avec
+        un lien de validation à un tap — pas un « Répondez OUI » : un sender alphanumérique
+        ne reçoit rien, et les numéros mobiles FR sont interdits à l'A2P."""
+        rdv = _rdv_de_l_artisan(rdv_id, artisan)
+        t = maintenant()
+        try:
+            jour = dt.date.fromisoformat(corps.date)
+        except ValueError:
+            raise HTTPException(422, "date attendue au format AAAA-MM-JJ") from None
+        creneau = {"date": corps.date, "de": corps.de, "a": corps.a, "urgence": False,
+                   # même fonction que le calendrier : le libellé lu par le client est
+                   # celui qu'aurait prononcé l'agent
+                   "label": libelle_creneau(jour, corps.de, corps.a, t.date())}
+        jeton, empreinte_jeton = creer_jeton()
+        try:
+            rdv.reproposer(creneau, artisan.config, t, empreinte_jeton)
+            # message construit AVANT l'écriture : si le gabarit refuse (pas de téléphone,
+            # garde-fou), rien n'est persisté et l'artisan voit un 409 franc
+            brouillon = messages.reproposition_client(
+                rdv, depot.lead(rdv.lead_id).donnees, artisan.config,
+                lien(base_url, jeton))
+        except (TransitionInterdite, ValueError, messages.MessageInterdit) as exc:
+            raise HTTPException(409, str(exc)) from None
+        # écriture d'abord, mise en file ensuite : la validité du lien dépend de l'état
+        # persisté. L'ordre inverse enverrait un lien mort si l'écriture échouait.
+        depot.sauver_rdv(rdv)
+        depot.enfiler_message(brouillon, t)
+        return _en_sortie(rdv)
+
+    # ---- porte client : le jeton EST l'authentification (le client n'a pas de compte) ----
+    def _rdv_du_jeton(jeton: str):
+        return depot.rdv_par_confirmation(empreinte(jeton))   # 404 si inconnu ou consommé
+
+    def _proposition(rdv, artisan: Artisan) -> PropositionOut:
+        return PropositionOut(entreprise=artisan.config["entreprise"]["nom"],
+                              prenom=artisan.config["entreprise"]["prenom_patron"],
+                              creneau=rdv.creneau, statut=rdv.statut.value,
+                              expire_a=rdv.expire_a)
+
+    @app.get("/c/{jeton}", response_model=PropositionOut)
+    def voir_proposition(jeton: str) -> PropositionOut:
+        """Page vue par le client. Volontairement pauvre : nom de l'entreprise, prénom de
+        l'artisan, créneau. **Ni son nom, ni son téléphone, ni le transcript** — l'URL vaut
+        capacité, quiconque la possède ne doit rien apprendre de la personne."""
+        rdv = _rdv_du_jeton(jeton)
+        artisan = registre.artisan(rdv.artisan_id)
+        if artisan is None:
+            raise HTTPException(409, "artisan introuvable au registre")
+        return _proposition(rdv, artisan)
+
+    @app.post("/c/{jeton}", response_model=PropositionOut)
+    def confirmer(jeton: str) -> PropositionOut:
+        rdv = _rdv_du_jeton(jeton)
+        artisan = registre.artisan(rdv.artisan_id)
+        if artisan is None:
+            raise HTTPException(409, "artisan introuvable au registre")
+        t = maintenant()
+        try:
+            rdv.confirmer_par_client(jeton, t)
+        except TransitionInterdite as exc:
+            raise HTTPException(409, str(exc)) from None
+        depot.sauver_rdv(rdv)
+        # l'artisan doit l'apprendre sans avoir à ouvrir l'app
+        try:
+            depot.enfiler_message(
+                messages.confirmation_artisan(rdv, depot.lead(rdv.lead_id).donnees,
+                                              artisan.config), t)
+        except messages.MessageInterdit:
+            pass          # la validation du client compte, la notification est secondaire
+        return _proposition(rdv, artisan)
 
     return app
