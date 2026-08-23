@@ -389,3 +389,50 @@ Suite : **22 PASS**. L'adaptateur Postgres n'a toujours **pas** tourné.
 **Prochaine étape :** Geoffrey renseigne les deux chaînes, puis
 `python run_depot_pg.py --migrer --autoriser-truncate`. La connexion retenue sur cette
 machine sera notée ici.
+
+---
+
+## Session du 23/08/2026 (suite) — Postgres VALIDÉ sur Supabase
+
+**La brique 3 est finie.** `run_depot_pg.py --migrer --autoriser-truncate` passe : contrat du
+port ✅, worker d'expiration sur Postgres ✅. Rejoué ensuite sans drapeaux : ✅ (le marqueur
+persiste, comme prévu). Suite mock toujours **22 PASS**.
+
+**Connexion qui fonctionne sur cette machine : la CONNEXION DIRECTE**
+(`db.<ref>.supabase.co:5432`). Aucun repli sur le pooler nécessaire — le réseau atteint
+l'hôte direct. `DATABASE_URL_POOLER` reste renseigné comme filet ; le lanceur basculera tout
+seul si la directe cesse de répondre (autre réseau, IPv4 seul).
+
+**Deux blocages au premier lancement, aucun dans le SQL.**
+1. `.env` portait encore `DATABASE_URL_TEST` (nom d'avant le renommage) et la chaîne du
+   pooler avait été collée **sans nom de variable**. Corrigé par ancrage, sans lire les
+   valeurs ; sauvegarde `.env.bak.avant-renommage` (couverte par `.gitignore`).
+2. `psycopg` n'était pas installé (pas de venv, Python 3.13 global) → installé, 3.3.4.
+
+**Le SQL est passé du premier coup.** Ce n'est pas de la chance : les deux
+incompatibilités réelles (cast d'un id non-UUID, tuples du transcript rendus en listes par
+jsonb) avaient été trouvées par relecture juste avant, et corrigées. C'est la relecture qui
+a payé, pas l'écriture.
+
+**Vérifié plutôt que cru** — un « ✅ du premier coup » méritait des preuves :
+- écritures réelles : 5 appels, 5 leads, 5 RDV, 6 messages en base ;
+- cycle de vie complet traversé côté Postgres : `valide` ×1, `expire` ×3,
+  `en_attente_validation` ×1 ; file sortante 3 SMS client + 3 push artisan ;
+- `jsonb` correctement typé sur les 5 RDV (`creneau` objet, `historique` tableau) ;
+- les 5 appels portent un `etat_conversation` versionné (clé `v` présente en base) ;
+- **contrôle négatif** : avec `sauver_rdv` neutralisé, le contrat remonte 5 écarts — la
+  suite exerce donc réellement Postgres, elle ne passe pas à vide.
+
+**Définition de « terminé » de la phase : le point 1 est atteint.** Un RDV traverse en base
+tampon → validé ET tampon → expiré → SMS de repli en file. Restent : l'API HTTP et l'envoi
+SMS réel.
+
+**Reste pour clore la phase backend.**
+1. API FastAPI : `build_lead()` figé en Pydantic, auth artisan + auth webhook distinctes,
+   T01 rejoué en HTTP (un tour = une requête, aucune session en mémoire).
+2. Adaptateur d'envoi SMS + plage de non-envoi 21 h–08 h.
+3. Correctif `MockLLM` (regex de nom sans `IGNORECASE`) avec son test R19.
+4. Décision fuseaux/DST avant la prod (cf. entrée brique 3).
+5. `FOR UPDATE SKIP LOCKED` quand plusieurs workers tourneront (optimisation, pas justesse).
+
+**Prochaine étape convenue :** l'API FastAPI.
