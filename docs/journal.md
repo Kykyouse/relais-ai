@@ -74,17 +74,28 @@ python run_llm_eval.py [--mock] [--n 3]             # éval appelant-simulé
    `timestamp` sans fuseau. Avec 24 h de délai réel, une échéance posée la veille du
    basculement vaut 23 h ou 25 h. **À trancher avant la prod**, c'est une décision de
    conception, pas un détail.
-2. **Fournisseur SMS** — OVHcloud à instruire (voix + SIP + SMS chez le même acteur, UE).
-3. **`FOR UPDATE SKIP LOCKED`** quand plusieurs workers tourneront (optimisation, pas
+2. **Fournisseur SMS** — choix ouvert et **réversible** (tout passe par le port
+   `Envoyeur`). Depuis le flux par lien, le seul besoin est : envoyer un SMS transactionnel
+   vers un mobile FR avec un **sender ID alphanumérique déclaré**. Critère de sélection =
+   qualité du processus de déclaration du Sender ID (Charte AF2M du 01/03/2026), + DPA et
+   hébergement UE. Candidats FR/UE équivalents : OVHcloud, LinkMobility, Octopush,
+   SMSFactor, Brevo. Aucune clé n'est nécessaire tant que l'adaptateur n'existe pas
+   (`EnvoyeurJournal` par défaut) ; le jour où l'on en crée, la porter au strict minimum
+   (chez OVH : consumer key limité à `POST /sms/*`, avec expiration).
+3. **Fournisseur de NUMÉROS / plateforme vocale** — décision distincte de la précédente,
+   et à ne pas anticiper : les plateformes managées (Vapi, Retell) fournissent leurs propres
+   numéros ou s'intègrent en trunk SIP. Prendre des numéros chez un opérateur avant d'avoir
+   choisi la plateforme créerait une double tuyauterie à réconcilier.
+4. **`FOR UPDATE SKIP LOCKED`** quand plusieurs workers tourneront (optimisation, pas
    justesse : l'unicité de la clé d'idempotence protège déjà le client).
-4. **Table `artisan`** + FK, en remplacement du registre fichier.
-5. Formulation « d'ici 24 heures » à l'oral, un peu mécanique — à retoucher sciemment
+5. **Table `artisan`** + FK, en remplacement du registre fichier.
+6. Formulation « d'ici 24 heures » à l'oral, un peu mécanique — à retoucher sciemment
    (phrase verbatim et testée).
 
 ## Prochaine étape
 
-L'app mobile qui consomme `GET /rdv` (c'est là que la validation 1-tap devient tangible),
-ou l'adaptateur OVH dès que les accès existent.
+L'app mobile qui consomme `GET /rdv` — c'est là que la validation 1-tap devient tangible,
+et c'est indépendant de tout fournisseur.
 
 ---
 
@@ -728,3 +739,37 @@ désormais avec les **deux** artisans du registre : 6 messages examinés à 22 h
 4. `FOR UPDATE SKIP LOCKED` quand plusieurs workers tourneront.
 
 **Prochaine étape :** l'app mobile qui consomme `GET /rdv`, ou l'adaptateur OVH.
+
+---
+
+## Session du 23/08/2026 (fin) — correction : OVH était retenu pour une raison périmée
+
+**Question posée par Geoffrey (via Claude Desktop) :** « Pourquoi OVH précisément, et pour
+quel usage : l'envoi de SMS, ou les numéros de téléphone ? »
+
+**Réponse honnête : OVH était mon candidat pour la mauvaise raison.** Mon raisonnement
+reposait sur une contrainte — *un seul numéro doit porter la voix ET le SMS, pour que les
+réponses du client reviennent sur le numéro Relais* — qui faisait d'OVH le seul acteur
+plausible (voix + SIP + SMS chez le même fournisseur). **La décision du lien à un tap a
+supprimé cette contrainte** : sans SMS entrant, il n'y a plus rien à faire revenir, et voix
+et SMS se découplent entièrement. Je l'avais entrevu sur le moment sans mettre la
+recommandation à jour : elle est restée dans ce journal avec sa justification morte.
+
+**Deux décisions désormais séparées.**
+- **SMS** : choix ouvert et réversible (port `Envoyeur`). OVH reste défendable (FR, UE,
+  §9) mais n'est plus spécialement motivé. Le critère a changé : le flux par lien ne
+  demande qu'un SMS transactionnel sortant avec **sender ID alphanumérique déclaré**, donc
+  ce qui compte est la **qualité du processus de déclaration** (Charte AF2M du 01/03/2026),
+  pas le catalogue téléphonie.
+- **Numéros / voix** : ne rien anticiper. Les plateformes managées (Vapi, Retell)
+  fournissent leurs numéros ou s'intègrent en trunk SIP ; prendre des numéros avant d'avoir
+  choisi la plateforme créerait une double tuyauterie. Le choix du fournisseur de numéros
+  **découle** du choix de plateforme vocale, qui n'est pas fait.
+
+**Sur les clés d'API.** Aucune n'est nécessaire tant que l'adaptateur n'existe pas :
+`EnvoyeurJournal` est le mode par défaut et rien ne part. Le jour où l'on en crée, droits
+au strict minimum — chez OVH, un consumer key limité à `POST /sms/*`, avec expiration, et
+surtout pas de `/*` ni de `GET /me/*`.
+
+**Leçon.** Une recommandation dont la prémisse tombe doit être révisée explicitement, pas
+laissée en place « au cas où ». Elle avait survécu deux entrées de journal.

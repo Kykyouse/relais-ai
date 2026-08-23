@@ -151,6 +151,12 @@ cible < 1 s par tour ; annonce IA < 5 s ; repli si STT/TTS down = message pré-e
 ❓ Non décidés : le fournisseur, le coût cible par minute, la voix (genre, ton, prénom de
 l'assistant ?), enregistrement audio (V1 : transcript seul — décision RGPD à confirmer).
 
+**Le fournisseur de NUMÉROS découle de ce choix, il ne le précède pas** (précision du
+23/08). Les plateformes managées fournissent leurs propres numéros ou s'intègrent en trunk
+SIP : prendre des numéros chez un opérateur avant d'avoir tranché la plateforme créerait une
+double tuyauterie à réconcilier. Décision **distincte** du fournisseur SMS, qui n'a plus
+besoin de numéro depuis que le SMS est strictement sortant (§3.5bis, §4).
+
 ## 9. Données, légal, conformité
 
 - ✅ (logique) Chaque lead : horodatage, source, base légale (demande entrante — loi du
