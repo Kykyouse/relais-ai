@@ -21,7 +21,7 @@ push — les trois attendent un fournisseur.
 
 ```bash
 cd proto
-python run_scenario.py                              # 25 tests, ~2 s, sans clé ni base
+python run_scenario.py                              # 26 tests, ~2 s, sans clé ni base
 python run_depot_pg.py [--migrer]                   # contrat du port contre Supabase
 uvicorn serveur:app --port 8000                     # API HTTP
 python worker.py [--a-vide]                         # expiration + expédition (cron)
@@ -37,11 +37,16 @@ python run_llm_eval.py [--mock] [--n 3]             # éval appelant-simulé
 | API HTTP, 2 portes d'auth, 1 tour = 1 requête (R19) | ✅ | mock + câblage réel sur Supabase |
 | Plage de silence, réessais, multi-artisans (R20) | ✅ | mock, mutations 8/8 |
 | Validation client par lien à un tap (R21) | ✅ | mock, mutations 7/7 |
+| Adaptateur OVH : E.164, corps, échecs (R22) | ⚠️ écrit | mock seulement — **jamais envoyé** |
 
 ## Ce qui est encore un double (et non un manque caché)
 
-- **`EnvoyeurJournal`** : aucun fournisseur SMS câblé. Les messages sont journalisés,
-  **rien ne part**. Le port `Envoyeur` attend l'adaptateur (OVH en cours d'instruction).
+- **Envoi SMS** : l'adaptateur OVH (`envoi_ovh.py`) est écrit et testé hors ligne (R22),
+  mais **aucun envoi réel n'a eu lieu** : pas d'identifiants, et le Sender ID n'est pas
+  déclaré. `EnvoyeurJournal` reste le mode par défaut, donc **rien ne part**. Le premier
+  envoi réel se fait à la main : `python envoyer_un_sms.py <num> --envoyer` (blanc par
+  défaut). La forme de réponse d'OVH encodée dans l'adaptateur est une **hypothèse** que ce
+  premier appel confirmera ou démentira.
 - **`CalendarStub`** : applique les vraies règles d'agenda mais n'est relié à aucun
   calendrier. Google/Outlook non branchés (OAuth Google à lancer tôt : délai calendaire).
 - **Pas de voix** : aucune plateforme vocale branchée, aucun numéro. L'API expose déjà les
@@ -773,3 +778,45 @@ surtout pas de `/*` ni de `GET /me/*`.
 
 **Leçon.** Une recommandation dont la prémisse tombe doit être révisée explicitement, pas
 laissée en place « au cas où ». Elle avait survécu deux entrées de journal.
+
+---
+
+## Session du 23/08/2026 (fin) — adaptateur SMS écrit, premier envoi réel à faire
+
+**Question de Geoffrey : « on ne teste pas les SMS tout de suite au final ? »** Report qui
+était mon choix, pas une contrainte — et en répondant « je n'ai besoin d'aucune clé
+aujourd'hui » j'oubliais un principe appliqué depuis deux jours : **la déclaration du Sender
+ID est du temps calendaire**, comme la vérification OAuth Google. Ça se lance tout de suite.
+
+**Deux blocages distincts, à ne pas confondre.**
+- *Tester l'adaptateur* (notre code parle-t-il correctement à OVH, gère-t-il les erreurs,
+  les réessais, l'accusé) → il suffit d'une clé, et une bonne partie se teste sans.
+- *Tester la délivrabilité* vers un mobile FR avec un expéditeur conforme → dépend de la
+  déclaration du Sender ID, qui prend des jours.
+
+**Fait.**
+- `envoi_ovh.py` : adaptateur OVH, **transport injecté** — la signature de requête et le
+  choix d'endpoint restent au SDK officiel, donc hors de notre code. Ce qui est à nous et
+  donc testé : format **E.164** (nous stockons « 0612345678 », OVH veut « +33612345678 »),
+  corps de requête avec `noStopClause` (SMS transactionnel : la clause STOP n'est pas
+  requise et mangerait ~20 caractères utiles), et classification des échecs.
+- **`EchecDefinitif` remonté dans le port** `envoi.py` : ce n'est pas une notion OVH, c'est
+  l'expéditeur qui doit savoir ne pas s'acharner. Un numéro invalide sort de la file **au
+  premier passage** au lieu d'user trois tentatives et de retarder les autres messages.
+- `envoyer_un_sms.py` : premier envoi réel, à la main, **blanc par défaut** — il faut
+  `--envoyer` pour qu'un SMS parte. Il affiche la **réponse brute** d'OVH, puisque c'est
+  précisément ce qui validera ou démentira l'hypothèse encodée dans l'adaptateur.
+- Test **R22**. Suite : **26 PASS**.
+
+**Ce que R22 ne prouve pas.** Les doubles reproduisent la forme de réponse que je *crois*
+(`ids` / `validReceivers` / `invalidReceivers`). Un test contre ses propres hypothèses ne
+les valide pas : seul le premier appel réel tranche. C'est écrit en tête du module.
+
+**À faire côté Geoffrey.**
+1. Compte OVH + crédits SMS + consumer key limité à `POST /sms/*` avec expiration.
+2. **Lancer la déclaration du Sender ID sans attendre** (délai de plusieurs jours).
+3. `python envoyer_un_sms.py <ton numéro>` puis `--envoyer`, et me rapporter la réponse
+   brute — surtout si elle diverge de l'hypothèse.
+
+**Prochaine étape :** l'app mobile sur `GET /rdv`, indépendante de tout fournisseur ; ou
+brancher l'`EnvoyeurOVH` dans `worker.py` dès que le premier envoi réel a réussi.

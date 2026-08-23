@@ -26,8 +26,15 @@ from .messages import Canal, Destinataire, MessageSortant, StatutMessage
 
 
 class EchecEnvoi(RuntimeError):
-    """Le fournisseur a refusé le message. Transitoire (réseau, quota) ou définitif
-    (numéro invalide) : le worker réessaie jusqu'à `sms.essais_max`, puis marque en échec."""
+    """Le fournisseur a refusé le message, de façon TRANSITOIRE : réseau, quota, 5xx.
+    Le worker réessaie jusqu'à `sms.essais_max`, puis marque en échec."""
+
+
+class EchecDefinitif(EchecEnvoi):
+    """Échec qu'un réessai ne corrigera pas : numéro invalide, expéditeur refusé.
+    Fait partie du contrat du port, pas d'un fournisseur : c'est l'expéditeur qui doit
+    savoir ne pas s'acharner. User trois tentatives sur un numéro faux retarde les autres
+    messages de la file pour rien."""
 
 
 class Envoyeur(Protocol):
@@ -133,7 +140,8 @@ class Expediteur:
                 reference = self.envoyeur.envoyer(message, cfg)
             except Exception as exc:  # noqa: BLE001 — tout échec fournisseur est un échec
                 essais = message.essais + 1
-                definitif = essais >= essais_max
+                # un échec définitif sort de la file immédiatement, sans consommer le quota
+                definitif = isinstance(exc, EchecDefinitif) or essais >= essais_max
                 self.depot.marquer_message_echec(
                     message.id, f"{type(exc).__name__}: {exc}", maintenant,
                     definitif=definitif)

@@ -1249,6 +1249,142 @@ def check_confirmation_lien() -> bool:
     return True
 
 
+def check_adaptateur_ovh() -> bool:
+    """R22 : l'adaptateur OVH. Ce qui est testé ici est ce qui est RÉELLEMENT à nous —
+    format E.164, corps de requête, classification des échecs. La signature de requête est
+    déléguée au SDK officiel et n'est donc pas de notre ressort.
+
+    ⚠️ La forme de réponse attendue (`ids`, `invalidReceivers`) est une HYPOTHÈSE tant
+    qu'aucun envoi réel n'a eu lieu : ces doubles disent ce que je crois, pas ce qui est."""
+    from relais_proto.envoi import EchecDefinitif, EchecEnvoi, Expediteur, StatutMessage
+    from relais_proto.envoi_ovh import EnvoyeurOVH, en_e164
+    from relais_proto.messages import Brouillon, Canal
+
+    # (a) mise au format : nous stockons « 0612345678 », OVH veut « +33612345678 »
+    for entree, attendu in (("06 12 34 56 78", "+33612345678"),
+                            ("0612345678", "+33612345678"),
+                            ("+33612345678", "+33612345678"),
+                            ("0033612345678", "+33612345678"),
+                            ("07.88.11.22.33", "+33788112233")):
+        if en_e164(entree) != attendu:
+            print(f"   E.164 · {entree!r} → {en_e164(entree)!r}, attendu {attendu!r}")
+            return False
+    for mauvais in ("123", "", "abc", "06123456789012345678"):
+        try:
+            en_e164(mauvais)
+        except EchecDefinitif:
+            continue
+        print(f"   E.164 · {mauvais!r} accepté alors qu'il est inexploitable")
+        return False
+
+    msg = MessageSortant(id="m1", cle_idempotence="k1", destinataire=Destinataire.CLIENT,
+                         canal=Canal.SMS, cible="06 12 34 56 78",
+                         texte="Bonjour, votre créneau a changé.", cree_a=LUNDI_9H,
+                         artisan_id="art-dupont")
+
+    # (b) corps de la requête
+    vus = []
+
+    def transport_ok(chemin, **corps):
+        vus.append((chemin, corps))
+        return {"ids": [42], "validReceivers": corps["receivers"], "invalidReceivers": []}
+
+    ref = EnvoyeurOVH(transport_ok, "sms-ab12345-1").envoyer(msg, CFG)
+    chemin, corps = vus[0]
+    if chemin != "/sms/sms-ab12345-1/jobs":
+        print(f"   chemin appelé : {chemin}")
+        return False
+    if corps["receivers"] != ["+33612345678"]:
+        print(f"   destinataire non normalisé : {corps['receivers']}")
+        return False
+    if corps["sender"] != CFG["sms"]["expediteur"]:
+        print(f"   expéditeur : {corps['sender']!r}, attendu la config artisan")
+        return False
+    if corps.get("noStopClause") is not True:
+        print("   noStopClause absent : la clause STOP mangerait 20 caractères utiles "
+              "sur un SMS transactionnel qui n'en a pas besoin")
+        return False
+    if corps["message"] != msg.texte or ref != "ovh:42":
+        print(f"   message ou référence : {corps['message']!r} / {ref!r}")
+        return False
+
+    # (c) classification des échecs — c'est là que se joue le comportement du worker
+    def transport_refuse(chemin, **corps):
+        return {"ids": [], "validReceivers": [], "invalidReceivers": corps["receivers"]}
+
+    def transport_vide(chemin, **corps):
+        return {"ids": [], "validReceivers": corps["receivers"], "invalidReceivers": []}
+
+    def transport_reseau(chemin, **corps):
+        raise ConnectionError("getaddrinfo failed")
+
+    cas = [(transport_refuse, EchecDefinitif, "destinataire refusé"),
+           (transport_vide, EchecEnvoi, "aucun identifiant rendu"),
+           (transport_reseau, EchecEnvoi, "panne réseau")]
+    for transport, attendu, libelle in cas:
+        try:
+            EnvoyeurOVH(transport, "sms-ab12345-1").envoyer(msg, CFG)
+        except attendu as exc:
+            # EchecDefinitif hérite d'EchecEnvoi : pour les cas transitoires il faut
+            # vérifier que ce n'est PAS un définitif, sinon le test ne distingue rien
+            if attendu is EchecEnvoi and isinstance(exc, EchecDefinitif):
+                print(f"   {libelle} classé définitif alors qu'il est réessayable")
+                return False
+            continue
+        except Exception as autre:
+            print(f"   {libelle} : levé {type(autre).__name__}, attendu {attendu.__name__}")
+            return False
+        print(f"   {libelle} : rien levé")
+        return False
+
+    cfg_sans_expediteur = {**CFG, "sms": {k: v for k, v in CFG["sms"].items()
+                                          if k != "expediteur"}}
+    try:
+        EnvoyeurOVH(transport_ok, "sms-ab12345-1").envoyer(msg, cfg_sans_expediteur)
+        print("   expéditeur manquant accepté")
+        return False
+    except EchecDefinitif:
+        pass
+
+    # (d) intégration : un échec DÉFINITIF sort de la file au PREMIER passage, sans
+    # consommer les trois tentatives — sinon on retarde toute la file pour un numéro faux
+    depot = DepotMemoire()
+    brouillon = Brouillon(cle_idempotence="r22:faux", destinataire=Destinataire.CLIENT,
+                          canal=Canal.SMS, cible="pas-un-numero", texte="test",
+                          artisan_id="art-dupont")
+    m, _ = depot.enfiler_message(brouillon, LUNDI_9H)
+    midi = dt.datetime(2026, 8, 24, 12, 0)
+    rapport = Expediteur(depot, EnvoyeurOVH(transport_ok, "sms-ab12345-1"),
+                         cfg_pour).passer(midi)
+    if rapport.echecs != [m.id]:
+        print(f"   numéro invalide : {rapport}, attendu un échec définitif immédiat")
+        return False
+    relu = next(x for x in depot.messages() if x.id == m.id)
+    if relu.statut is not StatutMessage.ECHEC or relu.essais != 1:
+        print(f"   numéro invalide : statut={relu.statut.value}, essais={relu.essais} "
+              f"(attendu echec dès le 1er essai)")
+        return False
+    if not relu.derniere_erreur or "inexploitable" not in relu.derniere_erreur:
+        print(f"   la raison n'est pas exploitable en monitoring : {relu.derniere_erreur!r}")
+        return False
+
+    # (e) et un échec TRANSITOIRE consomme bien ses trois tentatives
+    depot2 = DepotMemoire()
+    m2, _ = depot2.enfiler_message(
+        Brouillon(cle_idempotence="r22:reseau", destinataire=Destinataire.CLIENT,
+                  canal=Canal.SMS, cible="0612345678", texte="test",
+                  artisan_id="art-dupont"), LUNDI_9H)
+    exp = Expediteur(depot2, EnvoyeurOVH(transport_reseau, "sms-ab12345-1"), cfg_pour)
+    for tour in range(1, CFG["sms"]["essais_max"] + 1):
+        exp.passer(midi)
+    relu2 = next(x for x in depot2.messages() if x.id == m2.id)
+    if relu2.essais != CFG["sms"]["essais_max"] \
+            or relu2.statut is not StatutMessage.ECHEC:
+        print(f"   panne réseau : essais={relu2.essais}, statut={relu2.statut.value}")
+        return False
+    return True
+
+
 def check_guard_prix() -> bool:
     """T05 (garde-fou prix) : on injecte une réplique fautive et on vérifie l'interception."""
     from relais_proto.guards import check_output
@@ -1369,6 +1505,14 @@ def run() -> int:
     if check_confirmation_lien():
         print("   → reproposition artisan, jeton imprévisible et stocké en empreinte, "
               "page client sans donnée personnelle, usage unique, lien périmé refusé : ✅ PASS")
+    else:
+        print("   → ❌ FAIL")
+        echecs += 1
+
+    print(f"\n──── R22_adaptateur_ovh ────")
+    if check_adaptateur_ovh():
+        print("   → format E.164, corps de requête (noStopClause), échec définitif "
+              "immédiat vs transitoire réessayé : ✅ PASS")
     else:
         print("   → ❌ FAIL")
         echecs += 1

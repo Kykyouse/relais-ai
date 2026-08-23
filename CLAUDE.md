@@ -16,7 +16,7 @@ Cible V1 : plombiers/chauffagistes FR. Solo dev : Geoffrey (binôme Claude) ; ma
 ```bash
 cd proto
 pip install -r requirements.txt     # anthropic, python-dotenv (inutiles en mock)
-python run_scenario.py              # suite de non-régression (mock, sans clé, ~2 s) — 25 tests
+python run_scenario.py              # suite de non-régression (mock, sans clé, ~2 s) — 26 tests
 python run_llm_eval.py --mock       # plomberie de l'éval appelant-simulé (sans clé)
 python run_llm_eval.py [--n 3] [--only T05]   # éval LLM réel → evals/results-*.json
 python chat.py [--mock]             # conversation interactive (tu joues l'appelant)
@@ -24,6 +24,8 @@ python explore.py                   # banc d'essai libre (cas A–F)
 uvicorn serveur:app --port 8000     # API HTTP (DATABASE_URL, RELAIS_WEBHOOK_SECRET,
                                     #           RELAIS_BASE_URL)
 python worker.py [--a-vide]         # un passage : expiration puis expédition (cron)
+python envoyer_un_sms.py <num> [--envoyer]   # premier envoi REEL, a la main
+                                    # (blanc par defaut : n'envoie rien)
 python run_depot_pg.py [--migrer] [--autoriser-truncate]   # contrat du port Depot
                                     # contre un vrai Postgres. DATABASE_URL (directe) puis
                                     # DATABASE_URL_POOLER en repli. Tronque les tables :
