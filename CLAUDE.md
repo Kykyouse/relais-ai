@@ -20,8 +20,10 @@ python run_llm_eval.py --mock       # plomberie de l'éval appelant-simulé (san
 python run_llm_eval.py [--n 3] [--only T05]   # éval LLM réel → evals/results-*.json
 python chat.py [--mock]             # conversation interactive (tu joues l'appelant)
 python explore.py                   # banc d'essai libre (cas A–F)
-python run_depot_pg.py [--migrer]   # contrat du port Depot contre un vrai Postgres
-                                    # (DATABASE_URL_TEST dans .env ; sort 2 si absente)
+python run_depot_pg.py [--migrer] [--autoriser-truncate]   # contrat du port Depot
+                                    # contre un vrai Postgres. DATABASE_URL (directe) puis
+                                    # DATABASE_URL_POOLER en repli. Tronque les tables :
+                                    # exige un marqueur en base, posé 1 fois. Sort 2 si rien testé.
 ```
 
 Clé API : fichier `.env` à la racine (voir `.env.example`). JAMAIS commité, JAMAIS dans le code.

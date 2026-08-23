@@ -39,9 +39,12 @@ class DepotPostgres:
     """Une connexion, autocommit. Suffisant pour le worker et pour les tests ;
     un pool viendra avec l'API, qui sert plusieurs requêtes en parallèle."""
 
-    def __init__(self, dsn: str):
+    def __init__(self, dsn: str, **options):
+        """`options` passe à psycopg.connect : `prepare_threshold=None` est nécessaire
+        derrière un pooler en mode transaction, qui ne survit pas aux prepared
+        statements que psycopg active de lui-même après quelques exécutions."""
         import psycopg  # import tardif : dépendance optionnelle
-        self.cx = psycopg.connect(dsn, autocommit=True)
+        self.cx = psycopg.connect(dsn, autocommit=True, **options)
 
     def fermer(self) -> None:
         self.cx.close()
@@ -50,6 +53,20 @@ class DepotPostgres:
     @staticmethod
     def _id() -> str:
         return str(uuid.uuid4())
+
+    @staticmethod
+    def _uuid(valeur, cle: str) -> str:
+        """Un identifiant qui n'est même pas un UUID est introuvable par construction.
+
+        Sans ce filtre, Postgres lèverait une erreur de cast là où le dépôt mémoire rend
+        simplement `Introuvable` : deux comportements pour un même appel, et un 500 au
+        lieu d'un 404 le jour où l'API passera directement un id fourni par le client.
+        """
+        try:
+            uuid.UUID(str(valeur))
+        except (ValueError, AttributeError, TypeError):
+            raise Introuvable(cle) from None
+        return str(valeur)
 
     def _un(self, sql: str, params: tuple, cle: str) -> tuple:
         with self.cx.cursor() as cur:
@@ -78,11 +95,13 @@ class DepotPostgres:
         return appel
 
     def enregistrer_etat(self, appel_id: str, etat: dict) -> None:
+        appel_id = self._uuid(appel_id, appel_id)
         if not self._executer("update appel set etat_conversation = %s where id = %s",
                               (_json(etat), appel_id)):
             raise Introuvable(appel_id)
 
     def appel(self, appel_id: str) -> Appel:
+        appel_id = self._uuid(appel_id, appel_id)
         ligne = self._un(
             "select id, artisan_id, debut_a, fin_a, lead_id, etat_conversation "
             "from appel where id = %s", (appel_id,), appel_id)
@@ -105,6 +124,7 @@ class DepotPostgres:
         return lead
 
     def lead(self, lead_id: str) -> Lead:
+        lead_id = self._uuid(lead_id, lead_id)
         ligne = self._un("select id, appel_id, artisan_id, donnees from lead where id = %s",
                          (lead_id,), lead_id)
         return Lead(id=str(ligne[0]), appel_id=str(ligne[1]), artisan_id=ligne[2],
@@ -112,6 +132,7 @@ class DepotPostgres:
 
     def marquer_lead_alerte(self, lead_id: str, motif: str,
                             maintenant: dt.datetime) -> None:
+        lead_id = self._uuid(lead_id, lead_id)
         alerte = {"motif": motif, "horodatage": maintenant.isoformat(timespec="seconds")}
         # jsonb_set ne crée pas la clé sur un objet vide de façon fiable : on fusionne,
         # ce qui écrase une alerte précédente — le comportement voulu (la dernière compte).
@@ -145,11 +166,13 @@ class DepotPostgres:
         return rdv
 
     def rdv(self, rdv_id: str) -> Rdv:
+        rdv_id = self._uuid(rdv_id, rdv_id)
         return self._rdv_de_ligne(
             self._un(f"select {self._COLS_RDV} from rdv where id = %s",
                      (rdv_id,), rdv_id))
 
     def sauver_rdv(self, rdv: Rdv) -> None:
+        self._uuid(rdv.id, rdv.id)
         if not self._executer(
                 "update rdv set statut = %s, expire_a = %s, notifie_a = %s, "
                 "decide_a = %s, historique = %s, creneau = %s where id = %s",
@@ -205,6 +228,7 @@ class DepotPostgres:
             "order by cree_a, id", (statut.value,))]
 
     def marquer_message_envoye(self, message_id: str, maintenant: dt.datetime) -> None:
+        message_id = self._uuid(message_id, message_id)
         if not self._executer(
                 "update message_sortant set statut = %s, envoye_a = %s where id = %s",
                 (StatutMessage.ENVOYE.value, maintenant, message_id)):

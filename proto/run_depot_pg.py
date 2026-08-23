@@ -1,16 +1,23 @@
 #!/usr/bin/env python3
 """Joue la suite de contrat du port `Depot` contre un VRAI Postgres.
 
-    python run_depot_pg.py --migrer     # applique migrations/*.sql puis teste
-    python run_depot_pg.py              # teste seulement
+    python run_depot_pg.py --migrer --autoriser-truncate   # première fois
+    python run_depot_pg.py --migrer                        # après un changement de schéma
+    python run_depot_pg.py                                 # tests seuls
 
-La connexion est lue dans `DATABASE_URL_TEST` (fichier `.env`), **jamais** dans
-`DATABASE_URL`. Ce script TRONQUE les tables avant chaque exécution : le faire pointer
-sur la base de production serait une catastrophe silencieuse. Deux variables distinctes
-rendent l'accident impossible plutôt qu'improbable.
+Connexions lues dans `.env` (racine) :
+  DATABASE_URL          connexion DIRECTE (db.<ref>.supabase.co:5432) — essayée d'abord
+  DATABASE_URL_POOLER   session pooler (...pooler.supabase.com:5432) — repli si la
+                        directe échoue (l'hôte direct est en IPv6 sur les projets récents)
 
-Codes de sortie : 0 = tout passe · 1 = écarts de contrat · 2 = pas de base joignable
-(jamais 0 sans avoir rien testé — un « succès » vide est pire qu'un échec).
+Ce script TRONQUE les tables. La garde n'est pas le nom de la variable ni celui de la base
+— toutes les bases Supabase s'appellent `postgres`, un contrôle par nom ne se déclencherait
+jamais. Elle est un MARQUEUR écrit dans la base, une fois, par `--autoriser-truncate` :
+consentement explicite, porté par la base elle-même, insensible au renommage des variables
+et valable depuis n'importe quelle machine.
+
+Codes de sortie : 0 = tout passe · 1 = écarts de contrat · 2 = rien testé (pas de base,
+pas de marqueur, préparation impossible). Jamais 0 sans avoir rien testé.
 """
 from __future__ import annotations
 
@@ -20,36 +27,88 @@ import sys
 
 MIGRATIONS = pathlib.Path(__file__).parent / "migrations"
 TABLES = ("message_sortant", "rdv", "lead", "appel")  # ordre inverse des dépendances
+MARQUEUR = "relais_base_de_test"
+DELAI_CONNEXION = 8  # secondes : on veut basculer vite sur le pooler, pas attendre
 
 MODE_EMPLOI = """
-Aucune base de test configurée.
+Aucune base configurée.
 
-1. Crée une instance Postgres managée en UE (Neon ou Supabase : offre gratuite suffisante,
-   choisir une région européenne — Frankfurt ou Paris — cf. spec produit §9).
-2. Sur Neon, crée une BRANCHE dédiée aux tests (ou une seconde base sur Supabase) : ce
-   script tronque les tables à chaque exécution.
-3. Ajoute la chaîne de connexion de cette branche dans le fichier `.env` à la racine :
+1. Projet Supabase dédié aux TESTS, région UE (Frankfurt ou Paris — spec produit §9).
+   Un projet à part, pas celui de prod : ce script tronque les tables.
+   (Les « branches » Supabase sont réservées aux plans payants ; sur l'offre gratuite,
+   un second projet est la solution simple.)
+2. Dashboard → bouton « Connect » en haut du projet (ou Settings → Database).
+3. Remplace [YOUR-PASSWORD] par le mot de passe de la base (Settings → Database →
+   Reset database password si perdu). Caractères spéciaux à encoder en %XX.
+4. Colle les DEUX chaînes dans le fichier `.env` À LA RACINE (jamais commité) :
 
-   DATABASE_URL_TEST=postgresql://user:motdepasse@host/dbname?sslmode=require
+   DATABASE_URL=postgresql://postgres:mdp@db.<ref>.supabase.co:5432/postgres?sslmode=require
+   DATABASE_URL_POOLER=postgresql://postgres.<ref>:mdp@aws-0-<region>.pooler.supabase.com:5432/postgres?sslmode=require
 
-4. Installe le pilote :  pip install "psycopg[binary]>=3.2"
-5. Relance :             python run_depot_pg.py --migrer
+5. pip install "psycopg[binary]>=3.2"
+6. python run_depot_pg.py --migrer --autoriser-truncate
 """
 
 
-def _dsn() -> str | None:
+def _charger_env() -> None:
     try:
         from dotenv import load_dotenv
         load_dotenv(pathlib.Path(__file__).parent.parent / ".env")
     except ImportError:
         pass
-    dsn = os.environ.get("DATABASE_URL_TEST")
-    if not dsn and os.environ.get("DATABASE_URL"):
-        print("⚠️  DATABASE_URL est défini mais pas DATABASE_URL_TEST.")
-        print("   Refus délibéré : ce script tronque les tables, il ne touchera jamais")
-        print("   la base désignée par DATABASE_URL. Configure DATABASE_URL_TEST.")
-        return None
-    return dsn
+
+
+def _candidats() -> list[tuple[str, str]]:
+    """(libellé, dsn) dans l'ordre d'essai : directe d'abord, pooler en repli."""
+    paires = [("directe", os.environ.get("DATABASE_URL")),
+              ("session pooler", os.environ.get("DATABASE_URL_POOLER"))]
+    return [(nom, dsn) for nom, dsn in paires if dsn]
+
+
+def _options(dsn: str) -> dict:
+    """Le pooler en mode TRANSACTION (port 6543) casse les prepared statements que
+    psycopg active tout seul après quelques exécutions. On les désactive dans ce cas."""
+    if ":6543/" in dsn or dsn.rstrip("/").endswith(":6543"):
+        print("   ⚠️  pooler en mode transaction détecté (6543) : "
+              "prepared statements désactivés")
+        return {"prepare_threshold": None}
+    return {}
+
+
+def _connecter():
+    """Essaie la directe puis le pooler. Rend (connexion, dsn, libellé, options)."""
+    import psycopg
+    echecs = []
+    for nom, dsn in _candidats():
+        opts = _options(dsn)
+        try:
+            cx = psycopg.connect(dsn, autocommit=True, connect_timeout=DELAI_CONNEXION,
+                                 **opts)
+        except Exception as exc:  # noqa: BLE001 — on veut le message tel quel
+            print(f"   {nom} : ✗ {type(exc).__name__}: {str(exc).strip()[:120]}")
+            echecs.append(nom)
+            continue
+        print(f"   {nom} : ✓ connectée")
+        if echecs:
+            print(f"   → repli sur « {nom} » après échec de : {', '.join(echecs)}")
+        return cx, dsn, nom, opts
+    return None, None, None, None
+
+
+def _marqueur_present(cx) -> bool:
+    with cx.cursor() as cur:
+        cur.execute("select to_regclass(%s) is not null", (MARQUEUR,))
+        return bool(cur.fetchone()[0])
+
+
+def _poser_marqueur(cx) -> None:
+    import socket
+    with cx.cursor() as cur:
+        cur.execute(f"create table if not exists {MARQUEUR} ("
+                    "autorise_le timestamp not null default now(), machine text)")
+        cur.execute(f"insert into {MARQUEUR} (machine) values (%s)",
+                    (socket.gethostname(),))
+    print(f"   marqueur « {MARQUEUR} » posé : cette base est déclarée base de test")
 
 
 def _migrer(cx) -> None:
@@ -65,36 +124,35 @@ def _vider(cx) -> None:
 
 
 def run() -> int:
-    dsn = _dsn()
-    if not dsn:
+    _charger_env()
+    if not _candidats():
         print(MODE_EMPLOI)
         return 2
     try:
-        import psycopg
+        import psycopg  # noqa: F401
     except ImportError:
         print('Pilote absent : pip install "psycopg[binary]>=3.2"')
         return 2
 
-    from contrat_depot import verifier
-    from relais_proto.depot_pg import DepotPostgres
-    from run_scenario import CFG, check_worker_expiration
-
-    try:
-        cx = psycopg.connect(dsn, autocommit=True)
-    except Exception as exc:  # noqa: BLE001 — on veut le message tel quel
-        print(f"Connexion impossible : {type(exc).__name__}: {exc}")
+    print("──── connexion ────")
+    cx, dsn, libelle, opts = _connecter()
+    if cx is None:
+        print("\nAucune des chaînes fournies ne répond. Si la directe échoue en réseau "
+              "IPv4, renseigne DATABASE_URL_POOLER (session pooler, port 5432).")
         return 2
-    # sécurité supplémentaire : on refuse une base dont le nom sent la production
-    nom_base = cx.info.dbname
-    if any(mot in nom_base.lower() for mot in ("prod", "production", "live")):
-        print(f"Refus : la base « {nom_base} » ressemble à une base de production.")
-        cx.close()
-        return 2
-    print(f"Base de test : {nom_base}")
 
     try:
         if "--migrer" in sys.argv:
             _migrer(cx)
+        if "--autoriser-truncate" in sys.argv:
+            _poser_marqueur(cx)
+        if not _marqueur_present(cx):
+            print(f"\nRefus : la table « {MARQUEUR} » est absente de cette base.")
+            print("Ce script tronque les tables. Si — et seulement si — cette base est")
+            print("bien une base de TEST, autorise-la une fois pour toutes :")
+            print("   python run_depot_pg.py --autoriser-truncate")
+            cx.close()
+            return 2
         _vider(cx)
     except Exception as exc:  # noqa: BLE001
         print(f"Préparation impossible : {type(exc).__name__}: {exc}")
@@ -102,15 +160,19 @@ def run() -> int:
         cx.close()
         return 2
 
-    echecs = 0
-    print("\n──── contrat du port Depot ────")
+    from contrat_depot import verifier
+    from relais_proto.depot_pg import DepotPostgres
+    from run_scenario import CFG, check_worker_expiration
+
     depots: list[DepotPostgres] = []
 
     def fabrique():
-        d = DepotPostgres(dsn)
+        d = DepotPostgres(dsn, **opts)
         depots.append(d)
         return d
 
+    echecs = 0
+    print("\n──── contrat du port Depot ────")
     ecarts = verifier(fabrique, CFG)
     for e in ecarts:
         print(f"   {e}")
@@ -128,7 +190,9 @@ def run() -> int:
     for d in depots:
         d.fermer()
     cx.close()
-    print(f"\n{'✅ Postgres conforme au port' if not echecs else f'❌ {echecs} bloc(s) en échec'}")
+    print(f"\nConnexion utilisée : {libelle}")
+    print("✅ Postgres conforme au port" if not echecs
+          else f"❌ {echecs} bloc(s) en échec")
     return 1 if echecs else 0
 
 

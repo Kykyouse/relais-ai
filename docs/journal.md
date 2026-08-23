@@ -351,3 +351,41 @@ d'implémentation — et c'est plus simple à faire maintenant qu'après la prem
 4. Correctif `MockLLM` (regex de nom sans `IGNORECASE`) avec son test R19.
 
 **Prochaine étape convenue :** Geoffrey crée l'instance ; ensuite `run_depot_pg.py`.
+
+---
+
+## Session du 23/08/2026 (suite) — Supabase : préparation du premier run réel
+
+**Décision.** Supabase (projet de test dédié, région UE). Les deux chaînes dans `.env` :
+`DATABASE_URL` (connexion directe) et `DATABASE_URL_POOLER` (session pooler).
+`run_depot_pg.py` essaie la directe, bascule sur le pooler si elle échoue — l'hôte direct
+`db.<ref>.supabase.co` est en IPv6 sur les projets récents, inatteignable depuis un réseau
+IPv4 seul. Si la chaîne fournie est un pooler en mode **transaction** (port 6543), le
+lanceur passe automatiquement `prepare_threshold=None` : psycobg active des prepared
+statements de lui-même, que ce mode ne supporte pas.
+
+**Garde anti-troncature refaite.** L'ancienne reposait sur le nom de la variable
+(`DATABASE_URL_TEST`) et, en repli, sur un nom de base contenant « prod ». **Toutes les
+bases Supabase s'appellent `postgres`** : cette seconde garde ne pouvait jamais se
+déclencher. Remplacée par un **marqueur écrit dans la base** (`relais_base_de_test`), posé
+une seule fois par `--autoriser-truncate`. Consentement explicite, porté par la base
+elle-même, insensible au renommage des variables et valable depuis n'importe quelle machine.
+`--migrer` seul ne le pose pas : pointer les migrations sur la prod n'autorise pas à la vider.
+
+**Deux incompatibilités Postgres trouvées par relecture, avant le premier run.**
+1. Le contrat testait `Introuvable` avec l'id `"inconnu-42"`. Contre une colonne `uuid`,
+   Postgres lève une **erreur de cast** au lieu de rendre zéro ligne : trois assertions
+   auraient échoué. Le contrat utilise désormais un UUID valide mais absent, et
+   l'adaptateur filtre les ids malformés (`_uuid`) → `Introuvable`. Enjeu réel au-delà du
+   test : un id fourni par un client donnerait un 500 au lieu d'un 404 dans l'API.
+2. `build_lead()` met le transcript en **tuples** ; un aller-retour jsonb les rend en
+   **listes**. Le contrat aurait échoué alors que le comportement est correct : une colonne
+   jsonb restitue un DOCUMENT, pas des objets Python. Les comparaisons de blobs sont
+   normalisées en types JSON des deux côtés. Les colonnes `timestamp`, elles, restent
+   comparées **exactement** — c'est l'assertion forte, et elle doit le rester.
+
+Suite : **22 PASS**. L'adaptateur Postgres n'a toujours **pas** tourné.
+
+**Prochaine étape :** Geoffrey renseigne les deux chaînes, puis
+`python run_depot_pg.py --migrer --autoriser-truncate`. La connexion retenue sur cette
+machine sera notée ici.

@@ -11,6 +11,7 @@ que la dépendance aille dans un seul sens.
 from __future__ import annotations
 
 import datetime as dt
+import json
 
 from relais_proto.calendar_stub import CalendarStub
 from relais_proto.depot import Introuvable
@@ -21,6 +22,11 @@ from relais_proto.rdv import StatutRdv
 from relais_proto.scoring import build_lead
 
 LUNDI_9H = dt.datetime(2026, 8, 24, 9, 0)
+
+# Identifiant absent des deux implémentations, mais de forme UUID VALIDE : contre Postgres,
+# comparer une chaîne quelconque à une colonne uuid lève une erreur de cast au lieu de
+# rendre zéro ligne. Le contrat ne doit pas présumer du format d'id de l'implémentation.
+ID_ABSENT = "00000000-0000-0000-0000-000000000000"
 
 # Deux conversations suffisent : une urgence (échéance courte) et un entretien (échéance
 # longue). Lignes en dur ici pour que le contrat ne dépende pas du fichier de scénarios.
@@ -38,6 +44,15 @@ def _lead_donnees(cfg: dict, lignes: list[str], maintenant: dt.datetime) -> dict
             break
         convo.process(ligne)
     return build_lead(convo), convo.to_dict()
+
+
+def _json_natif(valeur):
+    """Ramène une valeur à ses types JSON. Une colonne jsonb restitue un DOCUMENT, pas des
+    objets Python : le transcript, tuples en mémoire, revient en listes. Ce n'est pas un
+    défaut de l'adaptateur, c'est la nature du stockage — on compare donc les deux côtés
+    sous forme normalisée, sinon le contrat exigerait de Postgres qu'il rende des tuples.
+    """
+    return json.loads(json.dumps(valeur, ensure_ascii=False))
 
 
 def _brouillon(cle: str, texte: str = "message de test") -> Brouillon:
@@ -75,15 +90,16 @@ def verifier(fabrique, cfg: dict) -> list[str]:
 
     depot.enregistrer_etat(appel.id, etat)
     relu = depot.appel(appel.id).etat_conversation
-    exiger(relu == etat, "enregistrer_etat : l'état sérialisé ne fait pas l'aller-retour")
-    exiger_leve(Introuvable, lambda: depot.appel("inconnu-42"),
+    exiger(_json_natif(relu) == _json_natif(etat),
+           "enregistrer_etat : l'état sérialisé ne fait pas l'aller-retour")
+    exiger_leve(Introuvable, lambda: depot.appel(ID_ABSENT),
                 "appel(id inconnu) doit lever Introuvable")
 
     lead = depot.cloturer_appel(appel.id, donnees, LUNDI_9H)
     exiger(depot.appel(appel.id).fin_a == LUNDI_9H, "cloturer_appel : fin_a non écrit")
     exiger(depot.appel(appel.id).lead_id == lead.id,
            "cloturer_appel : l'appel ne pointe pas sur son lead")
-    exiger(depot.lead(lead.id).donnees == donnees,
+    exiger(_json_natif(depot.lead(lead.id).donnees) == _json_natif(donnees),
            "lead : les données ne font pas l'aller-retour")
     exiger_leve(ValueError, lambda: depot.cloturer_appel(appel.id, donnees, LUNDI_9H),
                 "clôturer deux fois le même appel doit lever")
@@ -96,7 +112,7 @@ def verifier(fabrique, cfg: dict) -> list[str]:
     exiger(depot.lead(lead.id).donnees.get("score") == donnees["score"],
            "marquer_lead_alerte a écrasé les données du lead au lieu de les compléter")
     exiger_leve(Introuvable,
-                lambda: depot.marquer_lead_alerte("inconnu-42", "x", LUNDI_9H),
+                lambda: depot.marquer_lead_alerte(ID_ABSENT, "x", LUNDI_9H),
                 "marquer_lead_alerte(id inconnu) doit lever Introuvable")
 
     # ---- RDV : aller-retour exact ----
@@ -108,7 +124,7 @@ def verifier(fabrique, cfg: dict) -> list[str]:
         exiger(getattr(relu, champ) == getattr(rdv, champ),
                f"rdv.{champ} ne fait pas l'aller-retour : "
                f"{getattr(relu, champ)!r} != {getattr(rdv, champ)!r}")
-    exiger_leve(Introuvable, lambda: depot.rdv("inconnu-42"),
+    exiger_leve(Introuvable, lambda: depot.rdv(ID_ABSENT),
                 "rdv(id inconnu) doit lever Introuvable")
 
     # le dépôt ne rend jamais l'instance vivante : muter sans sauver ne persiste rien
@@ -182,7 +198,7 @@ def verifier(fabrique, cfg: dict) -> list[str]:
     exiger(len(depot.messages(StatutMessage.A_ENVOYER)) == 1,
            "le message envoyé reste dans la file à envoyer")
     exiger_leve(Introuvable,
-                lambda: depot.marquer_message_envoye("inconnu-42", LUNDI_9H),
+                lambda: depot.marquer_message_envoye(ID_ABSENT, LUNDI_9H),
                 "marquer_message_envoye(id inconnu) doit lever Introuvable")
 
     return ecarts
