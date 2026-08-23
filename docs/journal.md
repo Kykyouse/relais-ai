@@ -863,3 +863,23 @@ du nom.
 valeur**, et un message d'erreur ne doit jamais proposer une seule piste quand plusieurs
 causes sont plausibles — il transforme une erreur de dix secondes en fausse piste de dix
 minutes.
+
+### 24/08 — suite : `NotGrantedCall`, et un diagnostic qui se construit une panne à la fois
+
+`python envoyer_un_sms.py --comptes` → `NotGrantedCall: This call has not been granted`.
+Cause : le consumer key n'a pas `GET /sms` dans ses règles d'accès. C'est un problème de
+**portée**, pas d'identifiants — la clé est valide, l'appel n'est simplement pas couvert.
+
+**Deuxième motif manquant en deux essais.** Mon diagnostic est retombé sur « motif non
+reconnu ». J'ajoute `NotGrantedCall`, **placé avant** les motifs d'identifiants : les
+confondre enverrait vérifier un triplet qui va très bien.
+
+**Arbitrage : ne PAS élargir la clé.** Le nom du service se lit dans l'espace client
+(Telecom > SMS) et ne sert qu'une fois. Ajouter `GET /sms` pour la commodité de `--comptes`
+contredirait le principe de portée minimale que j'ai moi-même recommandé. `--comptes` reste
+disponible pour qui a accordé ce droit, mais ce n'est plus le chemin conseillé.
+
+**Correction de méthode.** Cette table de diagnostic ne saura jamais tout d'avance : elle se
+remplit à chaque échec réel. Le repli « motif non reconnu » ne doit donc pas laisser sans
+prise — il liste maintenant les quatre familles par ordre de probabilité. Un diagnostic
+incomplet est normal ; un diagnostic qui n'oriente pas est un défaut.
