@@ -41,10 +41,65 @@ TEXTE = ("Bonjour, c'est un test technique Relais. Aucun rendez-vous n'est conce
          "Vous pouvez ignorer ce message.")
 
 
+# Diagnostic par motif. Un indice unique et générique envoie chercher au mauvais endroit :
+# le 24/08, « service does not exist » a été lu comme un problème de Sender ID alors que
+# c'était le nom du service. Ordre volontaire — le premier motif reconnu gagne.
+_PISTES = [
+    (("does not exist", "ResourceNotFound"),
+     "→ Le NOM DU SERVICE SMS est faux, ou le service SMS n'a pas été commandé.\n"
+     "  Créer un compte OVH ne crée PAS de service SMS : il faut le commander et le\n"
+     "  créditer. Nom visible dans l'espace client (Telecom > SMS), ou :\n"
+     "      python envoyer_un_sms.py --comptes"),
+    (("InvalidKey", "InvalidSignature", "InvalidCredential", "Forbidden",
+      "Unauthorized", "403"),
+     "→ IDENTIFIANTS ou DROITS : vérifier le triplet application key / secret /\n"
+     "  consumer key, que le consumer key autorise `POST /sms/*` (plus `GET /sms` pour\n"
+     "  --comptes), et qu'il n'a pas expiré."),
+    (("sender", "Sender", "expediteur"),
+     "→ L'EXPÉDITEUR est refusé : le Sender ID alphanumérique doit être déclaré auprès\n"
+     "  des opérateurs (Charte AF2M du 01/03/2026). Délai de plusieurs jours."),
+    (("credit", "Credit", "insufficient"),
+     "→ Plus de CRÉDITS SMS : en recharger dans l'espace client."),
+]
+
+
+def _diagnostic(texte: str) -> str:
+    for motifs, piste in _PISTES:
+        if any(m in texte for m in motifs):
+            return piste
+    return ("→ Motif non reconnu. Rapporte la réponse brute et le Query-ID : c'est ce qui\n"
+            "  permettra de corriger l'hypothèse encodée dans l'adaptateur.")
+
+
+def _lister_comptes() -> int:
+    """`GET /sms` : liste les services SMS du compte. Demande le droit `GET /sms` sur le
+    consumer key — seul droit de LECTURE utile ici, et il ne permet aucun envoi."""
+    try:
+        import ovh
+    except ImportError:
+        print("SDK absent : pip install ovh")
+        return 2
+    try:
+        comptes = ovh.Client(endpoint="ovh-eu").get("/sms")
+    except Exception as exc:
+        print(f"❌ {type(exc).__name__}: {exc}")
+        print(_diagnostic(f"{type(exc).__name__}: {exc}"))
+        return 1
+    if not comptes:
+        print("Aucun service SMS sur ce compte : il faut le commander et le créditer.")
+        return 1
+    print("Services SMS disponibles (à mettre dans OVH_SMS_COMPTE) :")
+    for c in comptes:
+        print(f"   {c}")
+    return 0
+
+
 def run() -> int:
     from relais_proto.envoi_ovh import EnvoyeurOVH, en_e164
     from relais_proto.messages import Canal, Destinataire, MessageSortant
 
+    if "--comptes" in sys.argv:
+        return _lister_comptes()
     cibles = [a for a in sys.argv[1:] if not a.startswith("--")]
     if len(cibles) != 1:
         print(__doc__)
@@ -59,6 +114,13 @@ def run() -> int:
     manquants = [n for n in ("OVH_APPLICATION_KEY", "OVH_APPLICATION_SECRET",
                              "OVH_CONSUMER_KEY", "OVH_SMS_COMPTE")
                  if not os.environ.get(n)]
+    # Garde contre le gabarit recopié tel quel. Sans elle, on part appeler OVH avec un nom
+    # de service inventé et l'erreur renvoyée fait chercher ailleurs (vécu le 24/08).
+    if compte and ("remplace" in compte.lower() or compte == "sms-ab12345-1"):
+        print(f"\nOVH_SMS_COMPTE vaut encore le gabarit : {compte!r}")
+        print("Le vrai nom est dans l'espace client OVH (Telecom > SMS), forme")
+        print("« sms-xy12345-1 », ou :  python envoyer_un_sms.py --comptes")
+        return 2
 
     import datetime as dt
     message = MessageSortant(
@@ -101,8 +163,7 @@ def run() -> int:
         reference = EnvoyeurOVH(transport_bavard, compte).envoyer(message, CFG)
     except Exception as exc:
         print(f"\n❌ {type(exc).__name__}: {exc}")
-        print("Si le motif porte sur l'expéditeur, c'est la déclaration du Sender ID qui "
-              "manque — délai de plusieurs jours, à lancer sans attendre.")
+        print(_diagnostic(f"{type(exc).__name__}: {exc}"))
         return 1
     print(f"\n✅ envoyé, référence : {reference}")
     print("Compare la réponse brute ci-dessus à ce que suppose l'adaptateur "

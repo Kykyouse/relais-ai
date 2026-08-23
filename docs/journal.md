@@ -45,8 +45,11 @@ python run_llm_eval.py [--mock] [--n 3]             # éval appelant-simulé
   mais **aucun envoi réel n'a eu lieu** : pas d'identifiants, et le Sender ID n'est pas
   déclaré. `EnvoyeurJournal` reste le mode par défaut, donc **rien ne part**. Le premier
   envoi réel se fait à la main : `python envoyer_un_sms.py <num> --envoyer` (blanc par
-  défaut). La forme de réponse d'OVH encodée dans l'adaptateur est une **hypothèse** que ce
-  premier appel confirmera ou démentira.
+  défaut), et `--comptes` liste les services SMS du compte. La forme de réponse d'OVH
+  encodée dans l'adaptateur est une **hypothèse** que ce premier appel confirmera ou
+  démentira. **Point d'avancement au 24/08** : l'authentification OVH fonctionne (requête
+  signée, acceptée, routée), mais aucun service SMS n'est encore joignable — un compte OVH
+  ne crée pas de service SMS, il faut le commander et le créditer.
 - **`CalendarStub`** : applique les vraies règles d'agenda mais n'est relié à aucun
   calendrier. Google/Outlook non branchés (OAuth Google à lancer tôt : délai calendaire).
 - **Pas de voix** : aucune plateforme vocale branchée, aucun numéro. L'API expose déjà les
@@ -820,3 +823,43 @@ les valide pas : seul le premier appel réel tranche. C'est écrit en tête du m
 
 **Prochaine étape :** l'app mobile sur `GET /rdv`, indépendante de tout fournisseur ; ou
 brancher l'`EnvoyeurOVH` dans `worker.py` dès que le premier envoi réel a réussi.
+
+---
+
+## Session du 24/08/2026 — premier envoi réel : échec instructif, et deux fautes à moi
+
+**Résultat brut.** `POST /sms/sms-ab12345-1/jobs` →
+`ResourceNotFoundError: This service does not exist`.
+
+**Ce n'était pas le Sender ID.** La valeur envoyée, `sms-ab12345-1`, était **le gabarit de
+mon `.env.example`**, recopié tel quel — ce qui est logique, je l'avais écrit sous une forme
+qui ressemble à un vrai nom de service, alors que pour Supabase j'utilise des `<ref>`
+visiblement faux. Et l'unique indice d'erreur du script pointait vers le Sender ID, ce qui
+a envoyé Geoffrey chercher au mauvais endroit. **Deux fautes à moi, pas une erreur de
+manipulation.**
+
+**Acquis réel malgré l'échec : l'authentification fonctionne.** La requête a été signée,
+acceptée et routée — OVH répond avec une erreur applicative et un `Query-ID`. Une clé
+invalide donne `InvalidKey` (vérifié en repassant avec de faux identifiants). Donc le
+triplet et les droits du consumer key sont bons.
+
+**Corrigé.**
+- `.env.example` : gabarit devenu `<remplace-moi-par-ton-service-sms>`, cohérent avec la
+  convention déjà utilisée pour Supabase.
+- `envoyer_un_sms.py` **refuse le gabarit avant tout appel réseau** : la boucle
+  d'aller-retour ne se reproduira pas.
+- **Diagnostic par motif** au lieu d'un indice unique : service inexistant / identifiants
+  et droits / Sender ID / crédits / motif inconnu. Chaque piste dit quoi faire. Le motif
+  `InvalidKey` a été ajouté grâce à l'essai accidentel avec de faux identifiants.
+- `--comptes` : liste les services SMS via `GET /sms`. Demande ce droit de lecture sur le
+  consumer key — à noter, la portée minimale que j'avais recommandée (`POST /sms/*` seul)
+  ne permet PAS de découvrir le nom du service.
+
+**Diagnostic probable.** Créer un compte OVH ne crée pas de service SMS : il faut le
+**commander et le créditer**. C'est très probablement ce qui manque, avant même la question
+du nom.
+
+**Leçon.** Un gabarit de configuration doit être **impossible à confondre avec une vraie
+valeur**, et un message d'erreur ne doit jamais proposer une seule piste quand plusieurs
+causes sont plausibles — il transforme une erreur de dix secondes en fausse piste de dix
+minutes.
