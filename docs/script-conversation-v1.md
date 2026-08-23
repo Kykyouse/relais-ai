@@ -99,7 +99,7 @@ un appel efficace dure moins de 3 minutes.
 - **Formulation de conclusion — LA phrase la plus importante du script** (statut provisoire,
   cohérent avec le flow de validation « expiration + repli ») :
   > « Parfait, je vous **réserve** demain entre 14h et 16h. Vous recevrez un **SMS de confirmation**
-  > de {prenom} d'ici {config.validation.delai_max_heures_ouvrees} heures. Si quoi que ce soit coince,
+  > de {prenom} d'ici {config.validation.delai_max_heures} heures. Si quoi que ce soit coince,
   > on vous rappelle au 06… »
   — Ni « c'est confirmé » (l'artisan peut refuser), ni « on vous rappellera » (c'est le problème
   qu'on résout). Le créneau est **bloqué** dans le calendrier tampon dès cet instant.
@@ -164,7 +164,8 @@ dispo 14h–18h ») — c'est la carte lead du dashboard, pas un chiffre nu.
    au client → rappel SMS à J-1 (ou H-2 pour une urgence). Il peut aussi **modifier** (nouveau
    créneau → SMS « finalement, {prenom} vous propose plutôt… ») ou **refuser** (SMS + lead repasse
    `a_rappeler`).
-3. **Pas de réponse après le délai** (`delai_max_heures_ouvrees`, défaut 4 h ; `delai_max_urgence_heures`, défaut 1 h) :
+3. **Pas de réponse après le délai** (`delai_max_heures`, défaut 24 h ; `delai_max_urgence_heures`, défaut 2 h ;
+   `base_delai` = reelles|ouvrees, l'urgence toujours en heures réelles) :
    SMS de repli au client (« {prenom} vous rappelle très vite pour fixer l'horaire exact »),
    le créneau tampon est libéré, le lead passe en **alerte prioritaire** rouge sur le dashboard
    et déclenche une relance push + SMS à l'artisan.

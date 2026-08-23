@@ -49,10 +49,9 @@ class TransitionInterdite(RuntimeError):
 def _fenetres_ouvrees(cfg: dict, jour: dt.date) -> list[tuple[str, str]]:
     """Fenêtres pendant lesquelles l'artisan est réputé joignable pour valider.
 
-    À défaut de `validation.heures_ouvrees`, on retombe sur les horaires de RDV.
-    Approximation assumée : « quand il intervient » n'est pas « quand il regarde son
-    téléphone » (beaucoup valident le soir). Le champ dédié existe pour séparer les
-    deux le jour où on le voudra, sans retoucher ce code.
+    Utilisé seulement en mode `base_delai = "ouvrees"`. À défaut de
+    `validation.heures_ouvrees`, on retombe sur les horaires de RDV — approximation :
+    « quand il intervient » n'est pas « quand il regarde son téléphone ».
     """
     source = (cfg.get("validation", {}).get("heures_ouvrees")
               or cfg["agenda"]["horaires_rdv"])
@@ -83,17 +82,27 @@ def _ajouter_heures_ouvrees(cfg: dict, depuis: dt.datetime, heures: float) -> dt
 
 
 def calculer_expiration(cfg: dict, urgence: bool, depuis: dt.datetime) -> dt.datetime:
-    """Échéance de la décision artisan, d'après la config `validation`.
+    """Échéance de la décision artisan, d'après la config `validation` de CET artisan.
 
-    Urgence = heures RÉELLES, pas ouvrées : une fuite prise à 19 h ne peut pas attendre
-    l'ouverture du lendemain, c'est tout le sens du mot. Hors urgence = heures ouvrées,
-    sinon un RDV pris le vendredi 17 h expirerait pendant la nuit sans que l'artisan ait
-    eu la moindre chance de le voir.
+    Deux réglages, modifiables par artisan depuis son compte :
+      - `delai_max_heures` (défaut 24) et `delai_max_urgence_heures` (défaut 2) ;
+      - `base_delai` : "reelles" (défaut) ou "ouvrees".
+
+    **L'urgence est toujours comptée en heures réelles**, quel que soit `base_delai` :
+    une fuite prise à 19 h ne peut pas attendre l'ouverture du lendemain, c'est tout le
+    sens du mot urgence.
+
+    Le défaut est passé de 4 h ouvrées à 24 h réelles (retour terrain du 23/08 : la
+    plupart des artisans ne regardent leur app que le soir — un délai de 4 h expire
+    pendant qu'ils sont sur chantier). À 24 h réelles, le calcul en heures ouvrées perd
+    son intérêt : la fenêtre contient de toute façon une soirée. Le mode "ouvrees" reste
+    disponible pour un artisan qui voudrait un délai court sans expirer la nuit.
     """
     v = cfg["validation"]
-    if urgence:
-        return depuis + dt.timedelta(hours=v["delai_max_urgence_heures"])
-    return _ajouter_heures_ouvrees(cfg, depuis, v["delai_max_heures_ouvrees"])
+    heures = v["delai_max_urgence_heures"] if urgence else v["delai_max_heures"]
+    if urgence or v.get("base_delai", "reelles") == "reelles":
+        return depuis + dt.timedelta(hours=heures)
+    return _ajouter_heures_ouvrees(cfg, depuis, heures)
 
 
 # ------------------------------------------------------------------ entité

@@ -79,8 +79,13 @@ Version 0.1 — 21/08/2026 · Compagnon de `script-conversation-v1.md`
   },
 
   "validation": {                             // flow « expiration + repli » (décision 21/08)
-    "delai_max_heures_ouvrees": 4,
-    "delai_max_urgence_heures": 1,
+    "delai_max_heures": 24,                   // defaut 24 h : la plupart des artisans ne
+                                              // regardent l'app que le soir (retour terrain 23/08)
+    "delai_max_urgence_heures": 2,
+    "base_delai": "reelles",                  // enum : reelles | ouvrees. L'urgence est
+                                              // TOUJOURS en heures reelles, quel que soit ce mode
+    "heures_ouvrees": null,                   // {lun-ven|sam|dim: [{de,a}]} ; utilise seulement si
+                                              // base_delai = "ouvrees". null => agenda.horaires_rdv
     "canal_notification": ["push", "sms"],
     "auto_validation": "jamais"               // enum : jamais | urgences_5_5 | tout — V1 : « jamais »
   },
@@ -146,7 +151,7 @@ le « devis PAC à Torcy » hors zone, le client furieux) se joue contre cette c
 | 2. Ce que je fais / où | `prestations.couvertes` (cases à cocher métier), `zone` (carte cliquable) | 4 min |
 | 3. Mon agenda | connexion Google/Outlook OU `mode_sans_calendrier`, `horaires_rdv`, durées par défaut pré-remplies métier | 5 min |
 | 4. Ce que l'agent peut dire | `tarifs.communicables` (0, 1 ou 2 lignes), `accueil.formule` (défaut proposé) | 3 min |
-| 5. Validation & SMS | `validation.delai_max`, `transfert.cible` | 3 min |
+| 5. Validation & SMS | `validation.delai_max_heures`, `transfert.cible` | 3 min |
 
 **Défauts métier** : pour `plombier_chauffagiste`, tout champ non renseigné a une valeur par défaut
 sensée (durées, buffers, fenêtres d'urgence). L'artisan personnalise, il ne construit pas.

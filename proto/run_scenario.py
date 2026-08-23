@@ -359,8 +359,25 @@ def check_cycle_vie_rdv() -> bool:
                       f"{'accepté' if attendu else 'refusé'}")
                 return False
 
-    # (b) heures ouvrées (lun-ven 08–18, sam 09–13, dim fermé) : un RDV pris le vendredi
-    # soir ne doit pas expirer pendant la nuit sans que l'artisan ait pu le voir
+    # (b) défauts de la config : 24 h réelles hors urgence, 2 h réelles en urgence
+    # (retour terrain 23/08 : l'app n'est souvent regardée que le soir)
+    cas_reels = [
+        (False, dt.datetime(2026, 8, 24, 9, 0), dt.datetime(2026, 8, 25, 9, 0)),
+        (False, dt.datetime(2026, 8, 28, 17, 0), dt.datetime(2026, 8, 29, 17, 0)),
+        (True, dt.datetime(2026, 8, 30, 20, 0), dt.datetime(2026, 8, 30, 22, 0)),
+    ]
+    for urgence, depuis, attendu in cas_reels:
+        obtenu = calculer_expiration(CFG, urgence=urgence, depuis=depuis)
+        if obtenu != attendu:
+            print(f"   heures réelles · urgence={urgence} depuis {depuis} : "
+                  f"{obtenu} au lieu de {attendu}")
+            return False
+
+    # (b bis) mode "ouvrees" avec un délai court : un RDV pris le vendredi soir ne doit
+    # pas expirer pendant la nuit sans que l'artisan ait pu le voir
+    cfg_ouvrees = {**CFG, "validation": {**CFG["validation"],
+                                         "base_delai": "ouvrees",
+                                         "delai_max_heures": 4}}
     cas_ouvrees = [
         ("lundi 09:00 (en pleine fenêtre)", dt.datetime(2026, 8, 24, 9, 0),
          dt.datetime(2026, 8, 24, 13, 0)),
@@ -376,32 +393,39 @@ def check_cycle_vie_rdv() -> bool:
          dt.datetime(2026, 8, 31, 12, 0)),
     ]
     for libelle, depuis, attendu in cas_ouvrees:
-        obtenu = calculer_expiration(CFG, urgence=False, depuis=depuis)
+        obtenu = calculer_expiration(cfg_ouvrees, urgence=False, depuis=depuis)
         if obtenu != attendu:
             print(f"   heures ouvrées · {libelle} : {obtenu} au lieu de {attendu}")
             return False
 
-    # urgence = heures RÉELLES : une fuite prise dimanche 22 h n'attend pas lundi 8 h
-    urgent = calculer_expiration(CFG, urgence=True, depuis=dt.datetime(2026, 8, 30, 22, 0))
-    if urgent != dt.datetime(2026, 8, 30, 23, 0):
-        print(f"   urgence : {urgent}, attendu dimanche 23:00 (heures réelles)")
+    # l'urgence reste en heures RÉELLES même en mode "ouvrees" : une fuite prise dimanche
+    # 20 h n'attend pas l'ouverture du lundi, sinon le mot urgence ne veut plus rien dire
+    urgent = calculer_expiration(cfg_ouvrees, urgence=True,
+                                 depuis=dt.datetime(2026, 8, 30, 20, 0))
+    if urgent != dt.datetime(2026, 8, 30, 22, 0):
+        print(f"   urgence en mode ouvrées : {urgent}, attendu dimanche 22:00 (réelles)")
         return False
 
-    # les deux mêmes règles, mais traversées par Rdv.depuis_hold et à une heure où
-    # ouvrées et réelles DIVERGENT : vendredi 17 h + 4 h ouvrées = samedi 12 h (et non
-    # vendredi 21 h), tandis que l'urgence reste à vendredi 18 h.
+    # les mêmes règles traversées par Rdv.depuis_hold, à une heure où les deux modes
+    # DIVERGENT (vendredi 17 h) : 24 h réelles → samedi 17 h ; 4 h ouvrées → samedi 12 h ;
+    # urgence → vendredi 19 h dans les deux modes.
     vendredi_17h = dt.datetime(2026, 8, 28, 17, 0)
     hold_nu = {"date": "2026-09-01", "de": "08:00", "a": "10:00", "urgence": False,
                "label": "mardi 01/09 entre 08h et 10h", "duree_min": 90}
-    for urgence_reelle, echeance in ((None, dt.datetime(2026, 8, 29, 12, 0)),
-                                     (True, dt.datetime(2026, 8, 28, 18, 0))):
+    cas_hold = [
+        (CFG, None, dt.datetime(2026, 8, 29, 17, 0)),
+        (CFG, True, dt.datetime(2026, 8, 28, 19, 0)),
+        (cfg_ouvrees, None, dt.datetime(2026, 8, 29, 12, 0)),
+        (cfg_ouvrees, True, dt.datetime(2026, 8, 28, 19, 0)),
+    ]
+    for cfg, urgence_reelle, echeance in cas_hold:
         obtenu = Rdv.depuis_hold(
             hold_nu, id="rdv-v", lead_id="lead-v", artisan_id="art-t",
             lead={"slots": {"tel_confirme": True, "urgence_reelle": urgence_reelle}},
-            cfg=CFG, maintenant=vendredi_17h).expire_a
+            cfg=cfg, maintenant=vendredi_17h).expire_a
         if obtenu != echeance:
-            print(f"   depuis_hold(urgence_reelle={urgence_reelle}) → {obtenu}, "
-                  f"attendu {echeance}")
+            print(f"   depuis_hold(base={cfg['validation']['base_delai']}, "
+                  f"urgence={urgence_reelle}) → {obtenu}, attendu {echeance}")
             return False
 
     # (c) la course critique : l'artisan tape juste après l'échéance, le worker n'est pas
@@ -447,7 +471,7 @@ def check_cycle_vie_rdv() -> bool:
         print(f"   échéance {rdv.expire_a} incohérente avec la config validation")
         return False
     delai = CFG["validation"]["delai_max_urgence_heures" if urgence_appel
-                              else "delai_max_heures_ouvrees"]
+                              else "delai_max_heures"]
     paroles = " ".join(t for qui, t in lead_donnees["transcript"] if qui == "agent")
     if f"d'ici {delai} heure" not in paroles:
         print(f"   l'agent n'a pas promis {delai} h : la base et la parole divergent")
@@ -483,10 +507,10 @@ def check_cycle_vie_rdv() -> bool:
     lead2 = depot.cloturer_appel(appel2.id, lead2_donnees, LUNDI_9H)
     rdv2 = depot.creer_rdv(lead_id=lead2.id, hold=lead2_donnees["rdv"],
                            lead_donnees=lead2_donnees, cfg=CFG, maintenant=LUNDI_9H)
-    if rdv2.expire_a != dt.datetime(2026, 8, 24, 13, 0):  # 4 h ouvrées depuis lundi 9 h
-        print(f"   échéance non urgente {rdv2.expire_a}, attendu lundi 13:00")
+    if rdv2.expire_a != dt.datetime(2026, 8, 25, 9, 0):  # 24 h réelles depuis lundi 9 h
+        print(f"   échéance non urgente {rdv2.expire_a}, attendu mardi 09:00")
         return False
-    if depot.rdvs_echus(LUNDI_9H + dt.timedelta(hours=3)):
+    if depot.rdvs_echus(LUNDI_9H + dt.timedelta(hours=20)):
         print("   un RDV non échu est remonté dans la file du worker")
         return False
     echus = depot.rdvs_echus(rdv2.expire_a)
@@ -524,9 +548,9 @@ def check_cycle_vie_rdv() -> bool:
     ref_u = depot.cloturer_appel(appel_u.id, lead_u, LUNDI_9H)
     rdv_u = depot.creer_rdv(lead_id=ref_u.id, hold=lead_u["rdv"], lead_donnees=lead_u,
                             cfg=CFG, maintenant=LUNDI_9H)
-    if rdv_u.expire_a != LUNDI_9H + dt.timedelta(hours=1):
+    if rdv_u.expire_a != LUNDI_9H + dt.timedelta(hours=2):
         print(f"   échéance {rdv_u.expire_a} : suit le créneau et non urgence_reelle "
-              f"(attendu lundi 10:00)")
+              f"(attendu lundi 11:00)")
         return False
 
     # (h) invariant produit : jamais de RDV sans téléphone confirmé, même en base
@@ -611,7 +635,7 @@ def run() -> int:
 
     print(f"\n──── R15_cycle_vie_rdv ────")
     if check_cycle_vie_rdv():
-        print("   → graphe de transitions complet, heures ouvrées (nuit/samedi/dimanche), "
+        print("   → graphe de transitions complet, délais 24 h/2 h réelles + mode ouvrées, "
               "course validation-vs-expiration, T01 de bout en bout en dépôt : ✅ PASS")
     else:
         print("   → ❌ FAIL")

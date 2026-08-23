@@ -199,3 +199,46 @@ dans l'objet testé.
 4. SMS de repli sur expiration (table `message_sortant` avec clé d'idempotence).
 
 **Prochaine étape convenue :** brique 2, le worker d'expiration.
+
+---
+
+## Session du 23/08/2026 (suite) — délais de validation revus : 24 h / 2 h, par artisan
+
+**Décision produit (Geoffrey).** 4 h était trop court : la plupart des artisans ne regardent
+leur app que le soir, un délai de 4 h expire pendant qu'ils sont sur chantier. Nouveaux
+défauts : **24 h hors urgence, 2 h en urgence**, et ces valeurs doivent être **modifiables
+par artisan depuis son compte**.
+
+**Conséquence non anticipée, tranchée dans le même mouvement.** À 24 h, le calcul en heures
+ouvrées devient nuisible plutôt que protecteur : 24 h ouvrées depuis vendredi 17 h tombent
+au mercredi suivant. Le calcul en heures ouvrées n'existait que pour éviter d'expirer
+pendant la nuit — problème qui disparaît de lui-même dès que la fenêtre contient une
+soirée. Donc : **heures réelles par défaut**, mode ouvrées conservé et configurable pour un
+artisan qui voudrait un délai court sans expirer la nuit.
+
+**Fait.**
+- Schéma de config `validation` : `delai_max_heures` (24), `delai_max_urgence_heures` (2),
+  `base_delai` (`reelles` | `ouvrees`), `heures_ouvrees` (null → `agenda.horaires_rdv`).
+  L'ancienne clé `delai_max_heures_ouvrees` disparaît partout (code, config, 3 docs).
+- `rdv.calculer_expiration` : lit `base_delai`. **L'urgence est toujours comptée en heures
+  réelles, quel que soit le mode** — sinon le mot urgence ne veut plus rien dire.
+- `engine._reserver` lit la même clé que le calcul d'échéance : la promesse prononcée et
+  l'échéance stockée ne peuvent pas diverger (verrouillé par R15).
+- R15 étendu : cas heures réelles (24 h/2 h), cas mode ouvrées sur config dédiée, urgence
+  en mode ouvrées, et les 4 combinaisons (mode × urgence) traversées par `depuis_hold` à une
+  heure où les deux modes divergent. Suite : **19 PASS**.
+- Mutations : **11/11 détectées** sur R15 (dont « le défaut retombe à 4 h » et « base_delai
+  ignoré »), 10/10 toujours sur R14.
+
+**À trancher plus tard.**
+- **Heures de silence pour les SMS.** L'expiration déclenche un SMS de repli au client. Avec
+  un délai en heures réelles, l'échéance peut tomber à 3 h du matin. Il faudra une plage de
+  non-envoi (proposition : 21 h–08 h, report à l'ouverture) au moment de la brique SMS —
+  sinon on réveille le client. C'est le vrai remplaçant du calcul en heures ouvrées.
+- **Formulation à 24 h.** L'agent dit maintenant « un SMS de confirmation d'ici 24 heures »,
+  qui sonne mécanique à l'oral. « d'ici demain » ou « dans la journée » passerait mieux, mais
+  la phrase est verbatim et testée : à changer sciemment, pas au passage.
+- Le choix 12 h vs 24 h reste ouvert côté produit ; 24 h est posé comme défaut, un artisan
+  peut descendre à 12 h sans changement de code.
+
+**Prochaine étape convenue :** brique 2, le worker d'expiration.

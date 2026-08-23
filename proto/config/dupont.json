@@ -53,8 +53,9 @@
     "granularite_proposition": "fenetre_2h"
   },
   "validation": {
-    "delai_max_heures_ouvrees": 4,
-    "delai_max_urgence_heures": 1,
+    "delai_max_heures": 24,
+    "delai_max_urgence_heures": 2,
+    "base_delai": "reelles",
     "auto_validation": "jamais"
   },
   "tarifs": {

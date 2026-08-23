@@ -420,8 +420,10 @@ class Conversation:
     def _reserver(self, slot: dict) -> str:
         self.flags["hold"] = self.cal.hold_slot(slot, self.slots["prestation"])
         urgent = bool(self.slots["urgence_reelle"])
+        # meme source que rdv.calculer_expiration : la promesse prononcee et l'echeance
+        # stockee en base ne doivent JAMAIS diverger (verrouille par R15)
         delai = (self.cfg["validation"]["delai_max_urgence_heures"] if urgent
-                 else self.cfg["validation"]["delai_max_heures_ouvrees"])
+                 else self.cfg["validation"]["delai_max_heures"])
         heures = "heure" if delai == 1 else "heures"
         self.flags["categorie"] = "rdv_reserve"
         # LA phrase du script : "réservé" + SMS de confirmation, jamais "confirmé"
