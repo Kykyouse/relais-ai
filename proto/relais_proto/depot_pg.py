@@ -204,7 +204,8 @@ class DepotPostgres:
 
     # ---- file sortante ----
     _COLS_MSG = ("id, cle_idempotence, destinataire, canal, cible, texte, statut, "
-                 "cree_a, envoye_a, essais, derniere_erreur, envoyer_apres, reference")
+                 "cree_a, envoye_a, essais, derniere_erreur, envoyer_apres, reference, "
+                 "artisan_id")
 
     @staticmethod
     def _msg_de_ligne(l: tuple) -> MessageSortant:
@@ -213,7 +214,8 @@ class DepotPostgres:
             "cible": l[4], "texte": l[5], "statut": l[6],
             "cree_a": l[7].isoformat(), "envoye_a": l[8].isoformat() if l[8] else None,
             "essais": l[9], "derniere_erreur": l[10],
-            "envoyer_apres": l[11].isoformat() if l[11] else None, "reference": l[12]})
+            "envoyer_apres": l[11].isoformat() if l[11] else None, "reference": l[12],
+            "artisan_id": l[13]})
 
     def enfiler_message(self, brouillon: Brouillon,
                         maintenant: dt.datetime) -> tuple[MessageSortant, bool]:
@@ -222,11 +224,12 @@ class DepotPostgres:
         nouvel_id = self._id()
         cree = self._executer(
             f"insert into message_sortant ({self._COLS_MSG}) "
-            "values (%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s) "
+            "values (%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s) "
             "on conflict (cle_idempotence) do nothing",
             (nouvel_id, brouillon.cle_idempotence, brouillon.destinataire.value,
              brouillon.canal.value, brouillon.cible, brouillon.texte,
-             StatutMessage.A_ENVOYER.value, maintenant, None, 0, None, None, None))
+             StatutMessage.A_ENVOYER.value, maintenant, None, 0, None, None, None,
+             brouillon.artisan_id))
         ligne = self._un(
             f"select {self._COLS_MSG} from message_sortant where cle_idempotence = %s",
             (brouillon.cle_idempotence,), brouillon.cle_idempotence)

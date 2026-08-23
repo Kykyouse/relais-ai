@@ -316,6 +316,12 @@ def check_serialisation() -> bool:
 LUNDI_9H = dt.datetime(2026, 8, 24, 9, 0)  # horloge de référence des tests RDV
 
 
+def cfg_pour(artisan_id: str):
+    """Résolveur de config des tests. STRICT volontairement : un `lambda _: CFG`
+    n'exercerait pas la résolution par artisan, qui est tout l'objet de la migration 004."""
+    return CFG if artisan_id == "art-dupont" else None
+
+
 def _rdv_test(statut: StatutRdv, echu: bool) -> Rdv:
     """RDV nu dans l'état demandé, échu ou non, pour éprouver le graphe."""
     return Rdv(id="rdv-t", lead_id="lead-t", artisan_id="art-t",
@@ -599,7 +605,7 @@ def check_worker_expiration(fabrique=DepotMemoire) -> bool:
     repli au client, relance artisan. Deux propriétés critiques : il est idempotent, et
     il ne vole jamais une décision à l'artisan."""
     depot = fabrique()
-    worker = WorkerExpiration(depot, CFG)
+    worker = WorkerExpiration(depot, cfg_pour)
 
     # (a) dépôt vide : un passage ne doit rien inventer
     if worker.passer(LUNDI_9H):
@@ -947,10 +953,11 @@ def check_expedition() -> bool:
                                     heure_d_envoi_autorisee)
     from relais_proto.messages import Brouillon, Canal, StatutMessage
 
-    def brouillon(cle: str, dest: Destinataire) -> Brouillon:
+    def brouillon(cle: str, dest: Destinataire,
+                  artisan: str = "art-dupont") -> Brouillon:
         return Brouillon(cle_idempotence=cle, destinataire=dest,
                          canal=Canal.SMS if dest is Destinataire.CLIENT else Canal.PUSH,
-                         cible="0612345678", texte="texte de test")
+                         cible="0612345678", texte="texte de test", artisan_id=artisan)
 
     # (a) la plage 21h–08h traverse minuit : c'est le piège, un ET au lieu d'un OU la
     # rendrait vide. Et elle ne concerne QUE le client.
@@ -980,7 +987,7 @@ def check_expedition() -> bool:
     # (b) envoi nominal, en pleine journée
     depot = DepotMemoire()
     journal = EnvoyeurJournal()
-    expediteur = Expediteur(depot, journal, CFG)
+    expediteur = Expediteur(depot, journal, cfg_pour)
     midi = dt.datetime.combine(jour, dt.time(12, 0))
     m_client, _ = depot.enfiler_message(brouillon("r20:client", Destinataire.CLIENT), midi)
     rapport = expediteur.passer(midi)
@@ -999,7 +1006,7 @@ def check_expedition() -> bool:
     # (c) 3 h du matin : le SMS client attend 8 h, le push artisan part tout de suite
     depot2 = DepotMemoire()
     journal2 = EnvoyeurJournal()
-    exp2 = Expediteur(depot2, journal2, CFG)
+    exp2 = Expediteur(depot2, journal2, cfg_pour)
     nuit = dt.datetime.combine(jour, dt.time(3, 0))
     mc, _ = depot2.enfiler_message(brouillon("r20:nuit-client", Destinataire.CLIENT), nuit)
     ma, _ = depot2.enfiler_message(brouillon("r20:nuit-artisan", Destinataire.ARTISAN), nuit)
@@ -1022,7 +1029,7 @@ def check_expedition() -> bool:
             raise ConnectionError("fournisseur injoignable")
 
     depot3 = DepotMemoire()
-    exp3 = Expediteur(depot3, EnvoyeurEnPanne(), CFG)
+    exp3 = Expediteur(depot3, EnvoyeurEnPanne(), cfg_pour)
     m3, _ = depot3.enfiler_message(brouillon("r20:panne", Destinataire.CLIENT), midi)
     essais_max = CFG["sms"]["essais_max"]
     for tour in range(1, essais_max + 1):
@@ -1047,14 +1054,45 @@ def check_expedition() -> bool:
         print("   l'erreur du fournisseur n'est pas visible pour le monitoring")
         return False
 
+    # (d bis) DEUX artisans, DEUX plages de silence : c'est tout l'objet de la migration
+    # 004. Avant elle, l'expéditeur appliquait la plage du premier aux clients de tous.
+    CFG_NUIT = {**CFG, "sms": {**CFG["sms"], "plage_silence": None}}   # artisan de nuit
+
+    def cfg_deux(artisan_id):
+        return {"art-dupont": CFG, "art-nuit": CFG_NUIT}.get(artisan_id)
+
+    depot_m = DepotMemoire()
+    journal_m = EnvoyeurJournal()
+    m_jour, _ = depot_m.enfiler_message(
+        brouillon("r20:jour", Destinataire.CLIENT, "art-dupont"), nuit)
+    m_nuit, _ = depot_m.enfiler_message(
+        brouillon("r20:nuit", Destinataire.CLIENT, "art-nuit"), nuit)
+    m_inconnu, _ = depot_m.enfiler_message(
+        brouillon("r20:inconnu", Destinataire.CLIENT, "art-fantome"), nuit)
+    rapport = Expediteur(depot_m, journal_m, cfg_deux).passer(nuit)
+    if rapport.differes != [m_jour.id]:
+        print(f"   multi-artisans : différés={rapport.differes}, attendu [{m_jour.id}] "
+              f"(seul Dupont a une plage de silence)")
+        return False
+    if rapport.envoyes != [m_nuit.id]:
+        print(f"   multi-artisans : envoyés={rapport.envoyes}, attendu [{m_nuit.id}]")
+        return False
+    # un artisan inconnu n'est PAS deviné : le message reste en file, l'anomalie est visible
+    if len(rapport.echecs) != 1 or m_inconnu.id not in rapport.echecs[0]:
+        print(f"   artisan inconnu : {rapport.echecs}, attendu 1 échec sur {m_inconnu.id}")
+        return False
+    if [m.id for m in journal_m.envoyes] != [m_nuit.id]:
+        print("   un message a été envoyé avec la config d'un autre artisan")
+        return False
+
     # (e) la chaîne complète : expiration à 3 h du matin → client différé, artisan prévenu
     depot4 = DepotMemoire()
     journal4 = EnvoyeurJournal()
     lead4, rdv4 = _appel_avec_rdv(depot4, "T01_urgence_fuite", nuit)
     rdv4.notifier(nuit)
     depot4.sauver_rdv(rdv4)
-    WorkerExpiration(depot4, CFG).passer(rdv4.expire_a)
-    rapport = Expediteur(depot4, journal4, CFG).passer(rdv4.expire_a)
+    WorkerExpiration(depot4, cfg_pour).passer(rdv4.expire_a)
+    rapport = Expediteur(depot4, journal4, cfg_pour).passer(rdv4.expire_a)
     if len(rapport.differes) != 1 or len(rapport.envoyes) != 1:
         print(f"   chaîne complète à 3 h : {rapport}")
         return False
@@ -1321,7 +1359,8 @@ def run() -> int:
     print(f"\n──── R20_expedition_sms ────")
     if check_expedition():
         print("   → plage de silence 21h–08h (client seulement, à cheval sur minuit), "
-              "réessais, échec définitif, chaîne expiration→envoi à 3 h : ✅ PASS")
+              "réessais, échec définitif, config résolue PAR artisan, chaîne "
+              "expiration→envoi à 3 h : ✅ PASS")
     else:
         print("   → ❌ FAIL")
         echecs += 1

@@ -97,17 +97,29 @@ class RapportEnvoi:
 
 
 class Expediteur:
-    def __init__(self, depot, envoyeur: Envoyeur, cfg: dict):
+    def __init__(self, depot, envoyeur: Envoyeur, config_pour):
+        """`config_pour(artisan_id)` rend la config de CET artisan, ou None s'il est
+        inconnu. La plage de silence et le nombre d'essais sont des réglages par artisan :
+        passer une config unique appliquerait celle du premier aux clients de tous
+        (défaut corrigé par la migration 004)."""
         self.depot = depot
         self.envoyeur = envoyeur
-        self.cfg = cfg
+        self.config_pour = config_pour
 
     def passer(self, maintenant: dt.datetime) -> RapportEnvoi:
         rapport = RapportEnvoi()
-        essais_max = (self.cfg.get("sms") or {}).get("essais_max", 3)
         for message in self.depot.messages(StatutMessage.A_ENVOYER):
             rapport.examines += 1
-            autorise_a = heure_d_envoi_autorisee(message, self.cfg, maintenant)
+            cfg = self.config_pour(message.artisan_id) if message.artisan_id else None
+            if cfg is None:
+                # on REFUSE de deviner : un message sans artisan connu resterait envoyé
+                # avec la plage de silence de quelqu'un d'autre. Il reste en file et
+                # apparaît dans le rapport — bruyant plutôt que muet.
+                rapport.echecs.append(
+                    f"{message.id}: artisan « {message.artisan_id or 'absent'} » inconnu")
+                continue
+            essais_max = (cfg.get("sms") or {}).get("essais_max", 3)
+            autorise_a = heure_d_envoi_autorisee(message, cfg, maintenant)
             if autorise_a > maintenant:
                 # on inscrit l'heure autorisée en base : le passage suivant n'a plus à la
                 # recalculer, et le monitoring voit pourquoi le message attend
@@ -118,7 +130,7 @@ class Expediteur:
                 rapport.differes.append(message.id)
                 continue
             try:
-                reference = self.envoyeur.envoyer(message, self.cfg)
+                reference = self.envoyeur.envoyer(message, cfg)
             except Exception as exc:  # noqa: BLE001 — tout échec fournisseur est un échec
                 essais = message.essais + 1
                 definitif = essais >= essais_max

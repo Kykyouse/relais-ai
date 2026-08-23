@@ -57,7 +57,8 @@ def _json_natif(valeur):
 
 def _brouillon(cle: str, texte: str = "message de test") -> Brouillon:
     return Brouillon(cle_idempotence=cle, destinataire=Destinataire.CLIENT,
-                     canal=Canal.SMS, cible="0612345678", texte=texte)
+                     canal=Canal.SMS, cible="0612345678", texte=texte,
+                     artisan_id="art-dupont")
 
 
 def verifier(fabrique, cfg: dict) -> list[str]:
@@ -200,6 +201,9 @@ def verifier(fabrique, cfg: dict) -> list[str]:
     exiger(msg.statut is StatutMessage.A_ENVOYER,
            f"message neuf : statut {msg.statut} au lieu de a_envoyer")
     exiger(msg.cree_a == LUNDI_9H, "enfiler_message : cree_a ne fait pas l'aller-retour")
+    exiger(msg.artisan_id == "art-dupont",
+           f"artisan_id du message ne fait pas l'aller-retour ({msg.artisan_id!r}) — "
+           f"sans lui l'expéditeur applique la plage de silence d'un autre artisan")
 
     encore, nouveau2 = depot.enfiler_message(
         _brouillon("contrat:1", "texte DIFFÉRENT"), LUNDI_9H + dt.timedelta(hours=1))

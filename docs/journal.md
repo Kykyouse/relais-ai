@@ -601,3 +601,47 @@ attend des identifiants.
 
 **Prochaine étape :** l'app mobile qui consomme `GET /rdv`, ou l'adaptateur OVH dès que tu
 as les accès.
+
+---
+
+## Session du 23/08/2026 (suite) — migration 004 : multi-artisans dans les workers
+
+**Défaut corrigé.** `message_sortant` ne portait pas d'`artisan_id`. L'expéditeur appliquait
+donc la plage de silence du premier artisan aux clients de tous. `worker.py` refusait de
+tourner au-delà d'un artisan (garde volontairement bruyante) — ce refus est levé.
+
+**Et un défaut plus grave trouvé en chemin.** `WorkerExpiration` avait exactement le même
+problème, en pire : les gabarits portent le **nom de l'entreprise et le prénom du patron**,
+donc un client aurait reçu un SMS **signé du mauvais artisan**. La plage de silence est un
+désagrément ; une signature erronée est une faute vis-à-vis du client et de l'artisan. Les
+deux workers résolvent désormais la config via `config_pour(artisan_id)`.
+
+**Fait.**
+- Migration 004 : colonne `artisan_id` sur `message_sortant` + index partiel par artisan.
+  Nullable et sans reprise de données — aucune base de production n'existe, et l'expéditeur
+  **refuse d'envoyer un message sans artisan connu** plutôt que de deviner. Le message
+  reste en file et apparaît dans le rapport : bruyant, pas muet.
+- `Brouillon` et `MessageSortant` portent `artisan_id` ; les 4 gabarits le renseignent
+  depuis `rdv.artisan_id`.
+- `WorkerExpiration(depot, config_pour)` et `Expediteur(depot, envoyeur, config_pour)`.
+- Contrat étendu (l'`artisan_id` du message fait l'aller-retour, vérifié aussi sur
+  Postgres). R20 gagne un cas **deux artisans, deux plages de silence** + un cas artisan
+  inconnu. Suite : **25 PASS**. Mutations : R16 9/9, et le comportement d'avant 004
+  (« une config pour tous ») est détecté.
+
+**Choix de test.** Le résolveur des tests est **strict** (`CFG` seulement pour
+`art-dupont`, `None` sinon) : un `lambda _: CFG` aurait rendu la résolution par artisan
+invisible, donc non testée. C'est le même principe que la matrice de transitions écrite en
+dur — un test ne doit pas se contenter de suivre le code.
+
+**Vérifié sur Supabase.** Migration 004 appliquée, contrat vert, et `worker.py` tourne
+désormais avec les **deux** artisans du registre : 6 messages examinés à 22 h 57 →
+3 journalisés, 3 différés (plage de silence), 0 échec.
+
+**Reste pour clore la phase backend.**
+1. Adaptateur OVH derrière le port `Envoyeur` (attend les identifiants).
+2. Push réel vers l'app.
+3. Correctif `MockLLM` (`IGNORECASE`) + test. Décision fuseaux/DST.
+4. `FOR UPDATE SKIP LOCKED` quand plusieurs workers tourneront.
+
+**Prochaine étape :** l'app mobile qui consomme `GET /rdv`, ou l'adaptateur OVH.

@@ -39,9 +39,13 @@ class RapportPassage:
 
 
 class WorkerExpiration:
-    def __init__(self, depot, cfg: dict):
+    def __init__(self, depot, config_pour):
+        """`config_pour(artisan_id)` rend la config de CET artisan, ou None s'il est
+        inconnu. Une config unique serait pire ici que dans l'expéditeur : les gabarits
+        portent le nom de l'entreprise et le prénom du patron — un client recevrait un SMS
+        signé du mauvais artisan (défaut corrigé par la migration 004)."""
         self.depot = depot
-        self.cfg = cfg
+        self.config_pour = config_pour
 
     def passer(self, maintenant: dt.datetime) -> RapportPassage:
         """ORDRE VOLONTAIRE : les effets idempotents d'abord, le changement d'état en
@@ -53,8 +57,15 @@ class WorkerExpiration:
         rapport = RapportPassage()
         for rdv in self.depot.rdvs_echus(maintenant):
             rapport.examines += 1
+            cfg = self.config_pour(rdv.artisan_id)
+            if cfg is None:
+                # on ne devine pas : le RDV reste échu, donc repris au passage suivant,
+                # et l'anomalie est visible dans le rapport
+                rapport.echecs.append(
+                    f"{rdv.id}: artisan « {rdv.artisan_id} » inconnu au registre")
+                continue
             try:
-                self._traiter(rdv, rapport, maintenant)
+                self._traiter(rdv, cfg, rapport, maintenant)
             except Exception as exc:
                 # Un RDV qui échoue ne bloque pas la file : il reste échu (son statut n'a
                 # pas été écrit) et sera repris au passage suivant. Sans cette isolation,
@@ -62,8 +73,9 @@ class WorkerExpiration:
                 rapport.echecs.append(f"{rdv.id}:{type(exc).__name__}: {exc}")
         return rapport
 
-    def _traiter(self, rdv, rapport: RapportPassage, maintenant: dt.datetime) -> None:
-        self._enfiler(rdv, rapport, maintenant)
+    def _traiter(self, rdv, cfg: dict, rapport: RapportPassage,
+                 maintenant: dt.datetime) -> None:
+        self._enfiler(rdv, cfg, rapport, maintenant)
         # Le créneau tampon est libéré par le changement de statut lui-même : un RDV
         # expiré n'occupe plus rien. Pas d'écriture calendrier séparée en V1 — quand le
         # calendrier réel arrivera, c'est ici que se posera la libération.
@@ -77,11 +89,12 @@ class WorkerExpiration:
         self.depot.sauver_rdv(rdv)
         rapport.expires.append(rdv.id)
 
-    def _enfiler(self, rdv, rapport: RapportPassage, maintenant: dt.datetime) -> None:
+    def _enfiler(self, rdv, cfg: dict, rapport: RapportPassage,
+                 maintenant: dt.datetime) -> None:
         lead = self.depot.lead(rdv.lead_id)
         for construire in (msg.repli_client, msg.relance_artisan):
             try:
-                brouillon = construire(rdv, lead.donnees, self.cfg)
+                brouillon = construire(rdv, lead.donnees, cfg)
             except msg.MessageInterdit as exc:
                 # le RDV reste expiré : l'état ne doit pas dépendre de la réussite d'un
                 # message. L'échec est visible dans le rapport, pas avalé.

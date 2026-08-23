@@ -203,7 +203,8 @@ class DepotMemoire:
         message = MessageSortant(
             id=self._id("msg"), cle_idempotence=brouillon.cle_idempotence,
             destinataire=brouillon.destinataire, canal=brouillon.canal,
-            cible=brouillon.cible, texte=brouillon.texte, cree_a=maintenant)
+            cible=brouillon.cible, texte=brouillon.texte, cree_a=maintenant,
+            artisan_id=brouillon.artisan_id)
         self._messages[message.id] = message.to_dict()
         self._par_cle[message.cle_idempotence] = message.id
         return message, True

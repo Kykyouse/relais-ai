@@ -13,12 +13,9 @@ sont marqués envoyés et journalisés, **rien ne part réellement**. C'est volo
 le fournisseur n'est pas choisi — mieux vaut un envoi journalisé qu'un envoi vers un
 fournisseur mal configuré. Le mode `--a-vide` n'envoie ni ne marque rien.
 
-⚠️ MONO-ARTISAN POUR L'INSTANT. `message_sortant` ne porte pas encore d'`artisan_id`, donc
-l'expéditeur ne peut pas savoir de quel artisan relève chaque message et appliquerait la
-plage de silence du premier à tous. Plutôt que de laisser passer ce défaut inter-locataires
-en silence, ce script REFUSE de tourner si le registre contient plusieurs artisans.
-Correctif : colonne `artisan_id` sur `message_sortant` (migration 003) + résolution de la
-config par message.
+Multi-artisans depuis la migration 004 : chaque message et chaque RDV porte son
+`artisan_id`, et les deux workers résolvent la config correspondante. Un artisan absent du
+registre n'est pas deviné — son travail reste en file et apparaît dans le rapport.
 """
 from __future__ import annotations
 
@@ -47,20 +44,15 @@ def run() -> int:
         return 2
     registre = Registre.depuis_fichier(RACINE / "config" / "artisans.json",
                                        os.environ.get("RELAIS_WEBHOOK_SECRET", "inutile"))
-    artisans = list(registre._artisans.values())
-    if len(artisans) != 1:
-        print(f"Refus : {len(artisans)} artisans au registre. L'expéditeur ne sait pas "
-              f"encore de quel artisan relève chaque message (pas d'artisan_id sur "
-              f"message_sortant) et appliquerait la plage de silence du premier à tous. "
-              f"Voir l'en-tête de ce fichier.")
-        return 2
-    cfg = artisans[0].config
+    def config_pour(artisan_id):
+        artisan = registre.artisan(artisan_id)
+        return artisan.config if artisan else None
 
     depot = DepotPostgres(dsn)
     maintenant = dt.datetime.now()
     print(f"passage du {maintenant.isoformat(timespec='seconds')}")
 
-    rapport = WorkerExpiration(depot, cfg).passer(maintenant)
+    rapport = WorkerExpiration(depot, config_pour).passer(maintenant)
     print(f"  expiration : {rapport.examines} examiné(s), {len(rapport.expires)} expiré(s), "
           f"{len(rapport.messages_crees)} message(s) en file, {len(rapport.echecs)} échec(s)")
     for e in rapport.echecs:
@@ -73,7 +65,7 @@ def run() -> int:
         return 0
 
     envoyeur = EnvoyeurJournal()
-    envoi = Expediteur(depot, envoyeur, cfg).passer(maintenant)
+    envoi = Expediteur(depot, envoyeur, config_pour).passer(maintenant)
     print(f"  expédition : {envoi.examines} examiné(s), {len(envoi.envoyes)} journalisé(s), "
           f"{len(envoi.differes)} différé(s), {len(envoi.reessais)} à réessayer, "
           f"{len(envoi.echecs)} en échec")

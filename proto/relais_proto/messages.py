@@ -48,6 +48,10 @@ class Brouillon:
     canal: Canal
     cible: str
     texte: str
+    # de quel artisan relève ce message. Indispensable à l'expéditeur : la plage de
+    # silence est un réglage PAR artisan, et sans ça il appliquerait celle du premier
+    # à tous les clients (défaut corrigé par la migration 004).
+    artisan_id: str = ""
 
 
 @dataclass
@@ -59,6 +63,7 @@ class MessageSortant:
     cible: str
     texte: str
     cree_a: dt.datetime
+    artisan_id: str = ""
     statut: StatutMessage = StatutMessage.A_ENVOYER
     envoye_a: dt.datetime | None = None
     essais: int = 0                        # tentatives d'envoi déjà consommées
@@ -73,7 +78,7 @@ class MessageSortant:
              "destinataire": self.destinataire.value, "canal": self.canal.value,
              "cible": self.cible, "texte": self.texte, "statut": self.statut.value,
              "essais": self.essais, "derniere_erreur": self.derniere_erreur,
-             "reference": self.reference}
+             "reference": self.reference, "artisan_id": self.artisan_id}
         for c in self.HORODATAGES:
             h = getattr(self, c)
             d[c] = h.isoformat() if h else None
@@ -87,7 +92,8 @@ class MessageSortant:
                    destinataire=Destinataire(d["destinataire"]), canal=Canal(d["canal"]),
                    cible=d["cible"], texte=d["texte"], statut=StatutMessage(d["statut"]),
                    essais=d.get("essais", 0), derniere_erreur=d.get("derniere_erreur"),
-                   reference=d.get("reference"), **horodatages)
+                   reference=d.get("reference"), artisan_id=d.get("artisan_id") or "",
+                   **horodatages)
 
 
 # --------------------------------------------------------------- catalogue fermé
@@ -132,6 +138,7 @@ def repli_client(rdv, lead_donnees: dict, cfg: dict) -> Brouillon:
         raise MessageInterdit(f"RDV {rdv.id} : pas de téléphone pour joindre le client")
     return Brouillon(
         cle_idempotence=f"expiration_client:{rdv.id}",
+        artisan_id=rdv.artisan_id,
         destinataire=Destinataire.CLIENT, canal=Canal.SMS, cible=telephone,
         texte=_texte("expiration_client", cfg,
                      nom_entreprise=cfg["entreprise"]["nom"],
@@ -153,6 +160,7 @@ def reproposition_client(rdv, lead_donnees: dict, cfg: dict, lien: str) -> Broui
         raise MessageInterdit(f"RDV {rdv.id} : pas de jeton de confirmation")
     return Brouillon(
         cle_idempotence=f"reproposition:{rdv.confirmation_sha256[:16]}",
+        artisan_id=rdv.artisan_id,
         destinataire=Destinataire.CLIENT, canal=Canal.SMS, cible=telephone,
         texte=_texte("reproposition_client", cfg,
                      nom_entreprise=cfg["entreprise"]["nom"],
@@ -164,6 +172,7 @@ def confirmation_artisan(rdv, lead_donnees: dict, cfg: dict) -> Brouillon:
     """Le client a validé : l'artisan doit le savoir sans avoir à regarder l'app."""
     return Brouillon(
         cle_idempotence=f"confirmation_artisan:{rdv.id}",
+        artisan_id=rdv.artisan_id,
         destinataire=Destinataire.ARTISAN, canal=Canal.PUSH, cible=rdv.artisan_id,
         texte=_texte("confirmation_artisan", cfg,
                      client=lead_donnees["slots"].get("nom") or "un client",
@@ -180,6 +189,7 @@ def relance_artisan(rdv, lead_donnees: dict, cfg: dict) -> Brouillon:
     slots = lead_donnees["slots"]
     return Brouillon(
         cle_idempotence=f"expiration_artisan:{rdv.id}",
+        artisan_id=rdv.artisan_id,
         destinataire=Destinataire.ARTISAN, canal=Canal.PUSH,
         cible=rdv.artisan_id,
         texte=_texte("expiration_artisan", cfg, creneau=rdv.creneau["label"],
