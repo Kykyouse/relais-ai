@@ -242,3 +242,52 @@ artisan qui voudrait un délai court sans expirer la nuit.
   peut descendre à 12 h sans changement de code.
 
 **Prochaine étape convenue :** brique 2, le worker d'expiration.
+
+---
+
+## Session du 23/08/2026 (suite) — brique 2 : worker d'expiration
+
+**Fait.**
+- `relais_proto/messages.py` : file sortante (`message_sortant`) + catalogue **fermé** de
+  templates. Comme les consignes sécurité, les textes sont écrits par nous, pas par le LLM
+  ni par l'artisan (`sms.templates_personnalises = null` en V1). **Un SMS est une sortie de
+  l'agent : il passe par `guards.check_output` avant d'entrer en file** — règle n°2 étendue
+  au canal écrit. Un template fautif lève, il n'est pas envoyé.
+- `relais_proto/expiration.py` : le worker (spec §3.6). Créneau libéré, lead en alerte,
+  SMS de repli au client, relance artisan en push. Horloge en paramètre.
+- `depot.py` : file sortante avec **clé d'idempotence** (équivalent d'un
+  `INSERT ... ON CONFLICT DO NOTHING`), `marquer_lead_alerte`.
+- Test **R16** + mutations : **9/9 détectées**. Suite : **20 PASS**.
+
+**Deux décisions trouvées en écrivant le test, pas en écrivant le code.**
+1. **Les effets idempotents AVANT le changement d'état.** Le passage au statut terminal est
+   ce qui retire le RDV de `rdvs_echus()`. Si on écrit l'état d'abord et que le process
+   meurt avant l'enfilage, le RDV sort de la file et **le client n'est jamais prévenu**.
+   Dans l'ordre retenu, un passage interrompu laisse le RDV échu : le suivant le rattrape,
+   et la clé d'idempotence évite le doublon. Verrouillé par un test de crash.
+2. **Isolation des échecs par RDV.** Un RDV qui échoue ne doit pas geler l'expiration des
+   autres : il reste échu, l'échec remonte dans le rapport, la boucle continue.
+
+**Propriété émergente, agréable.** La course worker/artisan est déjà fermée par `rdv.py` :
+`rdvs_echus()` ne rend que des RDV échus, et `valider()` refuse un RDV échu. Donc un RDV
+que le worker voit ne peut plus être validé, et un RDV validé n'est jamais dans sa file.
+Le même garde-fou sert les deux côtés — testé explicitement pour que ça reste vrai.
+
+**Modélisation.** La relance artisan cible son **identifiant de compte** (push vers l'app),
+pas un numéro. Le repli SMS vers `transfert.cible` viendra avec l'adaptateur d'envoi, pour
+l'artisan sans app. `transfert.cible` a été ajouté à `dupont.json`, qui ne respectait pas
+son propre schéma documenté.
+
+**Leçon.** Deux défauts de copie n'ont été vus qu'en imprimant les textes réellement mis en
+file : « le créneau **du** aujourd'hui entre 17h et 19h » (le libellé du calendrier se lit
+en apposition, jamais après un article) et « pour client sans nom ». Aucun test ne les
+aurait attrapés. **Lire la sortie réelle, pas seulement les assertions.**
+
+**Défaut repéré, non corrigé (hors périmètre de la brique).** `MockLLM` rate
+« Je m'appelle Garcia » : la regex de nom n'a pas `re.IGNORECASE`, donc seule la minuscule
+matche. Conséquence : le slot `nom` reste vide dans les scénarios mock, et le chemin
+« nom connu » des messages n'est jamais exercé. Correctif = 1 flag + un test R17 (règle n°4
+du projet : le test d'abord).
+
+**Prochaine étape convenue :** brique 3, l'adaptateur Postgres derrière le port `Depot`,
+ou l'API FastAPI — au choix.

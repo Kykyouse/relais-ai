@@ -11,10 +11,14 @@ import json
 import pathlib
 import sys
 
+from relais_proto import messages
 from relais_proto.calendar_stub import CalendarStub
 from relais_proto.depot import DepotMemoire
 from relais_proto.engine import Conversation
+from relais_proto.expiration import WorkerExpiration
+from relais_proto.guards import check_output
 from relais_proto.llm import MockLLM, ResilientLLM
+from relais_proto.messages import Destinataire
 from relais_proto.rdv import (Rdv, StatutRdv, TransitionInterdite,
                               calculer_expiration)
 from relais_proto.scoring import build_lead
@@ -567,6 +571,164 @@ def check_cycle_vie_rdv() -> bool:
     return True
 
 
+def _appel_avec_rdv(depot, nom_scenario: str, maintenant: dt.datetime):
+    """Joue un scénario en mock et pose son RDV dans le dépôt. Rend (lead, rdv)."""
+    convo = Conversation(CFG, MockLLM(), CalendarStub(CFG, now=maintenant))
+    convo.open()
+    for ligne in SCENARIOS[nom_scenario]["lignes"]:
+        if convo.state.value in ("S11", "FIN"):
+            break
+        convo.process(ligne)
+    donnees = build_lead(convo)
+    appel = depot.ouvrir_appel("art-dupont", maintenant)
+    depot.enregistrer_etat(appel.id, convo.to_dict())
+    lead = depot.cloturer_appel(appel.id, donnees, maintenant)
+    rdv = depot.creer_rdv(lead_id=lead.id, hold=donnees["rdv"], lead_donnees=donnees,
+                          cfg=CFG, maintenant=maintenant)
+    return lead, rdv
+
+
+def check_worker_expiration() -> bool:
+    """R16 : worker d'expiration (spec §3.6) — créneau libéré, lead en alerte, SMS de
+    repli au client, relance artisan. Deux propriétés critiques : il est idempotent, et
+    il ne vole jamais une décision à l'artisan."""
+    depot = DepotMemoire()
+    worker = WorkerExpiration(depot, CFG)
+
+    # (a) dépôt vide : un passage ne doit rien inventer
+    if worker.passer(LUNDI_9H):
+        print("   passage sur dépôt vide non vide")
+        return False
+
+    # (b) un RDV notifié puis laissé sans réponse (T01, urgence → échéance à 2 h)
+    lead, rdv = _appel_avec_rdv(depot, "T01_urgence_fuite", LUNDI_9H)
+    rdv.notifier(LUNDI_9H)
+    depot.sauver_rdv(rdv)
+    if depot.rdvs_echus(rdv.expire_a - dt.timedelta(minutes=1)):
+        print("   un RDV encore dans les temps est déjà dans la file du worker")
+        return False
+
+    rapport = worker.passer(rdv.expire_a)
+    if rapport.expires != [rdv.id] or len(rapport.messages_crees) != 2:
+        print(f"   1er passage : expirés={rapport.expires}, "
+              f"messages={rapport.messages_crees} (attendu 1 RDV, 2 messages)")
+        return False
+    if depot.rdv(rdv.id).statut is not StatutRdv.EXPIRE:
+        print(f"   le RDV n'est pas expiré en base : {depot.rdv(rdv.id).statut.value}")
+        return False
+    if depot.lead(lead.id).donnees.get("alerte", {}).get("motif") \
+            != "rdv_expire_sans_reponse":
+        print("   le lead n'a pas été mis en alerte")
+        return False
+
+    # destinataires et contenus : le SMS client part sur le numéro confirmé, la relance
+    # artisan sur la cible de transfert, et les deux passent les garde-fous
+    par_dest = {m.destinataire: m for m in depot.messages()}
+    if set(par_dest) != {Destinataire.CLIENT, Destinataire.ARTISAN}:
+        print(f"   destinataires en file : {sorted(d.value for d in par_dest)}")
+        return False
+    if par_dest[Destinataire.CLIENT].cible != lead.donnees["slots"]["telephone_rappel"]:
+        print("   le SMS de repli ne part pas sur le numéro confirmé du client")
+        return False
+    if par_dest[Destinataire.ARTISAN].cible != rdv.artisan_id:
+        print("   la relance artisan ne cible pas le compte artisan (push)")
+        return False
+    for m in depot.messages():
+        violations = check_output(m.texte, CFG)
+        if violations:
+            print(f"   message {m.destinataire.value} viole un garde-fou : {violations}")
+            return False
+    # le créneau doit être NOMMÉ au client : un SMS qui ne dit pas lequel est inutile
+    if rdv.creneau["label"] not in par_dest[Destinataire.CLIENT].texte:
+        print("   le SMS de repli ne rappelle pas le créneau concerné")
+        return False
+
+    # (c) deuxième passage : plus rien à faire, et surtout aucun second SMS
+    avant = len(depot.messages())
+    rapport2 = worker.passer(rdv.expire_a + dt.timedelta(hours=1))
+    if rapport2 or len(depot.messages()) != avant:
+        print(f"   2e passage non neutre : {rapport2}, {len(depot.messages())} messages")
+        return False
+
+    # (d) passage INTERROMPU après l'enfilage, avant l'écriture du statut : le RDV
+    # reste échu, le passage suivant doit le rattraper SANS doubler le SMS du client.
+    # (c'est pour ça que le worker enfile avant de changer l'état)
+    lead_b, rdv_b = _appel_avec_rdv(depot, "R11_dispo_samedi_respectee", LUNDI_9H)
+    rdv_b.notifier(LUNDI_9H)
+    depot.sauver_rdv(rdv_b)
+    brouillons = [messages.repli_client(rdv_b, lead_b.donnees, CFG),
+                  messages.relance_artisan(rdv_b, lead_b.donnees, CFG)]
+    for b in brouillons:                       # l'enfilage a eu lieu…
+        depot.enfiler_message(b, rdv_b.expire_a)
+    avant = len(depot.messages())              # …puis le process est mort ici
+    rapport3 = worker.passer(rdv_b.expire_a)
+    if rapport3.expires != [rdv_b.id]:
+        print(f"   le passage de rattrapage n'a pas expiré le RDV : {rapport3.expires}")
+        return False
+    if rapport3.messages_crees or len(rapport3.deja_traites) != 2:
+        print(f"   rattrapage : {len(rapport3.messages_crees)} message(s) recréé(s), "
+              f"{len(rapport3.deja_traites)} reconnu(s) — le client serait prévenu deux fois")
+        return False
+    if len(depot.messages()) != avant:
+        print("   le rattrapage a dupliqué des messages")
+        return False
+
+    # (d bis) crash PENDANT l'enfilage : l'ordre du worker doit garantir que le client
+    # finit prévenu. Si l'état terminal était écrit AVANT l'enfilage, le RDV sortirait
+    # de la file et le SMS serait perdu définitivement.
+    lead_e, rdv_e = _appel_avec_rdv(depot, "R04_changement_commune", LUNDI_9H)
+    rdv_e.notifier(LUNDI_9H)
+    depot.sauver_rdv(rdv_e)
+    vrai_enfiler = depot.enfiler_message
+
+    def enfiler_qui_casse(brouillon, maintenant):
+        raise RuntimeError("réseau coupé pendant l'enfilage")
+
+    depot.enfiler_message = enfiler_qui_casse
+    rapport_crash = worker.passer(rdv_e.expire_a)
+    depot.enfiler_message = vrai_enfiler
+    if not rapport_crash.echecs or rapport_crash.expires:
+        print(f"   crash à l'enfilage : {rapport_crash} (attendu 1 échec, 0 expiré)")
+        return False
+    if depot.rdv(rdv_e.id).statut is StatutRdv.EXPIRE:
+        print("   l'état a été écrit avant l'enfilage : le SMS du client est perdu")
+        return False
+    reprise = worker.passer(rdv_e.expire_a)
+    if reprise.expires != [rdv_e.id] or len(reprise.messages_crees) != 2:
+        print(f"   reprise après crash : expirés={reprise.expires}, "
+              f"messages={reprise.messages_crees}")
+        return False
+
+    # (e) le worker ne touche pas un RDV validé, même très en retard
+    lead_c, rdv_c = _appel_avec_rdv(depot, "R12_commune_avec_ponctuation", LUNDI_9H)
+    rdv_c.notifier(LUNDI_9H)
+    rdv_c.valider(LUNDI_9H + dt.timedelta(minutes=10))
+    depot.sauver_rdv(rdv_c)
+    rapport4 = worker.passer(rdv_c.expire_a + dt.timedelta(days=7))
+    if rdv_c.id in rapport4.expires:
+        print("   le worker a expiré un RDV déjà validé")
+        return False
+    if depot.rdv(rdv_c.id).statut is not StatutRdv.VALIDE:
+        print("   le statut validé n'a pas survécu au passage du worker")
+        return False
+
+    # (f) symétrie de la course : un RDV que le worker peut voir n'est plus validable.
+    # C'est le garde-fou de rdv.py qui ferme les deux côtés — pas la chance.
+    lead_d, rdv_d = _appel_avec_rdv(depot, "R09_commune_sans_cp", LUNDI_9H)
+    rdv_d.notifier(LUNDI_9H)
+    depot.sauver_rdv(rdv_d)
+    if not depot.rdvs_echus(rdv_d.expire_a):
+        print("   le RDV échu n'est pas dans la file : cas (f) creux")
+        return False
+    try:
+        depot.rdv(rdv_d.id).valider(rdv_d.expire_a)
+        print("   un RDV visible par le worker a pu être validé : course ouverte")
+        return False
+    except TransitionInterdite:
+        pass
+    return True
+
+
 def check_guard_prix() -> bool:
     """T05 (garde-fou prix) : on injecte une réplique fautive et on vérifie l'interception."""
     from relais_proto.guards import check_output
@@ -637,6 +799,14 @@ def run() -> int:
     if check_cycle_vie_rdv():
         print("   → graphe de transitions complet, délais 24 h/2 h réelles + mode ouvrées, "
               "course validation-vs-expiration, T01 de bout en bout en dépôt : ✅ PASS")
+    else:
+        print("   → ❌ FAIL")
+        echecs += 1
+
+    print(f"\n──── R16_worker_expiration ────")
+    if check_worker_expiration():
+        print("   → créneau libéré, lead en alerte, SMS de repli + relance artisan, "
+              "idempotence sur passage interrompu, course artisan fermée : ✅ PASS")
     else:
         print("   → ❌ FAIL")
         echecs += 1

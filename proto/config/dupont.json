@@ -52,6 +52,12 @@
     "max_rdv_agent_par_jour": 4,
     "granularite_proposition": "fenetre_2h"
   },
+  "sms": {
+    "expediteur": "DupontChauf",
+    "rappel_rdv": "j-1_18h",
+    "templates_personnalises": null
+  },
+
   "validation": {
     "delai_max_heures": 24,
     "delai_max_urgence_heures": 2,
@@ -76,6 +82,7 @@
   },
   "transfert": {
     "actif": true,
+    "cible": "+33612345678",
     "horaires": { "lun-ven": [{ "de": "08:00", "a": "19:00" }] }
   }
 }

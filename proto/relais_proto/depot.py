@@ -16,6 +16,7 @@ import datetime as dt
 from dataclasses import dataclass, field
 from typing import Protocol
 
+from .messages import Brouillon, MessageSortant, StatutMessage
 from .rdv import Rdv, StatutRdv, TERMINAUX
 
 
@@ -68,6 +69,16 @@ class Depot(Protocol):
 
     def rdvs_echus(self, maintenant: dt.datetime) -> list[Rdv]: ...
 
+    def lead(self, lead_id: str) -> Lead: ...
+
+    def marquer_lead_alerte(self, lead_id: str, motif: str,
+                            maintenant: dt.datetime) -> None: ...
+
+    def enfiler_message(self, brouillon: Brouillon,
+                        maintenant: dt.datetime) -> tuple[MessageSortant, bool]: ...
+
+    def messages(self, statut: StatutMessage | None = None) -> list[MessageSortant]: ...
+
 
 class DepotMemoire:
     """Implémentation de test. Identifiants séquentiels : les tests restent lisibles,
@@ -77,6 +88,8 @@ class DepotMemoire:
         self._appels: dict[str, dict] = {}
         self._leads: dict[str, dict] = {}
         self._rdvs: dict[str, dict] = {}
+        self._messages: dict[str, dict] = {}
+        self._par_cle: dict[str, str] = {}   # clé d'idempotence -> id message
         self._compteurs: dict[str, int] = {}
 
     def _id(self, prefixe: str) -> str:
@@ -143,6 +156,45 @@ class DepotMemoire:
 
     def _tous_rdvs(self) -> list[Rdv]:
         return [Rdv.from_dict(d) for d in self._rdvs.values()]
+
+    def marquer_lead_alerte(self, lead_id: str, motif: str,
+                            maintenant: dt.datetime) -> None:
+        """Alerte rouge sur la carte lead (spec §3.6). Écrite DANS les données du lead :
+        c'est ce que le dashboard lit, pas une table à part."""
+        brut = self._exige(self._leads, lead_id)
+        brut["donnees"] = {**brut["donnees"],
+                           "alerte": {"motif": motif,
+                                      "horodatage": maintenant.isoformat(
+                                          timespec="seconds")}}
+
+    # ---- file sortante ----
+    def enfiler_message(self, brouillon: Brouillon,
+                        maintenant: dt.datetime) -> tuple[MessageSortant, bool]:
+        """Équivalent d'un INSERT ... ON CONFLICT (cle_idempotence) DO NOTHING.
+
+        Renvoie (message, nouveau). Deux passages du worker sur le même RDV rendent donc
+        le MÊME message : c'est ce qui garantit qu'un client ne reçoit pas deux SMS, sans
+        que l'appelant ait à s'en préoccuper.
+        """
+        existant = self._par_cle.get(brouillon.cle_idempotence)
+        if existant:
+            return MessageSortant.from_dict(self._messages[existant]), False
+        message = MessageSortant(
+            id=self._id("msg"), cle_idempotence=brouillon.cle_idempotence,
+            destinataire=brouillon.destinataire, canal=brouillon.canal,
+            cible=brouillon.cible, texte=brouillon.texte, cree_a=maintenant)
+        self._messages[message.id] = message.to_dict()
+        self._par_cle[message.cle_idempotence] = message.id
+        return message, True
+
+    def messages(self, statut: StatutMessage | None = None) -> list[MessageSortant]:
+        tous = [MessageSortant.from_dict(d) for d in self._messages.values()]
+        return [m for m in tous if statut is None or m.statut is statut]
+
+    def marquer_message_envoye(self, message_id: str, maintenant: dt.datetime) -> None:
+        brut = self._exige(self._messages, message_id)
+        brut["statut"] = StatutMessage.ENVOYE.value
+        brut["envoye_a"] = maintenant.isoformat()
 
     # ---- utils ----
     @staticmethod
