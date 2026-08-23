@@ -5,6 +5,89 @@
 
 ---
 
+# ÉTAT AU 23/08/2026 — à lire en premier
+
+> **Ce bloc se REMPLACE, il ne s'empile pas.** Les entrées datées plus bas sont le journal
+> chronologique (le pourquoi des décisions) ; ce bloc-ci est le où-on-en-est.
+
+## En une phrase
+
+Le backend de la phase 1 est fonctionnel et vérifié contre un vrai Postgres : un appel
+entre par HTTP, produit un lead scoré et un RDV, l'artisan valide en 1 tap, l'expiration et
+les messages sortants sont gérés. **Rien ne sort encore du système** : ni voix, ni SMS, ni
+push — les trois attendent un fournisseur.
+
+## Ce qui tourne
+
+```bash
+cd proto
+python run_scenario.py                              # 25 tests, ~2 s, sans clé ni base
+python run_depot_pg.py [--migrer]                   # contrat du port contre Supabase
+uvicorn serveur:app --port 8000                     # API HTTP
+python worker.py [--a-vide]                         # expiration + expédition (cron)
+python run_llm_eval.py [--mock] [--n 3]             # éval appelant-simulé
+```
+
+| Brique | État | Vérifié contre |
+|---|---|---|
+| Agent conversationnel S0–S11, garde-fous, dégradation | ✅ | mock (25 tests) + 32 convs LLM réelles |
+| Sérialisation de l'état d'appel (R14) | ✅ | mock, mutation 10/10 |
+| Cycle de vie du RDV, expiration (R15, R16) | ✅ | mock, mutations 11/11 et 9/9 |
+| Port `Depot` + adaptateur Postgres (R17, R18) | ✅ | **Supabase réel**, contrat identique |
+| API HTTP, 2 portes d'auth, 1 tour = 1 requête (R19) | ✅ | mock + câblage réel sur Supabase |
+| Plage de silence, réessais, multi-artisans (R20) | ✅ | mock, mutations 8/8 |
+| Validation client par lien à un tap (R21) | ✅ | mock, mutations 7/7 |
+
+## Ce qui est encore un double (et non un manque caché)
+
+- **`EnvoyeurJournal`** : aucun fournisseur SMS câblé. Les messages sont journalisés,
+  **rien ne part**. Le port `Envoyeur` attend l'adaptateur (OVH en cours d'instruction).
+- **`CalendarStub`** : applique les vraies règles d'agenda mais n'est relié à aucun
+  calendrier. Google/Outlook non branchés (OAuth Google à lancer tôt : délai calendaire).
+- **Pas de voix** : aucune plateforme vocale branchée, aucun numéro. L'API expose déjà les
+  webhooks qu'elle appellera.
+- **Pas de push** : la relance artisan est mise en file, jamais délivrée.
+- **`config/artisans.json`** : registre en fichier, avec des jetons de dév **publics**.
+  Deviendra la table `artisan` (et la FK que `rdv.artisan_id` attend déjà).
+- **`MockLLM`** : rate « Je m'appelle X » (regex sans `IGNORECASE`) — le chemin
+  « nom connu » n'est donc jamais exercé dans les tests mock.
+
+## Décisions verrouillées cette session
+
+- **Délais de validation : 24 h / 2 h en heures réelles**, réglables par artisan. À 24 h le
+  calcul en heures ouvrées devient nuisible ; il reste disponible via `base_delai`.
+- **L'échéance fait foi, pas le passage du worker** : valider une seconde trop tard est
+  refusé, sinon la décision dépend de la latence d'un cron.
+- **Effets idempotents avant changement d'état** dans les workers : l'inverse perd le SMS
+  du client pour de bon.
+- **SMS strictement sortant, « Répondez OUI » remplacé par un lien à un tap.** Motif
+  vérifié : numéros mobiles FR interdits à l'A2P, bidirectionnel = numéro `09 3X`, et
+  Charte AF2M du 1er mars 2026. Le lien supprime le numéro dédié et toute la conformité
+  entrante.
+- **Deux portes d'authentification distinctes** : secret partagé pour la plateforme vocale
+  (l'artisan est identifié par le numéro appelé), jeton porteur pour l'app artisan.
+- **L'API ne décide jamais** : corollaire backend de la règle n°1.
+
+## Dettes et décisions ouvertes
+
+1. **Fuseaux / changement d'heure** — le domaine est en datetime naïfs et le schéma en
+   `timestamp` sans fuseau. Avec 24 h de délai réel, une échéance posée la veille du
+   basculement vaut 23 h ou 25 h. **À trancher avant la prod**, c'est une décision de
+   conception, pas un détail.
+2. **Fournisseur SMS** — OVHcloud à instruire (voix + SIP + SMS chez le même acteur, UE).
+3. **`FOR UPDATE SKIP LOCKED`** quand plusieurs workers tourneront (optimisation, pas
+   justesse : l'unicité de la clé d'idempotence protège déjà le client).
+4. **Table `artisan`** + FK, en remplacement du registre fichier.
+5. Formulation « d'ici 24 heures » à l'oral, un peu mécanique — à retoucher sciemment
+   (phrase verbatim et testée).
+
+## Prochaine étape
+
+L'app mobile qui consomme `GET /rdv` (c'est là que la validation 1-tap devient tangible),
+ou l'adaptateur OVH dès que les accès existent.
+
+---
+
 ## Sessions du 21–22/08/2026 — fondations + prototype texte
 
 **Contexte.** Projet : agent IA qui répond aux appels manqués des artisans (renvoi conditionnel),

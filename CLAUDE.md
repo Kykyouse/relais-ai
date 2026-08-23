@@ -6,7 +6,8 @@ Cible V1 : plombiers/chauffagistes FR. Solo dev : Geoffrey (binôme Claude) ; ma
 
 ## À lire avant toute session
 
-1. `docs/journal.md` — état du projet, décisions, backlog. **Le mettre à jour en fin de session.**
+1. `docs/journal.md` — commencer par le bloc **« ÉTAT AU … »** en tête (où-on-en-est,
+   à REMPLACER en fin de session) ; les entrées datées en dessous sont le pourquoi.
 2. `docs/script-conversation-v1.md` — la machine à états S0–S11 et les 9 invariants. Source de vérité.
 3. `docs/config-artisan-v1.md` — schéma de config (le LLM ne sait RIEN hors config).
 

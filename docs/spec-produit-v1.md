@@ -39,14 +39,18 @@ un CRM généraliste, ni un « standard téléphonique IA » générique. L'obse
    en 1 tap**. 🔜
 5. Validation → écriture dans son calendrier perso + **SMS de confirmation** au client
    + rappel J-1 (H-2 si urgence). 🔜
-5bis. **Modification d'horaire par l'artisan** (décision 22/08) : l'artisan propose un
-   autre créneau depuis l'app → SMS au client : « {Prénom} vous propose plutôt {créneau}.
-   Répondez OUI pour confirmer, ou NON si ça ne convient pas. » → la **réponse SMS du
-   client est lue** par le système : OUI → RDV confirmé (récap SMS + calendrier + notif
-   artisan) ; NON ou texte libre → **notification à l'artisan avec la réponse**, qui
-   re-propose ou appelle. ❓ à trancher : nombre max d'allers-retours avant « appelez-vous
-   directement » (proposition : 2), et relance si le client ne répond pas (proposition :
-   une relance à +2 h, puis notif artisan). 🔜
+5bis. **Modification d'horaire par l'artisan** (décision 22/08, **flux révisé le 23/08**) :
+   l'artisan propose un autre créneau depuis l'app → SMS au client : « {Prénom} vous
+   propose plutôt {créneau}. Si cela vous convient, validez ici : {lien} » → le client
+   valide **d'un tap**, l'artisan est prévenu. ✅ construit (§3.5bis = `POST /rdv/{id}/reproposer`
+   puis `GET|POST /c/{jeton}`).
+   **Le « Répondez OUI » est abandonné** : les opérateurs français réservent les numéros
+   mobiles au P2P (interdits à l'A2P), le SMS bidirectionnel exigerait un numéro `09 3X`
+   dédié, et la Charte Business Messaging de l'AF2M du 1er mars 2026 durcit la validation
+   des Sender ID. Le lien supprime le numéro dédié, la conformité entrante et toute la
+   brique « lecture des SMS reçus ». Un tap vaut mieux qu'un mot à taper.
+   ❓ restent à trancher : relance si le client ne valide pas (aujourd'hui : l'échéance
+   court et le repli d'expiration s'applique), et cas du client sans data mobile.
 6. **Expiration** (4 h ouvrées / 1 h urgence, configurable) sans réponse artisan → SMS de
    repli au client, créneau tampon libéré, lead en alerte rouge, relance artisan. ✅ (logique) / 🔜 (SMS réels)
 7. Chaque appel produit un **lead scoré 0–5** avec raisons affichables + transcript. ✅
@@ -54,9 +58,11 @@ un CRM généraliste, ni un « standard téléphonique IA » générique. L'obse
 ## 4. Les canaux d'entrée
 
 - **Téléphone (appels ratés)** : le canal V1. ✅ logique conversationnelle / 🔜 voix + téléphonie réelles.
-- **SMS entrants sur le numéro Relais** (décision 22/08) : le système **lit les SMS reçus** —
-  réponses aux confirmations/renégociations (§3.5bis) en priorité, et ❓ SMS spontanés d'un
-  prospect au numéro Relais (« vous pouvez me rappeler ? ») → à qualifier comme lead ? 🔜
+- **SMS entrants : ABANDONNÉS en V1** (décision 23/08, revient sur le 22/08). Le SMS est
+  strictement **sortant** : les validations passent par un lien (§3.5bis), ce qui évite le
+  numéro `09 3X` dédié et la conformité entrante. ❓ Les SMS spontanés d'un prospect au
+  numéro Relais restent une question ouverte — sans objet tant qu'on n'a pas de numéro
+  capable d'en recevoir.
 - 🔜 V1.1 : **formulaire du site** de l'artisan → même pipeline de qualification, mêmes leads.
 - **Email entrant : à réfléchir** (décision 22/08 — ni engagé ni exclu).
 - ❓ WhatsApp : évoqué au tout début, jamais re-discuté. V2+ ?
@@ -84,8 +90,9 @@ Architecture « le code sait, le LLM comprend » : ✅
   prestations couvertes/refusées, zone + communes, horaires/durées/buffers/urgences,
   tarifs communicables (phrases pré-rédigées), transfert, validation, SMS. ✅ schéma + exemple Dupont.
 
-Qualité prouvée : suite de non-régression 17 scénarios (mock, 1 s, sans clé) + éval LLM
-réelle 8 personas adversariaux → **32 conversations, 0 échec**. ✅
+Qualité prouvée : suite de non-régression **25 tests** (mock, ~2 s, sans clé ni base) +
+éval LLM réelle 8 personas adversariaux → **32 conversations, 0 échec**. Chaque test de
+backend est éprouvé par mutation (on casse la règle, on exige que le test échoue). ✅
 
 ## 6. Les interfaces artisan 🔜 (rien de construit — prochaine grosse brique)
 
@@ -126,8 +133,10 @@ backend) pour iOS + Android avec une seule base de code, partageant l'API du sit
     SMS récapitulatif au client. Modification → proposition de nouveaux créneaux (mêmes
     règles agenda) → repasse par le flow de validation artisan standard.
     → nécessite un état dédié dans la machine (S12 « gestion RDV existant ») : script v0.2.
-  - **SMS** : « finalement mardi je ne peux pas » sur le fil de confirmation → parsé →
-    notification artisan + re-proposition de créneaux par SMS (mêmes règles que §3.5bis).
+  - ~~**SMS** : « finalement mardi je ne peux pas » sur le fil de confirmation~~ —
+    **sans objet depuis le 23/08** (SMS strictement sortant, cf. §4). L'annulation par le
+    client passe donc par le rappel téléphonique, ou par un lien à prévoir sur le modèle
+    de §3.5bis. 🔜
   - ❓ à trancher : une modification demandée par le client re-passe-t-elle TOUJOURS par
     la validation artisan (mon penchant : oui en V1, cohérent avec « jamais d'engagement
     sans l'artisan »), et gestion des annulations tardives (< 2 h avant le RDV : notification
@@ -174,9 +183,13 @@ entrant : en réflexion, ni engagé ni exclu. — Le reste est V2+ ou jamais.
 | Agent conversationnel texte + garde-fous + dégradation | ✅ prototype validé (32/32) |
 | Suites d'éval (mock + LLM adversarial + boucle par fichiers) | ✅ opérationnelles |
 | Résolution commune→CP Île-de-France | ✅ |
-| Persistance leads, API, validation 1-tap, SMS bidirectionnel | 🔜 prochaine étape probable |
-| App mobile (push) + site web | 🔜 après l'API |
-| Téléphonie + voix | 🔜 ensuite (bascule Claude Code) |
+| Persistance (Postgres/Supabase) + port de dépôt + contrat | ✅ vérifié sur base réelle |
+| Cycle de vie du RDV, expiration, file sortante idempotente | ✅ (23/08) |
+| API HTTP : webhooks appel, boîte de validation, 1 tap | ✅ (23/08) |
+| Validation client par lien à un tap (remplace le SMS bidirectionnel) | ✅ (23/08) |
+| Envoi SMS réel | 🔜 port prêt, **aucun fournisseur câblé** — rien ne part |
+| App mobile (push) + site web | 🔜 l'API les attend (`GET /rdv`) |
+| Téléphonie + voix | 🔜 aucun numéro, aucune plateforme branchée |
 | Calendriers réels (Google/Outlook) | 🔜 (OAuth à lancer en avance) |
 | Onboarding artisan 20 min | 🔜 (plan posé dans config-artisan-v1.md §3) |
 | Marketing / interviews terrain | 🔜 côté cousin (guide livré) |
