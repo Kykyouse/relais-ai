@@ -436,3 +436,52 @@ SMS réel.
 5. `FOR UPDATE SKIP LOCKED` quand plusieurs workers tourneront (optimisation, pas justesse).
 
 **Prochaine étape convenue :** l'API FastAPI.
+
+---
+
+## Session du 23/08/2026 (suite) — brique 4 : API HTTP (FastAPI)
+
+**Fait.**
+- `relais_proto/api.py` : la façade. `POST /webhooks/appel` (ouverture),
+  `POST /webhooks/appel/{id}/tour` (un tour), `GET /rdv` (boîte de validation),
+  `POST /rdv/{id}/valider|refuser`, `GET /sante`. Collaborateurs injectés (dépôt, LLM,
+  horloge) : les tests passent des doubles, la prod les implémentations réelles.
+- `relais_proto/registre.py` : artisans, numéros Relais, tokens **en SHA-256 seulement**,
+  comparaison à temps constant sur tous les artisans. Deviendra la table `artisan`.
+- `serveur.py` : câblage de production (`uvicorn serveur:app`). Refuse de démarrer si
+  `DATABASE_URL` ou `RELAIS_WEBHOOK_SECRET` manque, plutôt que de tourner à moitié
+  configuré. Vérifié contre le vrai Supabase : `/sante` 200, auth 401, aucune écriture.
+- Test **R19** + mutations : **7/7 détectées**. Suite : **23 PASS en 1,05 s**.
+  Postgres rejoué après coup : toujours vert.
+
+**Les deux portes sont étanches, et c'est testé dans les deux sens.** Un token d'artisan
+présenté comme secret webhook est refusé ; le secret webhook présenté comme token porteur
+est refusé. C'était le point du cadrage : l'appelant du webhook est la plateforme vocale,
+pas l'artisan — celui-ci est identifié par le **numéro Relais appelé**, jamais par un
+secret confié à un tiers.
+
+**Un tour = une requête, prouvé de la manière forte.** R19 construit une **app neuve à
+chaque requête**, ne partageant que le dépôt. Si l'API gardait le moindre état
+conversationnel en mémoire, l'appel ne pourrait pas se poursuivre. Et les répliques HTTP
+sont comparées **mot pour mot** à un déroulé en process : l'API ne reformule rien.
+
+**Étanchéité entre artisans.** Martin ne voit pas les RDV de Dupont et ne peut pas les
+valider — **404, pas 403** : ne pas révéler qu'un RDV existe chez un autre artisan.
+
+**Deux défauts trouvés en écrivant les tests, pas le code.**
+1. L'API laissait `Conversation` créer son calendrier sur `dt.datetime.now()`, hors de
+   l'horloge injectée : non testable, et le libellé d'un créneau aurait pu changer en cours
+   d'appel. Le calendrier est désormais calé sur l'horloge à l'ouverture, puis son `now`
+   voyage dans l'état sérialisé — les libellés prononcés gardent leur sens même si l'appel
+   franchit minuit.
+2. Un appel dont l'état n'a jamais été écrit produisait une `AttributeError` en 500.
+   Désormais 409 explicite. (Défaut révélé par la mutation « état non persisté ».)
+
+**Reste pour clore la phase backend.**
+1. Adaptateur d'envoi SMS + plage de non-envoi 21 h–08 h.
+2. Correctif `MockLLM` (regex de nom sans `IGNORECASE`) avec son test R20.
+3. Décision fuseaux/DST avant la prod.
+4. Push réel vers l'app (aujourd'hui la relance artisan reste en file).
+5. `FOR UPDATE SKIP LOCKED` quand plusieurs workers tourneront.
+
+**Prochaine étape convenue :** l'envoi SMS réel, ou l'app mobile qui consomme `GET /rdv`.

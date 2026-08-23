@@ -1,0 +1,17 @@
+{
+  "_lecture": "Registre des artisans (V1 : fichier ; deviendra la table `artisan`). Jetons stockés en SHA-256 uniquement. Les valeurs ci-dessous sont des jetons de DÉV publics : 'dev-token-dupont', 'dev-token-martin'. Secret webhook de dév : 'dev-secret-webhook'.",
+  "artisans": [
+    {
+      "id": "art-dupont",
+      "numero_relais": "+33189701234",
+      "config": "dupont.json",
+      "token_sha256": "1053e0fec0718ec5f85742ce46058fba89bc5569eafeaedeb8e8716408a40888"
+    },
+    {
+      "id": "art-martin",
+      "numero_relais": "+33189705678",
+      "config": "dupont.json",
+      "token_sha256": "0b1b00df98508485bb4e721dec9d9065f7f214e0fa28b2d753d4bf70f3776c6b"
+    }
+  ]
+}

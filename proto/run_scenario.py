@@ -775,6 +775,164 @@ def check_conformite_depot() -> bool:
     return ok
 
 
+def check_api_http() -> bool:
+    """R19 : l'API HTTP. Quatre propriétés : les deux portes d'authentification ne se
+    substituent jamais l'une à l'autre, un tour = une requête sans session en mémoire,
+    un artisan ne voit rien de ce qui appartient à un autre, et la course
+    validation/expiration remonte en 409."""
+    try:
+        from fastapi.testclient import TestClient
+    except ImportError:
+        print("   fastapi/httpx absents : pip install -r requirements.txt")
+        return False
+
+    from relais_proto.api import creer_app
+    from relais_proto.registre import Artisan, Registre, empreinte
+
+    TOK_A, TOK_B, SECRET = "tok-dupont", "tok-martin", "secret-voix"
+    NUM_A, NUM_B = "+33189701234", "01 89 70 56 78"   # formats volontairement différents
+    registre = Registre([Artisan("art-dupont", NUM_A, empreinte(TOK_A), CFG),
+                         Artisan("art-martin", NUM_B, empreinte(TOK_B), CFG)],
+                        empreinte(SECRET))
+    depot = DepotMemoire()
+    pendule = [LUNDI_9H]                              # horloge que le test fait avancer
+
+    def cli():
+        """Une app NEUVE à chaque requête : seul le dépôt est partagé. Si l'API gardait le
+        moindre état conversationnel en mémoire, l'appel ne pourrait pas se poursuivre."""
+        return TestClient(creer_app(depot, registre, MockLLM, lambda: pendule[0]))
+
+    voix = {"X-Relais-Secret": SECRET}
+    art_a = {"Authorization": f"Bearer {TOK_A}"}
+    art_b = {"Authorization": f"Bearer {TOK_B}"}
+    ouvrir = {"numero_appele": NUM_A}
+
+    # (a) les deux portes sont étanches, dans les deux sens
+    matrice = [
+        ("POST", "/webhooks/appel", {}, 401, "webhook sans secret"),
+        ("POST", "/webhooks/appel", {"X-Relais-Secret": TOK_A}, 401,
+         "token artisan accepté comme secret webhook"),
+        ("POST", "/webhooks/appel", {"Authorization": f"Bearer {TOK_A}"}, 401,
+         "webhook ouvert par un simple token artisan"),
+        ("GET", "/rdv", {}, 401, "boîte de validation sans token"),
+        ("GET", "/rdv", {"Authorization": f"Bearer {SECRET}"}, 401,
+         "secret webhook accepté comme token artisan"),
+        ("GET", "/sante", {}, 200, "la santé devrait rester ouverte"),
+    ]
+    for methode, url, entetes, attendu, libelle in matrice:
+        r = (cli().post(url, json=ouvrir, headers=entetes) if methode == "POST"
+             else cli().get(url, headers=entetes))
+        if r.status_code != attendu:
+            print(f"   auth · {libelle} : {r.status_code} au lieu de {attendu}")
+            return False
+
+    # (b) référence en process, pour comparer mot pour mot ce que dit l'API
+    ref = Conversation(CFG, MockLLM(), CalendarStub(CFG, now=LUNDI_9H))
+    attendus = [ref.open()]
+    for ligne in SCENARIOS["T01_urgence_fuite"]["lignes"]:
+        if ref.state.value in ("S11", "FIN"):
+            break
+        attendus.append(ref.process(ligne))
+
+    r = cli().post("/webhooks/appel", json=ouvrir, headers=voix)
+    if r.status_code != 200 or r.json()["texte"] != attendus[0]:
+        print(f"   ouverture : {r.status_code} / {r.json()}")
+        return False
+    appel_id = r.json()["appel_id"]
+
+    rdv_id, i = None, 1
+    for ligne in SCENARIOS["T01_urgence_fuite"]["lignes"]:
+        r = cli().post(f"/webhooks/appel/{appel_id}/tour", json={"texte": ligne},
+                       headers=voix)
+        if r.status_code != 200:
+            print(f"   tour {i} : {r.status_code} {r.text[:120]}")
+            return False
+        corps = r.json()
+        if corps["texte"] != attendus[i]:
+            print(f"   tour {i} diverge de la référence en process :\n"
+                  f"     HTTP    = {corps['texte']!r}\n     process = {attendus[i]!r}")
+            return False
+        i += 1
+        if corps["termine"]:
+            rdv_id = corps["rdv_id"]
+            break
+    if rdv_id is None:
+        print("   l'appel HTTP ne s'est pas terminé sur un RDV")
+        return False
+
+    # un tour de plus sur un appel clôturé : 409, pas un second lead
+    if cli().post(f"/webhooks/appel/{appel_id}/tour", json={"texte": "allô ?"},
+                  headers=voix).status_code != 409:
+        print("   un appel clôturé accepte encore des tours")
+        return False
+
+    # (c) la boîte de validation, et l'étanchéité entre artisans
+    r = cli().get("/rdv", headers=art_a)
+    boite = r.json()
+    if len(boite) != 1 or boite[0]["id"] != rdv_id:
+        print(f"   boîte de validation de Dupont : {boite}")
+        return False
+    if boite[0]["statut"] != "en_attente_validation" or boite[0]["lead"]["score"] != 5:
+        print(f"   carte de validation incomplète : statut={boite[0]['statut']}, "
+              f"score={boite[0]['lead']['score']}")
+        return False
+    if boite[0]["lead"]["contrat"] != 1:
+        print("   le contrat de la carte lead n'est pas versionné dans la réponse")
+        return False
+    if cli().get("/rdv", headers=art_b).json():
+        print("   Martin voit les RDV de Dupont")
+        return False
+    if cli().post(f"/rdv/{rdv_id}/valider", headers=art_b).status_code != 404:
+        print("   Martin peut valider un RDV de Dupont")
+        return False
+
+    # (d) validation par le bon artisan
+    r = cli().post(f"/rdv/{rdv_id}/valider", headers=art_a)
+    if r.status_code != 200 or r.json()["statut"] != "valide":
+        print(f"   validation : {r.status_code} {r.text[:120]}")
+        return False
+    if cli().get("/rdv", headers=art_a).json():
+        print("   un RDV validé reste dans la boîte de validation")
+        return False
+    if cli().post(f"/rdv/{rdv_id}/valider", headers=art_a).status_code != 409:
+        print("   un RDV déjà validé accepte une seconde décision")
+        return False
+
+    # (e) la course validation/expiration remonte en 409 côté HTTP
+    r = cli().post("/webhooks/appel", json=ouvrir, headers=voix)
+    appel2 = r.json()["appel_id"]
+    rdv2 = None
+    for ligne in SCENARIOS["R11_dispo_samedi_respectee"]["lignes"]:
+        corps = cli().post(f"/webhooks/appel/{appel2}/tour", json={"texte": ligne},
+                           headers=voix).json()
+        if corps["termine"]:
+            rdv2 = corps["rdv_id"]
+            break
+    if rdv2 is None:
+        print("   second appel : pas de RDV")
+        return False
+    pendule[0] = LUNDI_9H + dt.timedelta(days=2)      # l'échéance est passée
+    r = cli().post(f"/rdv/{rdv2}/valider", headers=art_a)
+    if r.status_code != 409:
+        print(f"   valider après échéance : {r.status_code}, attendu 409")
+        return False
+    pendule[0] = LUNDI_9H
+
+    # (f) identifiants inconnus : 404, jamais 500
+    absent = "00000000-0000-0000-0000-000000000000"
+    for url, entetes in ((f"/webhooks/appel/{absent}/tour", voix),
+                         (f"/rdv/{absent}/valider", art_a)):
+        if cli().post(url, json={"texte": "x"}, headers=entetes).status_code != 404:
+            print(f"   {url} ne rend pas 404 sur un identifiant absent")
+            return False
+    # numéro Relais inconnu : 404 et non 500
+    if cli().post("/webhooks/appel", json={"numero_appele": "+33100000000"},
+                  headers=voix).status_code != 404:
+        print("   un numéro Relais inconnu ne rend pas 404")
+        return False
+    return True
+
+
 def check_guard_prix() -> bool:
     """T05 (garde-fou prix) : on injecte une réplique fautive et on vérifie l'interception."""
     from relais_proto.guards import check_output
@@ -869,6 +1027,15 @@ def run() -> int:
     if check_conformite_depot():
         print("   → DepotMemoire et DepotPostgres exposent la surface du port, "
               "mêmes noms de paramètres : ✅ PASS")
+    else:
+        print("   → ❌ FAIL")
+        echecs += 1
+
+    print(f"\n──── R19_api_http ────")
+    if check_api_http():
+        print("   → deux portes d'auth étanches, T01 rejoué en HTTP (un tour = une "
+              "requête, app neuve à chaque fois), étanchéité entre artisans, "
+              "409 sur échéance dépassée : ✅ PASS")
     else:
         print("   → ❌ FAIL")
         echecs += 1
