@@ -33,6 +33,12 @@ class Artisan:
     numero_relais: str
     token_sha256: str
     config: dict
+    telephone: str | None = None      # mobile du patron : identité pro + canal du code SMS
+    etat_abonnement: str = "actif"
+    # le NOM du fichier de config, gardé à côté de son contenu : c'est lui qui est stocké
+    # en base (la config reste un fichier versionné), et sans lui `semer()` écrirait une
+    # ligne que `depuis_depot()` jugerait ensuite inutilisable
+    config_fichier: str | None = None
 
 
 class Registre:
@@ -59,14 +65,86 @@ class Registre:
 
     @classmethod
     def depuis_fichier(cls, chemin: pathlib.Path, secret_webhook: str) -> Registre:
+        """Registre lu dans `config/artisans.json`. **Voie de SECOURS et d'amorçage**
+        depuis la migration 008 : la source normale est la base (`depuis_depot`). Reste
+        utile pour démarrer sans Postgres et pour semer la table la première fois."""
         brut = json.loads(chemin.read_text(encoding="utf-8"))
         base = chemin.parent
         artisans = [
             Artisan(id=a["id"], numero_relais=a["numero_relais"],
                     token_sha256=a["token_sha256"],
+                    telephone=a.get("telephone"), config_fichier=a["config"],
                     config=json.loads((base / a["config"]).read_text(encoding="utf-8")))
             for a in brut["artisans"]]
         return cls(artisans, empreinte(secret_webhook))
+
+    @classmethod
+    def depuis_depot(cls, depot, dossier_config: pathlib.Path,
+                     secret_webhook: str) -> tuple[Registre, list[str]]:
+        """Registre lu dans la table `artisan` (migration 008). Rend `(registre, ignorés)`.
+
+        Les lignes **inutilisables** — sans numéro Relais ou sans fichier de config, c'est
+        à dire les reprises créées par la migration à partir de données existantes — sont
+        écartées et rendues à part plutôt qu'avalées : un artisan absent du registre est
+        déjà géré partout (l'API rend 404, le worker le signale au lieu de deviner), mais
+        il faut que quelqu'un puisse le VOIR au démarrage.
+
+        La config reste un fichier : c'est son historique git qui répond à « qu'est-ce que
+        l'agent savait le jour de cet appel ? ».
+        """
+        artisans, ignores = [], []
+        for ligne in depot.artisans():
+            if not ligne.utilisable():
+                ignores.append(f"{ligne.id} ({ligne.etat_abonnement}, "
+                               f"numero_relais={ligne.numero_relais!r}, "
+                               f"config={ligne.config_fichier!r})")
+                continue
+            chemin = dossier_config / ligne.config_fichier
+            if not chemin.exists():
+                ignores.append(f"{ligne.id} (config introuvable : {chemin.name})")
+                continue
+            artisans.append(Artisan(
+                id=ligne.id, numero_relais=ligne.numero_relais,
+                token_sha256=ligne.token_sha256 or "",
+                telephone=ligne.telephone, etat_abonnement=ligne.etat_abonnement,
+                config_fichier=ligne.config_fichier,
+                config=json.loads(chemin.read_text(encoding="utf-8"))))
+        return cls(artisans, empreinte(secret_webhook)), ignores
+
+    @classmethod
+    def charger(cls, depot, dossier_config: pathlib.Path, secret_webhook: str,
+                journal=print) -> Registre:
+        """La façon NORMALE d'obtenir un registre en production : la table `artisan`.
+
+        Les artisans écartés sont annoncés à chaque démarrage, pas seulement quand il y en
+        a — même raisonnement que pour `cookie_secure` le 24/08 : un état qu'on ne voit
+        que lorsqu'il est anormal ne se distingue pas d'un réglage non pris en compte.
+        """
+        registre, ignores = cls.depuis_depot(depot, dossier_config, secret_webhook)
+        journal(f"registre : {len(registre._artisans)} artisan(s) servable(s), "
+                f"{len(ignores)} écarté(s)")
+        for quoi in ignores:
+            journal(f"  ⚠️  artisan écarté : {quoi}")
+        if not registre._artisans:
+            journal("  ⚠️  AUCUN artisan servable : amorce la table avec "
+                    "« python semer_artisans.py --ecrire ».")
+        return registre
+
+    def semer(self, depot) -> int:
+        """Écrit ce registre dans la table `artisan`. Idempotent (UPSERT).
+
+        Sert à amorcer la base depuis `config/artisans.json`, une fois. Rendu comme une
+        méthode du registre et non comme un script à part pour qu'il n'y ait qu'UNE
+        définition de ce qu'est un artisan à enregistrer.
+        """
+        from .depot import LigneArtisan
+        for a in self._artisans.values():
+            depot.enregistrer_artisan(LigneArtisan(
+                id=a.id, nom_affiche=a.config.get("entreprise", {}).get("nom"),
+                numero_relais=a.numero_relais, telephone=a.telephone,
+                config_fichier=a.config_fichier, token_sha256=a.token_sha256 or None,
+                etat_abonnement=a.etat_abonnement))
+        return len(self._artisans)
 
     # ---- accès ----
     def artisan(self, artisan_id: str) -> Artisan | None:

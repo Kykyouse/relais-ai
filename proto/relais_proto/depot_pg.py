@@ -22,7 +22,7 @@ from __future__ import annotations
 import datetime as dt
 import uuid
 
-from .depot import Appel, Introuvable, Lead
+from .depot import Appel, Introuvable, Lead, LigneArtisan
 from .messages import Brouillon, MessageSortant, StatutMessage
 from .rdv import Rdv, StatutRdv, TERMINAUX
 
@@ -132,6 +132,29 @@ class DepotPostgres:
         with self.cx.cursor() as cur:
             cur.execute(sql, params)
             return cur.rowcount
+
+    # ---- registre des artisans ----
+    _COLS_ARTISAN = ("id, nom_affiche, numero_relais, telephone, config_fichier, "
+                     "token_sha256, etat_abonnement")
+
+    def artisans(self) -> list[LigneArtisan]:
+        return [LigneArtisan(*l) for l in self._plusieurs(
+            f"select {self._COLS_ARTISAN} from artisan order by id")]
+
+    def enregistrer_artisan(self, ligne: LigneArtisan) -> None:
+        """UPSERT : la synchronisation depuis le registre fichier rejoue cet appel à
+        chaque démarrage. `etat_abonnement` est volontairement mis à jour lui aussi —
+        c'est ainsi qu'une ligne « a_reprendre » créée par la migration 008 redevient un
+        artisan normal dès qu'on la reconnaît."""
+        self._executer(
+            f"insert into artisan ({self._COLS_ARTISAN}) values (%s,%s,%s,%s,%s,%s,%s) "
+            "on conflict (id) do update set nom_affiche = excluded.nom_affiche, "
+            "numero_relais = excluded.numero_relais, telephone = excluded.telephone, "
+            "config_fichier = excluded.config_fichier, "
+            "token_sha256 = excluded.token_sha256, "
+            "etat_abonnement = excluded.etat_abonnement",
+            (ligne.id, ligne.nom_affiche, ligne.numero_relais, ligne.telephone,
+             ligne.config_fichier, ligne.token_sha256, ligne.etat_abonnement))
 
     # ---- appels ----
     def ouvrir_appel(self, artisan_id: str, maintenant: dt.datetime) -> Appel:

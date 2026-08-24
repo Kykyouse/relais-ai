@@ -15,7 +15,7 @@ import json
 from zoneinfo import ZoneInfo
 
 from relais_proto.calendar_stub import CalendarStub
-from relais_proto.depot import Introuvable
+from relais_proto.depot import Introuvable, LigneArtisan
 from relais_proto.engine import Conversation
 from relais_proto.llm import MockLLM
 from relais_proto.messages import Brouillon, Canal, Destinataire, StatutMessage
@@ -85,6 +85,21 @@ def verifier(fabrique, cfg: dict) -> list[str]:
         ecarts.append(f"{message} (rien levé)")
 
     depot = fabrique()
+
+    # ---- précondition : l'artisan doit exister avant tout le reste ----
+    # Depuis la migration 008, `appel.artisan_id` porte une clé étrangère vers `artisan` :
+    # ouvrir un appel pour un artisan absent est refusé PAR LA BASE. Le contrat pose donc
+    # sa propre précondition au lieu de compter sur des données déjà présentes — c'est ce
+    # qui le rend rejouable sur une base neuve comme sur celle de dév.
+    #
+    # ⚠️ Cet UPSERT ÉCRASE la ligne `art-dupont` de la base visée, jeton compris. C'est
+    # sans conséquence ici — `run_depot_pg.py` exige un marqueur posé en base pour
+    # accepter de tourner, donc une base de test dédiée dont il tronque déjà les tables —
+    # et `python semer_artisans.py --ecrire` remet les vraies valeurs.
+    depot.enregistrer_artisan(LigneArtisan(
+        id="art-dupont", nom_affiche="Dupont Chauffage",
+        numero_relais="+33189701234", telephone="+33612345678",
+        config_fichier="dupont.json", token_sha256="d" * 64))
 
     # ---- appels ----
     donnees, etat = _lead_donnees(cfg, LIGNES_URGENCE, LUNDI_9H)
@@ -297,5 +312,45 @@ def verifier(fabrique, cfg: dict) -> list[str]:
     exiger_leve(Introuvable, lambda: depot.artisan_de_session(emp_s, LUNDI_9H),
                 "supprimer_session doit révoquer la session côté serveur")
     depot.supprimer_session(emp_s)      # déconnexion deux fois : sans effet, sans erreur
+
+    # ---- registre des artisans (migration 008) ----
+    exiger("art-dupont" in {a.id for a in depot.artisans()},
+           "artisans() ne rend pas l'artisan enregistré au début du contrat")
+
+    depot.enregistrer_artisan(LigneArtisan(
+        id="art-contrat", nom_affiche="Contrat SARL", numero_relais="+33189700099",
+        telephone="+33600000099", config_fichier="dupont.json",
+        token_sha256="c" * 64, etat_abonnement="essai"))
+    relu = {a.id: a for a in depot.artisans()}.get("art-contrat")
+    exiger(relu is not None, "enregistrer_artisan : l'artisan n'est pas relu")
+    if relu is not None:
+        exiger(
+            (relu.nom_affiche, relu.numero_relais, relu.telephone, relu.config_fichier,
+             relu.token_sha256, relu.etat_abonnement)
+            == ("Contrat SARL", "+33189700099", "+33600000099", "dupont.json",
+                "c" * 64, "essai"),
+            f"enregistrer_artisan : aller-retour incomplet ({relu})")
+        exiger(relu.utilisable(),
+               "un artisan avec numéro Relais et config doit être utilisable")
+
+    # UPSERT : la synchronisation depuis le registre fichier rejoue cet appel à chaque
+    # démarrage. Un second enregistrement doit METTRE À JOUR, pas dupliquer ni échouer.
+    depot.enregistrer_artisan(LigneArtisan(
+        id="art-contrat", nom_affiche="Contrat SARL", numero_relais="+33189700099",
+        telephone="+33600000099", config_fichier="dupont.json",
+        token_sha256="c" * 64, etat_abonnement="actif"))
+    apres = [a for a in depot.artisans() if a.id == "art-contrat"]
+    exiger(len(apres) == 1, f"enregistrer_artisan a dupliqué la ligne ({len(apres)})")
+    if apres:
+        exiger(apres[0].etat_abonnement == "actif",
+               "enregistrer_artisan : l'état d'abonnement n'est pas mis à jour — une "
+               "ligne « a_reprendre » ne redeviendrait jamais un artisan normal")
+
+    # une ligne de reprise (migration 008) : identifiant seul, donc pas servable
+    depot.enregistrer_artisan(LigneArtisan(id="art-repris",
+                                           etat_abonnement="a_reprendre"))
+    repris = {a.id: a for a in depot.artisans()}.get("art-repris")
+    exiger(repris is not None and not repris.utilisable(),
+           "un artisan sans numéro Relais ni config doit être marqué inutilisable")
 
     return ecarts

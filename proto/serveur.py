@@ -64,8 +64,11 @@ def construire():
     dsn, opts, libelle = resoudre_connexion(candidats_env())
     print(f"base Postgres : {libelle}")
     depot = DepotPostgres(dsn, **opts)
-    registre = Registre.depuis_fichier(RACINE / "config" / "artisans.json",
-                                       _exige("RELAIS_WEBHOOK_SECRET"))
+    # Depuis la migration 008, le registre vient de la TABLE `artisan`, pas du fichier.
+    # `config/artisans.json` reste la graine (`python semer_artisans.py --ecrire`) ; les
+    # `config/*.json` restent des fichiers versionnés, lus par identifiant.
+    registre = Registre.charger(depot, RACINE / "config",
+                                _exige("RELAIS_WEBHOOK_SECRET"))
     # un client LLM neuf par tour : make_llm() rend le mode réel si la clé est là,
     # le mode scripté sinon — l'appel aboutit dans les deux cas (dégradation gracieuse)
     # base_url EXIGÉE, sans valeur par défaut : elle part dans un SMS. Un lien pointant

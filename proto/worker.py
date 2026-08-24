@@ -70,13 +70,17 @@ def run() -> int:
         print(exc)
         return 2
     print(f"  base : {libelle}")
-    registre = Registre.depuis_fichier(RACINE / "config" / "artisans.json",
-                                       os.environ.get("RELAIS_WEBHOOK_SECRET", "inutile"))
+    depot = DepotPostgres(dsn, **opts)
+    # même source que le serveur : la table `artisan` (migration 008). Un artisan écarté
+    # ici n'est pas deviné — son travail reste en file et apparaît dans le rapport.
+    registre = Registre.charger(depot, RACINE / "config",
+                                os.environ.get("RELAIS_WEBHOOK_SECRET", "inutile"),
+                                journal=lambda m: print(f"  {m}"))
+
     def config_pour(artisan_id):
         artisan = registre.artisan(artisan_id)
         return artisan.config if artisan else None
 
-    depot = DepotPostgres(dsn, **opts)
     # l'un des DEUX seuls endroits où l'horloge système entre (l'autre est api.py).
     # Affichée à la pendule française : un log de cron se lit à l'heure du pays, l'instant
     # UTC est rappelé entre parenthèses pour pouvoir le recouper avec la base.

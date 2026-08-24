@@ -13,7 +13,7 @@ derrière — le pire genre de test double, celui qui rassure à tort.
 from __future__ import annotations
 
 import datetime as dt
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, replace
 from typing import Protocol
 
 from . import temps
@@ -38,6 +38,31 @@ class Appel:
 
 
 @dataclass
+class LigneArtisan:
+    """Le REGISTRE d'un artisan, tel qu'il vit en base (migration 008) : qui il est et par
+    quelle porte il entre. **Pas sa config** — elle reste un fichier versionné dans git
+    (`config_fichier`), parce que son historique est ce qui répond à « qu'est-ce que
+    l'agent savait le jour de cet appel ? ».
+
+    `numero_relais`, `telephone` et `config_fichier` sont facultatifs : la migration crée
+    une ligne pour chaque artisan déjà référencé par des données existantes, dont elle ne
+    connaît que l'identifiant. Ces lignes portent `etat_abonnement = "a_reprendre"`.
+    """
+    id: str
+    nom_affiche: str | None = None
+    numero_relais: str | None = None
+    telephone: str | None = None
+    config_fichier: str | None = None
+    token_sha256: str | None = None
+    etat_abonnement: str = "actif"
+
+    def utilisable(self) -> bool:
+        """Un artisan qu'on peut réellement servir : il a un numéro Relais et une config.
+        Les autres sont des reprises de données, pas des clients."""
+        return bool(self.numero_relais and self.config_fichier)
+
+
+@dataclass
 class Lead:
     id: str
     appel_id: str
@@ -49,6 +74,10 @@ class Lead:
 
 class Depot(Protocol):
     """Ce que l'API et le worker d'expiration ont le droit de demander au stockage."""
+
+    def artisans(self) -> list[LigneArtisan]: ...
+
+    def enregistrer_artisan(self, ligne: LigneArtisan) -> None: ...
 
     def ouvrir_appel(self, artisan_id: str, maintenant: dt.datetime) -> Appel: ...
 
@@ -112,7 +141,17 @@ class DepotMemoire:
         self._messages: dict[str, dict] = {}
         self._par_cle: dict[str, str] = {}   # clé d'idempotence -> id message
         self._sessions: dict[str, dict] = {}  # empreinte -> session
+        self._artisans_registre: dict[str, LigneArtisan] = {}
         self._compteurs: dict[str, int] = {}
+
+    # ---- registre des artisans ----
+    def artisans(self) -> list[LigneArtisan]:
+        return [replace(a) for a in self._artisans_registre.values()]
+
+    def enregistrer_artisan(self, ligne: LigneArtisan) -> None:
+        """Créer ou mettre à jour. La synchronisation depuis le registre fichier rejoue
+        cet appel à chaque démarrage : il doit être idempotent."""
+        self._artisans_registre[ligne.id] = replace(ligne)
 
     def _id(self, prefixe: str) -> str:
         self._compteurs[prefixe] = self._compteurs.get(prefixe, 0) + 1
