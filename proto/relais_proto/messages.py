@@ -104,21 +104,25 @@ TEMPLATES = {
     # {creneau} est le libellé produit par le calendrier ("demain entre 08h et 10h",
     # "aujourd'hui entre 17h et 19h") : il se lit en apposition, jamais après un article,
     # sinon on écrit « le créneau du aujourd'hui entre 17h et 19h ».
+    # LONGUEUR ET ALPHABET SONT DU COÛT, pas du style : un segment = un crédit, et un seul
+    # caractère hors GSM-7 fait tomber la limite de 160 à 70 (cf. envoi.segments_sms).
+    # Faux amis à éviter absolument : ê ô î û À « » — …  (é è ù ì ò à sont légaux).
+    # R23 verrouille : GSM-7 partout, et un seul segment avec une marge de sécurité.
     "expiration_client": (
-        "Bonjour, c'est {nom_entreprise}. Nous n'avons pas pu valider votre créneau : "
-        "{creneau}. {prenom} vous recontacte pour convenir d'un autre horaire. "
-        "Désolés pour ce contretemps."),
+        "Bonjour, c'est {nom_entreprise}. Créneau {creneau} non validé. {prenom} vous "
+        "recontacte pour en fixer un autre."),
     # Le lien remplace le « Répondez OUI » de la spec §3.5bis : un sender alphanumérique
     # ne reçoit rien, et les numéros mobiles FR sont interdits à l'A2P. Un tap vaut mieux
     # qu'un mot à taper, et le SMS reste strictement sortant.
+    # « à la place » serait plus juste que « propose » seul, mais coûtait 11 caractères
+    # sur une marge déjà mince : le lien pèse ~43 caractères à lui seul.
     "reproposition_client": (
-        "Bonjour, c'est {nom_entreprise}. {prenom} vous propose plutôt {creneau}. "
-        "Si cela vous convient, validez ici : {lien}"),
+        "Bonjour, c'est {nom_entreprise}. {prenom} propose {creneau}. Validez : {lien}"),
     "confirmation_artisan": (
         "Relais : {client} a validé le créneau {creneau}. C'est dans votre agenda."),
     "expiration_artisan": (
-        "Relais : RDV expiré sans validation — {creneau}, {client} ({commune}). "
-        "Le créneau est libéré et le client a été prévenu. À rappeler : {telephone}."),
+        "Relais : RDV expiré sans validation - {creneau}, {client} ({commune}). "
+        "Créneau libéré, client prévenu. Rappeler le {telephone}."),
 }
 
 

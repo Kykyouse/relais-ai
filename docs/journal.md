@@ -1024,3 +1024,45 @@ temporairement, ou attendre et tout livrer ensemble.
 ne part du pipeline automatisé. Câbler `EnvoyeurOVH` **en opt-in explicite** (variable
 d'environnement, journal par défaut) est le pas qui fait passer de « on sait envoyer à la
 main » à « le système sait envoyer ».
+
+### 24/08 — coût du SMS ramené de 3 crédits à 1, et verrouillé par R23
+
+Trois leviers appliqués. Le classement s'est inversé en cours de route.
+
+| gabarit | avant | après |
+|---|---|---|
+| `expiration_client` | 195 car. GSM-7 → **2 crédits** | 131 car. → **1** |
+| `reproposition_client` | 194 car. **UCS-2** → **3 crédits** | 134 car. GSM-7 → **1** |
+| `expiration_artisan` (push) | UCS-2 | GSM-7 (sans effet de coût, mais prêt pour un repli SMS) |
+
+**Le levier dominant n'était pas celui annoncé.** Le jeton à 16 octets rend 21 caractères,
+mais **seul il ne changeait rien** : la reproposition restait à 3 segments. Le vrai coupable
+était l'**encodage** — le « ô » de « plutôt » suffisait à faire basculer tout le message en
+UCS-2, où la limite tombe de 160 à 70. Faux amis à connaître : `é è ù ì ò à` sont dans
+GSM-7, **`ê ô î û À « » — …` non**.
+
+**Jeton : 32 → 16 octets.** Pas un compromis sécurité/coût — 128 bits pour un lien à usage
+unique, borné dans le temps et stocké en empreinte, c'est l'ordre d'un UUID v4. 32 octets
+était du gaspillage par réflexe.
+
+**Copie.** « à la place » sacrifié dans la reproposition : plus juste, mais 11 caractères sur
+une marge mince (le lien pèse 43 caractères à lui seul). Une **racine de domaine courte est
+un gain financier réel** — chaque caractère du lien est payé sur chaque SMS.
+
+**R23 verrouille, et il a corrigé deux erreurs de ma part.**
+- `segments_sms()` dans `envoi.py` : GSM-7 vs UCS-2, seuils 160/70 en un segment, 153/67 en
+  concaténé (7 octets d'en-tête).
+- Le test rend chaque gabarit avec un artisan « nom long » (25 car. + prénom de 15) qui
+  définit l'**enveloppe supportée**, pas un cas pathologique. Au-delà, deux crédits — à
+  faire respecter à l'onboarding si nécessaire.
+- **Première erreur attrapée** : `expiration_client` tenait pile en 160 avec l'artisan de
+  référence. Sans marge exigée, le premier artisan au nom un peu long doublait la facture
+  en silence.
+- **Seconde erreur, la mienne** : j'imposais la limite de 160 aux gabarits **push**, qui n'en
+  ont aucune. Contrainte inventée. R23 exige donc GSM-7 partout (gratuit, et utile le jour du
+  repli SMS artisan) mais un seul segment uniquement pour les `*_client`.
+
+Suite : **27 PASS**.
+
+**Décision toujours ouverte** : expéditeur unique « Relais » (recommandé) vs Sender ID par
+artisan. Rien dans le code ne la préempte — `sms.expediteur` reste par artisan.

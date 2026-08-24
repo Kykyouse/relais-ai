@@ -1179,8 +1179,11 @@ def check_confirmation_lien() -> bool:
         print(f"   SMS de reproposition : {[m.texte for m in sms]}")
         return False
     jeton = sms[0].texte.split(f"{BASE}/c/")[1].strip()
-    if len(jeton) < 32:
-        print(f"   jeton trop court ({len(jeton)}) : énumérable")
+    # 16 octets d'aléa -> 22 caractères base64url, soit 128 bits : hors de portée d'une
+    # énumération pour un jeton à usage unique et borné dans le temps. Le seuil est là pour
+    # attraper une réduction accidentelle, pas pour exiger 32 octets.
+    if len(jeton) < 22:
+        print(f"   jeton trop court ({len(jeton)} caractères) : énumérable")
         return False
     stocke = depot.rdv(rdv.id)
     if stocke.confirmation_sha256 != empreinte(jeton) or jeton in str(stocke.to_dict()):
@@ -1465,6 +1468,80 @@ def check_adaptateur_ovh() -> bool:
     return True
 
 
+def check_cout_sms() -> bool:
+    """R23 : le coût d'un SMS est une propriété du CODE, pas une fatalité.
+
+    Un segment = un crédit facturé. Deux façons de payer double sans s'en apercevoir :
+    dépasser 160 caractères, ou glisser **un seul** caractère hors de l'alphabet GSM-7 —
+    la limite tombe alors à 70. Le 24/08, le « ô » de « plutôt » coûtait 3 segments au SMS
+    de reproposition.
+
+    Ce test exige une MARGE, pas seulement « ça tient » : la longueur dépend de données par
+    artisan (nom de l'entreprise, prénom du patron) et d'un libellé de créneau variable. Un
+    gabarit pile à 160 repasserait à 2 segments au premier artisan au nom un peu long, sans
+    que personne ne le voie."""
+    from relais_proto.envoi import segments_sms
+    from relais_proto.messages import TEMPLATES
+
+    # Deux exigences DISTINCTES, et c'est le point :
+    #  · GSM-7 pour TOUS les gabarits — gratuit, et ça protège les push qui deviendront
+    #    peut-être des SMS de repli (prévu pour l'artisan sans app) ;
+    #  · un seul segment pour les seuls gabarits réellement envoyés PAR SMS, c'est-à-dire
+    #    ceux destinés au client. Un push n'a pas de limite de longueur : lui imposer 160
+    #    caractères serait une contrainte inventée.
+    # Convention de nommage : un gabarit « *_client » part en SMS.
+    MARGE_MIN = 5    # petit tampon : le libellé de créneau varie de quelques caractères
+    # Valeurs de rendu volontairement plus longues que la config de référence : un artisan
+    # au nom à rallonge ne doit pas doubler la facture.
+    # Ces valeurs définissent l'ENVELOPPE SUPPORTÉE, pas un cas pathologique : au-delà,
+    # le SMS coûtera deux crédits. À faire respecter à l'onboarding si besoin.
+    LONG = {
+        "nom_entreprise": "Plomberie du Val-de-Marne",   # 25 car. (Dupont Chauffage : 16)
+        "prenom": "Jean-Christophe",                     # 15 car. (Julien : 6)
+        "creneau": "mercredi 26/08 entre 14h et 16h",    # le libellé le plus long possible
+        "client": "Van Der Berghe",
+        "commune": "Saint-Maur-des-Fossés",
+        "telephone": "0612345678",
+        # base publique + jeton de 16 octets (22 car.). Un domaine long coûte des crédits :
+        # c'est une raison concrète de choisir une racine courte.
+        "lien": "https://relais.app/c/" + "x" * 22,
+    }
+
+    ok = True
+    for cle, gabarit in TEMPLATES.items():
+        rendu = gabarit.format(**{k: v for k, v in LONG.items() if "{" + k + "}" in gabarit})
+        segments, encodage = segments_sms(rendu)
+        limite = 70 if encodage == "UCS-2" else 160
+        marge = limite - len(rendu)
+        if encodage != "GSM-7":
+            hors = sorted({c for c in rendu if segments_sms(c)[1] == "UCS-2"})
+            print(f"   {cle} : encodage {encodage} à cause de {hors} → limite 70 au lieu "
+                  f"de 160. Remplacer ces caractères (é è ù ì ò à sont légaux, pas ê ô À).")
+            ok = False
+            continue
+        if not cle.endswith("_client"):
+            continue          # push : pas de facturation au segment
+        if segments != 1:
+            print(f"   {cle} : {len(rendu)} caractères = {segments} segments, donc "
+                  f"{segments} crédits par envoi")
+            ok = False
+        elif marge < MARGE_MIN:
+            print(f"   {cle} : tient en 1 segment mais marge de {marge} caractères "
+                  f"seulement (minimum {MARGE_MIN}) — un artisan au nom plus long "
+                  f"doublerait le coût sans alerte")
+            ok = False
+
+    # le calcul lui-même doit être juste, sinon le test ci-dessus ne prouve rien
+    for texte, attendu in (("a" * 160, (1, "GSM-7")), ("a" * 161, (2, "GSM-7")),
+                           ("a" * 70 + "ô", (2, "UCS-2")), ("ô", (1, "UCS-2")),
+                           ("é" * 160, (1, "GSM-7"))):
+        if segments_sms(texte) != attendu:
+            print(f"   segments_sms({texte[:6]}…, {len(texte)} car.) = "
+                  f"{segments_sms(texte)}, attendu {attendu}")
+            ok = False
+    return ok
+
+
 def check_guard_prix() -> bool:
     """T05 (garde-fou prix) : on injecte une réplique fautive et on vérifie l'interception."""
     from relais_proto.guards import check_output
@@ -1594,6 +1671,14 @@ def run() -> int:
         print("   → format E.164, corps de requête (noStopClause), échec définitif "
               "immédiat vs transitoire réessayé, mode numéro court (URL bloquée), "
               "diagnostic sur les erreurs réelles d'OVH : ✅ PASS")
+    else:
+        print("   → ❌ FAIL")
+        echecs += 1
+
+    print(f"\n──── R23_cout_sms ────")
+    if check_cout_sms():
+        print("   → tous les gabarits en GSM-7 et en 1 seul segment, avec marge, même "
+              "avec un artisan au nom long : ✅ PASS")
     else:
         print("   → ❌ FAIL")
         echecs += 1

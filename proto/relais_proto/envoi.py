@@ -57,6 +57,32 @@ class EnvoyeurJournal:
         return f"journal:{message.id}"
 
 
+# ------------------------------------------------------------- coût d'un SMS
+# Alphabet GSM-7 (norme GSM 03.38). **Un seul caractère hors de cet ensemble fait basculer
+# tout le message en UCS-2, et la limite tombe de 160 à 70 caractères.** Découvert le 24/08 :
+# le « ô » de « plutôt » faisait coûter 3 segments au SMS de reproposition au lieu d'un.
+# Attention aux faux amis : é è ù ì ò à sont dans GSM-7, mais PAS ê ô î û ni À — ni les
+# guillemets « », le tiret cadratin — ou les points de suspension …
+_GSM7 = set("@£$¥èéùìòÇ\nØø\rÅåΔ_ΦΓΛΩΠΨΣΘΞ ÆæßÉ"
+            "!\"#¤%&'()*+,-./0123456789:;<=>?¡"
+            "ABCDEFGHIJKLMNOPQRSTUVWXYZÄÖÑÜ§¿"
+            "abcdefghijklmnopqrstuvwxyzäöñüà") | set("^{}[~]|€\\")
+
+
+def segments_sms(texte: str) -> tuple[int, str]:
+    """(nombre de segments facturés, encodage). Un segment = un crédit chez l'opérateur.
+
+    Les seuils diffèrent selon qu'un message tient en un seul morceau ou doit être
+    concaténé : la concaténation consomme 7 octets d'en-tête, d'où 153 et 67 au lieu de
+    160 et 70.
+    """
+    ucs2 = any(c not in _GSM7 for c in texte or "")
+    seul, concat = (70, 67) if ucs2 else (160, 153)
+    n = len(texte or "")
+    segments = 1 if n <= seul else -(-n // concat)
+    return segments, ("UCS-2" if ucs2 else "GSM-7")
+
+
 # ------------------------------------------------------------- plage de silence
 def _minutes(hhmm: str) -> int:
     h, m = (int(x) for x in hhmm.split(":"))
