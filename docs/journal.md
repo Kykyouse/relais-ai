@@ -13,16 +13,15 @@
 ## En une phrase
 
 Le backend de la phase 1 est fonctionnel et vérifié contre un vrai Postgres, l'artisan
-valide en 1 tap depuis son navigateur, et les SMS sortent réellement. **Deux manques
-tiennent le produit** : il n'y a pas de voix (le point d'entrée du parcours), et le chemin
-nominal ne prévient pas le client quand l'artisan valide — alors que l'agent le lui promet
-à l'oral.
+valide en 1 tap depuis son navigateur, et le parcours écrit tient enfin sa promesse : le
+client est prévenu sur TOUTES les issues. **Il ne manque que la voix** — le point d'entrée
+du produit — et le nom commercial, qui commande le reste.
 
 ## Ce qui tourne
 
 ```bash
 cd proto
-python run_scenario.py                              # 30 tests, ~3 s, sans clé ni base
+python run_scenario.py                              # 31 tests, ~3 s, sans clé ni base
 python run_depot_pg.py [--migrer]                   # contrat du port contre Supabase
 uvicorn serveur:app --port 8000                     # API HTTP
 python worker.py [--a-vide]                         # expiration + expédition (cron)
@@ -43,7 +42,7 @@ python run_llm_eval.py [--mock] [--n 3]             # éval appelant-simulé
 | Boîte de validation artisan + session (R24) | ✅ | mock — utilisable dans un navigateur |
 | Instants UTC vs heures de pendule (R25) | ✅ | mock + **migration 007 sur Supabase** |
 | Extraction du nom de l'appelant (R26) | ✅ | mock, mutations 6/6 |
-| **SMS de confirmation au client (chemin nominal)** | ❌ **absent** | — voir dette n°1 |
+| SMS de confirmation au client, chemin nominal (R27) | ✅ | mock, mutations 5/5 |
 
 ## Ce qui est encore un double (et non un manque caché)
 
@@ -88,12 +87,9 @@ python run_llm_eval.py [--mock] [--n 3]             # éval appelant-simulé
 
 ## Dettes et décisions ouvertes
 
-1. **🔴 Le chemin nominal est muet.** L'agent promet verbatim « vous recevrez un SMS de
-   confirmation d'ici X heures », mais quand l'artisan **valide** (ou **refuse**), rien
-   n'est mis en file : il n'existe pas de gabarit `confirmation_client`. Les deux seuls
-   messages clients couvrent les chemins d'ÉCHEC (expiration, reproposition). Aucun test ne
-   l'a vu parce qu'ils vérifient les transitions et la file, jamais l'écart entre la
-   promesse orale et l'envoi. **Petit à corriger, et bloquant pour toute bêta.**
+1. ~~Le chemin nominal est muet~~ — **traité le 25/08** (`confirmation_client`, refus
+   couvert aussi, R27). La classe de test qui manquait — confronter la promesse ORALE aux
+   messages réellement mis en file — existe désormais.
 2. **Nom commercial** — le goulot unique. Il commande le Sender ID, la structure juridique,
    le domaine, et la vérification OAuth Google. Décision du cousin. Le nom final ne sera
    pas « Relais » (nom de code interne).
@@ -126,11 +122,10 @@ python run_llm_eval.py [--mock] [--n 3]             # éval appelant-simulé
 
 ## Prochaine étape
 
-1. **`confirmation_client`** — le gabarit manquant, son branchement sur valider/refuser, et
-   un test qui compare ce que l'agent PROMET à ce que le système ENVOIE. Court, et sans lui
-   aucune bêta n'est honnête.
-2. **Connexion par code SMS + table `artisan`** (avec état d'abonnement). Débloqué à 100 % :
-   un code à 6 chiffres ne contient pas d'URL, le numéro court suffit.
+**Connexion par code SMS + table `artisan`** (avec état d'abonnement, pour la facturation
+future). Débloqué à 100 % : un code à 6 chiffres ne contient pas d'URL, le numéro court
+suffit. Remplace l'écran de connexion provisoire et ferme la dette du registre fichier
+avec ses jetons de dév publics.
 
 Le spike vocal ne s'ouvre **qu'en session dédiée**. Le Sender ID et l'OAuth Google attendent
 le nom commercial — c'est-à-dire le cousin, pas nous.
@@ -1577,3 +1572,61 @@ suffit. Précédée du `confirmation_client` ci-dessus, qui est plus court et pl
 
 **Le spike VOIX reste à discuter en session dédiée avec Claude (Cowork) avant tout
 engagement — ne pas l'ouvrir seul.**
+
+### 25/08 — le chemin nominal parle enfin
+
+**Fait.** Gabarit `confirmation_client`, branché sur les deux issues décidées par
+l'artisan, et **R27** — une classe de test qui manquait.
+
+**Le texte.** « Bonjour, c'est {nom_entreprise}. C'est confirmé : {prenom} passe
+{creneau}. » Il nomme l'entreprise ET le patron : depuis la décision d'expéditeur unique,
+l'expéditeur du SMS ne dit plus au client de qui vient le message, c'est donc au texte de
+le faire. Pire cas R23 : 113 caractères, 1 segment GSM-7, **47 de marge**. Aucune URL —
+il part donc en numéro court dès aujourd'hui, sans attendre le Sender ID.
+
+**Le refus aussi.** L'artisan qui refuse laissait le client attendre un rendez-vous qui
+n'aurait pas lieu — la même promesse rompue, en pire. Il reçoit maintenant `repli_client`,
+le texte déjà écrit pour l'expiration : de son point de vue c'est la même chose (le créneau
+n'est pas retenu, on le recontacte), et les deux issues sont exclusives, donc la clé
+d'idempotence existante reste correcte.
+
+**Une trouvaille en passant : `rdv_valide` était du code mort avec une intention.**
+`guards.check_output` porte depuis le début un paramètre `rdv_valide` qui autorise le mot
+« confirmé » — et `messages._texte` le passait en dur à `False`. Personne ne s'en était
+jamais servi, parce que le seul message légitime pour le lever n'existait pas. La
+confirmation client est cet appelant : c'est le SEUL texte du produit où « confirmé » est
+permis, et seulement parce que l'artisan vient de valider. R27 exige les deux sens — que le
+texte passe avec `rdv_valide=True`, et qu'il serait **refusé** sans.
+
+**Ce que R27 verrouille, et pourquoi c'est une classe nouvelle.** Tous les tests
+précédents vérifient des transitions d'état et le contenu de la file. Aucun ne relisait la
+phrase prononcée à l'appelant pour la confronter aux faits — c'est exactement pour ça que
+le trou a vécu depuis le début du projet. R27 tient les deux bouts : il vérifie d'abord que
+l'agent dit bien « SMS de confirmation » dans le transcript, puis que chaque issue produit
+le bon message. Si la phrase du script change, le test le dit.
+
+Il exige aussi : le bon destinataire (le numéro confirmé par l'appelant, pas un autre), pas
+d'URL, 1 segment GSM-7, et **le compte exact** de SMS clients — un SMS de trop est un SMS
+payé et subi.
+
+**Décidé : pas de SMS quand le client confirme par le lien.** Il vient de taper et lit la
+page de confirmation à l'instant même ; le lui réécrire serait un crédit dépensé pour lui
+apprendre ce qu'il a sous les yeux. Noté en commentaire dans `api.confirmer`, là où un
+futur « correctif » créerait le doublon.
+
+**Effet de bord assumé sur R24.** Sa validation depuis la page met désormais un SMS en
+file, ce qui cassait une assertion « exactement 1 message client ». Elle exige maintenant
+**2 messages, dont exactement 1 avec lien** — plus stricte qu'avant, pas plus laxiste.
+
+**Mutation : 5/5.** Dont le trou d'origine (aucun envoi), un refus qui enverrait la
+confirmation (le client se déplacerait pour rien), le garde-fou `rdv_valide` non levé, une
+URL glissée dans le texte, et la confirmation envoyée à l'artisan au lieu du client.
+
+**Ce qui reste ouvert, et qui est connu.** L'écriture du RDV et la mise en file ne sont pas
+atomiques : un process tué entre les deux perd le SMS. C'est le même compromis que pour la
+reproposition, et il est retenu dans le même sens — mieux vaut un SMS perdu, rattrapable
+par un humain, qu'un SMS envoyé pour un RDV qui ne serait pas enregistré. Un worker de
+rattrapage (les RDV validés sans message associé) serait la vraie réponse ; il attend un
+besoin réel.
+
+Suite : **31 PASS**, contrat Postgres toujours vert.

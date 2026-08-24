@@ -224,15 +224,29 @@ def creer_app(depot, registre: Registre, fabrique_llm, horloge=None,
         """LA fonction produit : les RDV que l'artisan doit valider."""
         return [_en_sortie(r) for r in depot.rdvs_en_attente(artisan.id)]
 
+    # Les deux issues décidées par l'artisan écrivent au client. Ce n'est pas une
+    # politesse : l'agent lui a promis un SMS AU TÉLÉPHONE (« vous recevrez un SMS de
+    # confirmation d'ici X heures »). Un refus silencieux le laisserait attendre un
+    # rendez-vous qui n'aura pas lieu. R27 confronte la promesse aux envois réels.
+    _SUITE_CLIENT = {"valider": messages.confirmation_client,
+                     "refuser": messages.repli_client}
+
     def _decider(rdv_id: str, artisan: Artisan, action: str) -> RdvOut:
         rdv = _rdv_de_l_artisan(rdv_id, artisan)
+        t = maintenant()
         try:
-            getattr(rdv, action)(maintenant())
-        except TransitionInterdite as exc:
+            # message construit AVANT la transition, comme pour la reproposition : si un
+            # gabarit est refusé par les garde-fous, rien n'a bougé et l'artisan voit un
+            # 409 franc plutôt qu'un RDV décidé dont le client n'est jamais prévenu.
+            brouillon = _SUITE_CLIENT[action](rdv, depot.lead(rdv.lead_id).donnees,
+                                              artisan.config)
+            getattr(rdv, action)(t)
+        except (TransitionInterdite, messages.MessageInterdit) as exc:
             # 409 : l'échéance est passée, ou le RDV est déjà décidé. Le message vient du
             # domaine — c'est lui qui sait pourquoi, pas l'API.
             raise HTTPException(409, str(exc)) from None
         depot.sauver_rdv(rdv)
+        depot.enfiler_message(brouillon, t)
         return _en_sortie(rdv)
 
     @app.post("/rdv/{rdv_id}/valider", response_model=RdvOut)
@@ -326,6 +340,9 @@ def creer_app(depot, registre: Registre, fabrique_llm, horloge=None,
             # échéance passée, ou RDV déjà décidé : le domaine tranche, la page explique
             return _html(pages.creneau_perime(prenom), 409)
         depot.sauver_rdv(rdv)
+        # Pas de SMS de confirmation au client ici, à la différence de `_decider` : il
+        # vient de taper le lien et lit la page de confirmation à l'instant même. Le lui
+        # réécrire serait un crédit payé pour lui apprendre ce qu'il a sous les yeux.
         # l'artisan doit l'apprendre sans avoir à ouvrir l'app
         try:
             depot.enfiler_message(

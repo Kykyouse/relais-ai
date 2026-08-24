@@ -1725,9 +1725,14 @@ def check_app_artisan() -> bool:
         if r.status_code != 303:
             print(f"   reproposition depuis la page : {r.status_code} {r.text[:120]}")
             return False
+        # DEUX messages clients à ce stade, et pas un de plus : la confirmation due à la
+        # validation de l'étape (c), puis la reproposition avec son lien. Le compte est
+        # gardé exact volontairement — un SMS client de trop est un SMS payé et subi.
         sms = [m for m in depot.messages() if m.destinataire is Destinataire.CLIENT]
-        if len(sms) != 1 or "https://relais.test/c/" not in sms[0].texte:
-            print(f"   le SMS de reproposition n'est pas parti : {[m.texte for m in sms]}")
+        avec_lien = [m for m in sms if "https://relais.test/c/" in m.texte]
+        if len(sms) != 2 or len(avec_lien) != 1:
+            print(f"   SMS clients attendus : 1 confirmation + 1 reproposition avec lien "
+                  f"— obtenu {[m.texte for m in sms]}")
             return False
 
         # (e) une action inconnue ne doit pas être devinée
@@ -2077,6 +2082,140 @@ def check_extraction_nom() -> bool:
     return True
 
 
+def check_promesse_tenue() -> bool:
+    """R27 : ce que l'agent PROMET à l'oral doit correspondre à ce que le système ENVOIE.
+
+    Une classe de test qui manquait, et c'est pour ça que le trou a vécu si longtemps :
+    tous les tests précédents vérifient des transitions d'état et le contenu de la file,
+    aucun ne relit la phrase prononcée à l'appelant pour la confronter aux faits.
+
+    Le trou (trouvé le 25/08) : l'agent promet verbatim « vous recevrez un SMS de
+    confirmation d'ici X heures », et quand l'artisan tapait **Valider**, RIEN n'était mis
+    en file. Idem sur **Refuser**. Les deux seuls messages clients couvraient les chemins
+    d'ÉCHEC — expiration et reproposition. Le chemin nominal, celui qui justifie le
+    produit, était muet.
+
+    Ce test tient les deux bouts : la promesse est bien prononcée, et chaque issue décidée
+    par l'artisan produit un SMS au client.
+    """
+    from relais_proto.envoi import segments_sms
+    from relais_proto.registre import Artisan, Registre
+    from fastapi.testclient import TestClient
+    from relais_proto.api import creer_app
+    import hashlib
+
+    def emp(t):
+        return hashlib.sha256(t.encode()).hexdigest()
+
+    TOK, SECRET = "tok-dupont", "secret-voix"
+    registre = Registre([Artisan("art-dupont", "+33189701234", emp(TOK), CFG)],
+                        emp(SECRET))
+    entete = {"Authorization": f"Bearer {TOK}"}
+
+    # (a) LA PROMESSE est bien prononcée à l'oral. Si cette phrase change, ce test doit
+    # être relu — c'est exactement le lien qu'on veut rendre visible.
+    depot = DepotMemoire()
+    lead, rdv = _appel_avec_rdv(depot, "T01_urgence_fuite", LUNDI_9H)
+    dit_par_agent = " ".join(t for qui, t in lead.donnees["transcript"] if qui == "agent")
+    if "SMS de confirmation" not in dit_par_agent:
+        print("   l'agent ne promet plus de SMS de confirmation : R27 est à réécrire")
+        return False
+
+    # (b) l'artisan VALIDE → le client reçoit sa confirmation
+    rdv.notifier(LUNDI_9H)
+    depot.sauver_rdv(rdv)
+    pendule = [LUNDI_9H + dt.timedelta(minutes=10)]
+    cli = TestClient(creer_app(depot, registre, MockLLM, lambda: pendule[0],
+                               base_url="https://relais.test"))
+    if cli.post(f"/rdv/{rdv.id}/valider", headers=entete).status_code != 200:
+        print("   validation refusée")
+        return False
+    vers_client = [m for m in depot.messages()
+                   if m.destinataire is Destinataire.CLIENT]
+    if len(vers_client) != 1:
+        print(f"   {len(vers_client)} SMS client après validation, attendu 1 "
+              f"— la promesse orale n'est pas tenue")
+        return False
+    sms = vers_client[0]
+    texte = sms.texte
+    # il doit dire QUI, QUOI, QUAND : sans le créneau, le client ne sait pas ce qui est
+    # confirmé ; sans l'entreprise, il ne sait pas de qui vient le message — et depuis la
+    # décision d'expéditeur unique, l'expéditeur ne le lui dit plus.
+    for attendu in (CFG["entreprise"]["nom"], rdv.creneau["label"],
+                    CFG["entreprise"]["prenom_patron"]):
+        if attendu not in texte:
+            print(f"   le SMS de confirmation ne contient pas {attendu!r} : « {texte} »")
+            return False
+    if sms.cible != lead.donnees["slots"]["telephone_rappel"]:
+        print(f"   SMS envoyé à {sms.cible!r}, pas au numéro confirmé par l'appelant")
+        return False
+
+    # (c) AUCUNE URL : c'est ce qui rend ce SMS envoyable dès aujourd'hui par numéro court,
+    # sans attendre la déclaration du Sender ID (décision du 25/08). Le seul gabarit qui
+    # porte un lien reste `reproposition_client`.
+    if "http" in texte.lower() or "://" in texte:
+        print(f"   le SMS de confirmation contient une URL : bloqué en numéro court "
+              f"— « {texte} »")
+        return False
+    segments, encodage = segments_sms(texte)
+    if segments != 1 or encodage != "GSM-7":
+        print(f"   SMS de confirmation : {segments} segment(s) en {encodage}")
+        return False
+
+    # (d) c'est le SEUL endroit du produit où « confirmé » est permis, et il ne l'est que
+    # parce que l'artisan vient de valider. Le garde-fou porte ce paramètre depuis le
+    # début sans que personne s'en serve : on vérifie qu'il est bien exercé ici, et qu'il
+    # refuserait le même texte avant validation.
+    from relais_proto.guards import check_output
+    if check_output(texte, CFG, rdv_valide=True):
+        print(f"   le SMS de confirmation viole un garde-fou : « {texte} »")
+        return False
+    if "confirm" in texte.lower() and not check_output(texte, CFG, rdv_valide=False):
+        print("   ce texte passerait AUSSI avant validation : le garde-fou "
+              "« confirmation_avant_validation » n'est pas exercé")
+        return False
+
+    # (e) l'artisan REFUSE → le client est prévenu lui aussi. Il s'est vu promettre un SMS
+    # au téléphone ; un refus silencieux le laisse attendre un rendez-vous qui n'aura pas
+    # lieu — c'est la même promesse rompue, en pire.
+    depot2 = DepotMemoire()
+    lead2, rdv2 = _appel_avec_rdv(depot2, "T01_urgence_fuite", LUNDI_9H)
+    rdv2.notifier(LUNDI_9H)
+    depot2.sauver_rdv(rdv2)
+    cli2 = TestClient(creer_app(depot2, registre, MockLLM, lambda: pendule[0],
+                                base_url="https://relais.test"))
+    if cli2.post(f"/rdv/{rdv2.id}/refuser", headers=entete).status_code != 200:
+        print("   refus rejeté")
+        return False
+    refus_client = [m for m in depot2.messages()
+                    if m.destinataire is Destinataire.CLIENT]
+    if len(refus_client) != 1:
+        print(f"   {len(refus_client)} SMS client après refus, attendu 1")
+        return False
+    if rdv2.creneau["label"] not in refus_client[0].texte:
+        print(f"   le SMS de refus ne rappelle pas le créneau : "
+              f"« {refus_client[0].texte} »")
+        return False
+    # et surtout : il ne CONFIRME rien. Envoyer « c'est confirmé » sur un refus serait la
+    # pire sortie du produit — le client se déplacerait pour rien. Le garde-fou le dirait
+    # aussi, mais on l'exige ici sur le message réellement mis en file.
+    if check_output(refus_client[0].texte, CFG, rdv_valide=False):
+        print(f"   le SMS de refus viole un garde-fou : « {refus_client[0].texte} »")
+        return False
+
+    # (f) le SMS de confirmation ne part QU'APRÈS une validation : un RDV encore en attente
+    # ne doit rien avoir envoyé (sinon on confirmerait ce que l'artisan n'a pas validé —
+    # la faute que tout le produit est construit pour éviter).
+    depot3 = DepotMemoire()
+    _, rdv3 = _appel_avec_rdv(depot3, "T01_urgence_fuite", LUNDI_9H)
+    rdv3.notifier(LUNDI_9H)
+    depot3.sauver_rdv(rdv3)
+    if [m for m in depot3.messages() if m.destinataire is Destinataire.CLIENT]:
+        print("   un SMS client est parti avant toute décision de l'artisan")
+        return False
+    return True
+
+
 def check_guard_prix() -> bool:
     """T05 (garde-fou prix) : on injecte une réplique fautive et on vérifie l'interception."""
     from relais_proto.guards import check_output
@@ -2241,6 +2380,15 @@ def run() -> int:
         print("   → nom capté quels que soient la casse, le titre et les accents, aucun "
               "faux nom sur « c'est » nu, réponse directe à la question d'identité, "
               "chemin « nom connu » exercé de bout en bout : ✅ PASS")
+    else:
+        print("   → ❌ FAIL")
+        echecs += 1
+
+    print(f"\n──── R27_promesse_tenue ────")
+    if check_promesse_tenue():
+        print("   → la promesse orale « vous recevrez un SMS de confirmation » est "
+              "tenue : validation ET refus produisent un SMS au client, sans URL "
+              "(donc envoyable en numéro court), en 1 segment GSM-7 : ✅ PASS")
     else:
         print("   → ❌ FAIL")
         echecs += 1

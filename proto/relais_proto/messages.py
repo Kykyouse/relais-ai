@@ -121,6 +121,13 @@ TEMPLATES = {
     # sur une marge déjà mince : le lien pèse ~43 caractères à lui seul.
     "reproposition_client": (
         "Bonjour, c'est {nom_entreprise}. {prenom} propose {creneau}. Validez : {lien}"),
+    # LA promesse du script tenue par écrit. C'est le SEUL texte du produit où « confirmé »
+    # est permis — et il ne l'est que parce que l'artisan vient de valider (garde-fou
+    # `rdv_valide`). Il nomme l'entreprise ET le patron : depuis la décision d'expéditeur
+    # unique (25/08), l'expéditeur du SMS ne dit plus au client de qui vient le message.
+    # Aucune URL : ce SMS part donc en numéro court, sans attendre le Sender ID.
+    "confirmation_client": (
+        "Bonjour, c'est {nom_entreprise}. C'est confirmé : {prenom} passe {creneau}."),
     "confirmation_artisan": (
         "Relais : {client} a validé le créneau {creneau}. C'est dans votre agenda."),
     "expiration_artisan": (
@@ -129,17 +136,54 @@ TEMPLATES = {
 }
 
 
-def _texte(cle: str, cfg: dict, **variables: str) -> str:
+def _texte(cle: str, cfg: dict, *, rdv_valide: bool = False, **variables: str) -> str:
+    """Rend un gabarit et le soumet aux garde-fous.
+
+    `rdv_valide` par défaut à False : le mot « confirmé » est interdit tant que l'artisan
+    n'a pas tranché. Un seul appelant le passe à True — `confirmation_client`, envoyé
+    APRÈS la validation. Le paramètre existait dans `guards.check_output` depuis le
+    début et n'avait jamais servi : il était prévu exactement pour ce message, qui
+    n'existait pas encore.
+    """
     texte = TEMPLATES[cle].format(**variables)
     # un SMS est une sortie de l'agent : même contrôle qu'une réplique au téléphone
-    violations = check_output(texte, cfg, rdv_valide=False)
+    violations = check_output(texte, cfg, rdv_valide=rdv_valide)
     if violations:
         raise MessageInterdit(f"template {cle} : {violations}")
     return texte
 
 
+def confirmation_client(rdv, lead_donnees: dict, cfg: dict) -> Brouillon:
+    """L'artisan a validé : le client reçoit le SMS qu'on lui a promis AU TÉLÉPHONE.
+
+    C'est le chemin nominal — celui qui justifie le produit — et il était muet jusqu'au
+    25/08 : seuls les chemins d'ÉCHEC (expiration, reproposition) écrivaient au client.
+    L'agent promettait pourtant, verbatim et sans échappatoire, « vous recevrez un SMS de
+    confirmation d'ici X heures ». Verrouillé par R27, qui confronte la phrase prononcée
+    aux messages réellement mis en file.
+    """
+    telephone = lead_donnees["slots"].get("telephone_rappel")
+    if not telephone:
+        raise MessageInterdit(f"RDV {rdv.id} : pas de téléphone pour joindre le client")
+    return Brouillon(
+        cle_idempotence=f"confirmation_client:{rdv.id}",
+        artisan_id=rdv.artisan_id,
+        destinataire=Destinataire.CLIENT, canal=Canal.SMS, cible=telephone,
+        texte=_texte("confirmation_client", cfg, rdv_valide=True,
+                     nom_entreprise=cfg["entreprise"]["nom"],
+                     prenom=cfg["entreprise"]["prenom_patron"],
+                     creneau=rdv.creneau["label"]))
+
+
 def repli_client(rdv, lead_donnees: dict, cfg: dict) -> Brouillon:
-    """SMS de repli au client dont le créneau a expiré sans réponse de l'artisan."""
+    """SMS de repli au client dont le créneau n'aboutit pas.
+
+    Deux causes, un seul texte : l'échéance est passée sans réponse de l'artisan, ou
+    l'artisan a refusé. Du point de vue du client c'est la même chose — le créneau n'est
+    pas retenu et on le recontacte — et les deux issues sont exclusives, donc la clé
+    d'idempotence (`expiration_client:{id}`, nommée d'après la première cause connue)
+    reste correcte pour les deux.
+    """
     telephone = lead_donnees["slots"].get("telephone_rappel")
     if not telephone:
         raise MessageInterdit(f"RDV {rdv.id} : pas de téléphone pour joindre le client")
