@@ -1712,6 +1712,28 @@ def check_app_artisan() -> bool:
         if _esc2(rdv2.creneau["label"]) in page or "Aucun rendez-vous" not in page:
             print("   Martin voit les rendez-vous de Dupont")
             return False
+
+    # (h) les attributs du cookie, lus dans l'EN-TÊTE Set-Cookie et non déduits du
+    # comportement du client. `TestClient` n'applique pas `Secure` : un test qui se fie à
+    # lui passe sur PC pendant que le téléphone jette le cookie en HTTP et boucle sur le
+    # formulaire de connexion. C'est exactement le bug du 24/08 — `serveur.py` ne
+    # raccordait pas `cookie_secure`, et rien ne le voyait.
+    for secure_voulu in (True, False):
+        app_s = creer_app(depot, registre, MockLLM, lambda: pendule[0],
+                          cookie_secure=secure_voulu)
+        with TestClient(app_s) as c:
+            entete = c.post("/connexion", data={"jeton": TOK_A},
+                            follow_redirects=False).headers.get("set-cookie", "").lower()
+        if ("secure" in entete) is not secure_voulu:
+            print(f"   cookie_secure={secure_voulu} : attribut Secure "
+                  f"{'absent' if secure_voulu else 'présent'} dans {entete!r}")
+            return False
+        # ces deux-là ne dépendent d'aucun mode : jamais lisible par un script, et
+        # non envoyé sur une requête inter-sites
+        for obligatoire in ("httponly", "samesite=lax"):
+            if obligatoire not in entete:
+                print(f"   cookie sans {obligatoire} : {entete!r}")
+                return False
     return True
 
 

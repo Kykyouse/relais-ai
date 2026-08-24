@@ -1180,3 +1180,34 @@ deux artisans de test, **pas pour des clients payants**. À remplacer par un cod
 SMS, avec la table `artisan` — c'est la brique suivante.
 
 Suite : **28 PASS**. Postgres vert (via le pooler).
+
+### 24/08 — bug réel : connexion en boucle depuis le téléphone
+
+**Symptôme** (Geoffrey, test réel sur `http://192.168.x.x:8000`) : le jeton est accepté,
+mais on retombe indéfiniment sur la page de connexion.
+
+**Cause.** `serveur.py` appelait `creer_app()` **sans raccorder `cookie_secure`**, donc le
+défaut `True` s'appliquait : le cookie partait avec l'attribut `Secure` et le navigateur le
+jetait en HTTP. `localhost` est une exception chez Chrome, **mais pas une IP de réseau
+local** — le paramètre existait, il n'était simplement branché nulle part.
+
+**Le plus instructif est pourquoi R24 ne l'a pas vu.** `TestClient` **n'applique pas**
+l'attribut `Secure` : il renvoie le cookie quand même. Un test qui se fie au comportement du
+client passe donc sur PC pendant que le téléphone échoue. Le test doit inspecter
+**l'en-tête `Set-Cookie` lui-même**.
+
+**Corrigé.**
+- `RELAIS_COOKIE_SECURE`, lue dans `serveur.py` et passée à `creer_app`. Défaut `true`, et
+  **seul le mot exact « false » désactive** : `flase`, `0`, `False!` laissent le cookie en
+  `Secure`. Fail-safe volontaire — la production ne doit pas pouvoir régresser par
+  étourderie. Le serveur avertit bruyamment au démarrage quand l'attribut est désactivé.
+- R24 vérifie l'en-tête `Set-Cookie` dans **les deux modes**, plus `HttpOnly` et
+  `SameSite=Lax` qui ne dépendent d'aucun mode.
+- Vérifié que le test attrape bien le défaut d'origine : en rejouant « `creer_app` appelé
+  sans `cookie_secure` », R24 échoue.
+
+**Leçon.** Un test qui passe par un client d'intégration ne teste que ce que ce client
+applique. Ici, la propriété à vérifier n'était pas « la session marche » mais « l'en-tête
+porte les bons attributs » — et seule la seconde formulation attrape le bug.
+
+Suite : **28 PASS**.

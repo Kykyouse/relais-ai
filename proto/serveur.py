@@ -9,6 +9,11 @@ Variables requises (fichier `.env` à la racine) :
     RELAIS_WEBHOOK_SECRET    secret partagé avec la plateforme vocale
     RELAIS_BASE_URL          racine publique des liens de validation client (SMS)
 
+Variable optionnelle :
+    RELAIS_COOKIE_SECURE     `false` UNIQUEMENT pour tester en HTTP local depuis un
+                             téléphone. Défaut `true` : la production ne doit pas pouvoir
+                             régresser par oubli.
+
 Rien de métier ici : uniquement du câblage. Les collaborateurs sont les mêmes objets que
 ceux des tests, avec les implémentations réelles à la place des doubles — c'est tout
 l'intérêt d'avoir injecté le dépôt, le LLM et l'horloge.
@@ -38,6 +43,21 @@ def _exige(nom: str) -> str:
     return valeur
 
 
+def _cookie_secure() -> bool:
+    """Défaut TRUE, et seul le mot exact « false » le désactive.
+
+    Fail-safe volontaire : une faute de frappe (`flase`, `False!`, `0 `) laisse le cookie
+    en `Secure` plutôt que de l'ouvrir en clair. C'est le sens de la demande — la prod ne
+    doit pas pouvoir régresser par oubli ou par étourderie.
+
+    Pourquoi ce réglage existe : un cookie `Secure` est jeté par le navigateur en HTTP.
+    `localhost` est une exception chez Chrome, **mais pas une IP de réseau local** — d'où
+    une connexion qui boucle sur le formulaire quand on teste depuis un téléphone sur
+    `http://192.168.x.x:8000` (constaté le 24/08).
+    """
+    return (os.environ.get("RELAIS_COOKIE_SECURE") or "true").strip().lower() != "false"
+
+
 def construire():
     # même repli que le worker et le lanceur de tests : l'hôte direct de Supabase est en
     # IPv6 et peut être injoignable selon le réseau. Le pooler prend alors le relais.
@@ -50,7 +70,12 @@ def construire():
     # le mode scripté sinon — l'appel aboutit dans les deux cas (dégradation gracieuse)
     # base_url EXIGÉE, sans valeur par défaut : elle part dans un SMS. Un lien pointant
     # sur un domaine d'exemple serait mort chez le client, sans erreur côté serveur.
-    return creer_app(depot, registre, make_llm, base_url=_exige("RELAIS_BASE_URL"))
+    secure = _cookie_secure()
+    if not secure:
+        print("⚠️  RELAIS_COOKIE_SECURE=false : cookie de session émis SANS Secure. "
+              "Acceptable en test HTTP local, JAMAIS en production.")
+    return creer_app(depot, registre, make_llm, base_url=_exige("RELAIS_BASE_URL"),
+                     cookie_secure=secure)
 
 
 app = construire()
