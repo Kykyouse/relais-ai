@@ -5,18 +5,18 @@
 
 ---
 
-# ÉTAT AU 24/08/2026 — à lire en premier
+# ÉTAT AU 25/08/2026 — à lire en premier
 
 > **Ce bloc se REMPLACE, il ne s'empile pas.** Les entrées datées plus bas sont le journal
 > chronologique (le pourquoi des décisions) ; ce bloc-ci est le où-on-en-est.
 
 ## En une phrase
 
-Le backend de la phase 1 est fonctionnel et vérifié contre un vrai Postgres : un appel
-entre par HTTP, produit un lead scoré et un RDV, l'artisan valide en 1 tap **depuis son
-navigateur**, l'expiration et les messages sortants sont gérés — et le temps est enfin
-traité correctement (instants UTC, changements d'heure compris). **Il ne manque que la
-voix** : les SMS sortent réellement, mais en mode numéro court qui bloque les URL.
+Le backend de la phase 1 est fonctionnel et vérifié contre un vrai Postgres, l'artisan
+valide en 1 tap depuis son navigateur, et les SMS sortent réellement. **Deux manques
+tiennent le produit** : il n'y a pas de voix (le point d'entrée du parcours), et le chemin
+nominal ne prévient pas le client quand l'artisan valide — alors que l'agent le lui promet
+à l'oral.
 
 ## Ce qui tourne
 
@@ -38,79 +38,102 @@ python run_llm_eval.py [--mock] [--n 3]             # éval appelant-simulé
 | API HTTP, 2 portes d'auth, 1 tour = 1 requête (R19) | ✅ | mock + câblage réel sur Supabase |
 | Plage de silence, réessais, multi-artisans (R20) | ✅ | mock, mutations 8/8 |
 | Validation client par lien à un tap (R21) | ✅ | mock, mutations 7/7 |
-| Adaptateur OVH : E.164, corps, échecs (R22) | ✅ | **SMS réellement reçu sur téléphone, 24/08** |
+| Adaptateur OVH : E.164, corps, échecs (R22) | ✅ | **SMS réellement reçu, 24/08** |
 | Page de confirmation client (HTML, sans JS) | ✅ | mock — le lien SMS mène à une vraie page |
 | Boîte de validation artisan + session (R24) | ✅ | mock — utilisable dans un navigateur |
 | Instants UTC vs heures de pendule (R25) | ✅ | mock + **migration 007 sur Supabase** |
 | Extraction du nom de l'appelant (R26) | ✅ | mock, mutations 6/6 |
+| **SMS de confirmation au client (chemin nominal)** | ❌ **absent** | — voir dette n°1 |
 
 ## Ce qui est encore un double (et non un manque caché)
 
-- **Envoi SMS** : la chaîne sort réellement du système — premier SMS réel le 24/08 en mode
-  **numéro court** (réf. `ovh:802084252`), forme de réponse d'OVH confirmée. Mais les
-  numéros courts **bloquent les URL** : le lien de validation ne peut pas encore passer.
-  Reste à faire : valider le Sender ID `DupontChauf` (~72 h, risque de refus) pour sortir
-  du mode test. `EnvoyeurJournal` reste le défaut (`RELAIS_SMS=journal`), donc un cron mal
-  configuré n'écrit à personne.
-- **`CalendarStub`** : applique les vraies règles d'agenda mais n'est relié à aucun
-  calendrier. Google/Outlook non branchés (OAuth Google à lancer tôt : délai calendaire).
 - **Pas de voix** : aucune plateforme vocale branchée, aucun numéro. L'API expose déjà les
-  webhooks qu'elle appellera.
+  webhooks qu'elle appellera. **Le spike vocal ne s'ouvre pas seul** : session dédiée avec
+  Claude (Cowork) avant tout engagement.
+- **Envoi SMS** : la chaîne sort réellement (premier SMS réel le 24/08, réf.
+  `ovh:802084252`), en mode **numéro court**. Seule limite du numéro court : les **URL sont
+  bloquées**, ce qui ne concerne qu'**un seul gabarit du catalogue**, `reproposition_client`.
+  Tout le reste passe dès aujourd'hui. `EnvoyeurJournal` reste le défaut
+  (`RELAIS_SMS=journal`), donc un cron mal configuré n'écrit à personne.
+- **`CalendarStub`** : applique les vraies règles d'agenda sans être relié à un calendrier.
+  Ce n'est **pas un cas dégradé** — c'est le cas de l'artisan sans agenda numérique, sans
+  doute le cas courant. Le calendrier externe sera un anti-double-réservation, pas une
+  condition d'existence du produit. Google/Outlook : **volontairement non lancé** (cf.
+  dette n°4).
 - **Pas de push** : la relance artisan est mise en file, jamais délivrée.
 - **`config/artisans.json`** : registre en fichier, avec des jetons de dév **publics**.
-  Deviendra la table `artisan` (et la FK que `rdv.artisan_id` attend déjà).
+  Deviendra la table `artisan`.
 - **Écran de connexion artisan** : accepte le jeton du registre, à remplacer par un code
-  reçu par SMS — le mobile EST l'identité professionnelle, et le canal existe.
+  reçu par SMS.
 
 ## Décisions verrouillées
 
-- **Délais de validation : 24 h / 2 h en heures réelles**, réglables par artisan. À 24 h le
-  calcul en heures ouvrées devient nuisible ; il reste disponible via `base_delai`.
-- **L'échéance fait foi, pas le passage du worker** : valider une seconde trop tard est
-  refusé, sinon la décision dépend de la latence d'un cron.
+- **Le LLM ne décide jamais**, l'artisan valide toujours (pas d'auto-validation en V1),
+  annonce IA en ouverture et téléphone confirmé avant tout RDV.
+- **Délais de validation : 24 h / 2 h en heures réelles**, réglables par artisan.
+- **L'échéance fait foi, pas le passage du worker.**
 - **Un horodatage est un INSTANT en UTC ; une heure de config est une heure de PENDULE**
-  (`temps.py`, règle n°7). Le fuseau est une config d'artisan, pas une constante. Sans
-  quoi « l'échéance fait foi » était fausse deux heures par an (heure répétée d'octobre).
-- **Effets idempotents avant changement d'état** dans les workers : l'inverse perd le SMS
-  du client pour de bon.
-- **SMS strictement sortant, « Répondez OUI » remplacé par un lien à un tap.** Motif
-  vérifié : numéros mobiles FR interdits à l'A2P, bidirectionnel = numéro `09 3X`, et
-  Charte AF2M du 1er mars 2026. Le lien supprime le numéro dédié et toute la conformité
-  entrante.
-- **Deux portes d'authentification distinctes** : secret partagé pour la plateforme vocale
-  (l'artisan est identifié par le numéro appelé), jeton porteur pour l'app artisan.
+  (`temps.py`, règle n°7).
+- **SMS strictement sortant, lien à un tap plutôt que « Répondez OUI ».**
+- **Deux portes d'authentification distinctes** (secret webhook / jeton porteur).
 - **L'API ne décide jamais** : corollaire backend de la règle n°1.
+- **Expéditeur SMS UNIQUE, déclaré sous NOTRE société** — pas sous celle de chaque artisan
+  (décision du 25/08). Motifs : un seul Kbis à fournir, une réputation cumulée chez les
+  opérateurs, des gabarits clients qui nomment déjà l'artisan dans le texte, et l'honnêteté
+  vis-à-vis de l'opérateur — c'est nous qui émettons. Reste ouvert avec le cousin : le
+  positionnement (produit visible vs marque blanche), pas la faisabilité.
+- **⚠️ Affirmation PÉRIMÉE, produite le 24/08 et corrigée le 25/08** : « le Sender ID attend
+  un artisan réel, qui attend la voix ». **Faux.** Il n'attend que le nom commercial, la
+  structure juridique et le domaine. Ne pas la redécouvrir comme si elle était vraie.
 
 ## Dettes et décisions ouvertes
 
-1. ~~Fuseaux / changement d'heure~~ — **traité le 24/08** (instants UTC, migration 007,
-   R25). Reste un résidu connu et assumé : `relais_base_de_test.autorise_le`, table du
-   harnais de test, est encore en `timestamp`.
-2. **Fournisseur SMS** — choix ouvert et **réversible** (tout passe par le port
-   `Envoyeur`). Depuis le flux par lien, le seul besoin est : envoyer un SMS transactionnel
-   vers un mobile FR avec un **sender ID alphanumérique déclaré**. Critère de sélection =
-   qualité du processus de déclaration du Sender ID (Charte AF2M du 01/03/2026), + DPA et
-   hébergement UE. Candidats FR/UE équivalents : OVHcloud, LinkMobility, Octopush,
-   SMSFactor, Brevo. Le jour où l'on crée une clé, la porter au strict minimum (chez OVH :
-   consumer key limité à `POST /sms/*`, avec expiration).
-3. **Fournisseur de NUMÉROS / plateforme vocale** — décision distincte de la précédente,
-   et à ne pas anticiper : les plateformes managées (Vapi, Retell) fournissent leurs propres
-   numéros ou s'intègrent en trunk SIP. Prendre des numéros chez un opérateur avant d'avoir
-   choisi la plateforme créerait une double tuyauterie à réconcilier.
-4. **`FOR UPDATE SKIP LOCKED`** quand plusieurs workers tourneront (optimisation, pas
-   justesse : l'unicité de la clé d'idempotence protège déjà le client).
-5. **Table `artisan`** + FK, en remplacement du registre fichier.
-6. Formulation « d'ici 24 heures » à l'oral, un peu mécanique — à retoucher sciemment
-   (phrase verbatim et testée).
+1. **🔴 Le chemin nominal est muet.** L'agent promet verbatim « vous recevrez un SMS de
+   confirmation d'ici X heures », mais quand l'artisan **valide** (ou **refuse**), rien
+   n'est mis en file : il n'existe pas de gabarit `confirmation_client`. Les deux seuls
+   messages clients couvrent les chemins d'ÉCHEC (expiration, reproposition). Aucun test ne
+   l'a vu parce qu'ils vérifient les transitions et la file, jamais l'écart entre la
+   promesse orale et l'envoi. **Petit à corriger, et bloquant pour toute bêta.**
+2. **Nom commercial** — le goulot unique. Il commande le Sender ID, la structure juridique,
+   le domaine, et la vérification OAuth Google. Décision du cousin. Le nom final ne sera
+   pas « Relais » (nom de code interne).
+   Contraintes AF2M 2026 à respecter : **11 caractères max**, alphanumériques latins
+   uniquement (ni espace ni spécial), déclaré en minuscules, termes génériques interdits
+   (RDV, ALERTE, LIVRAISON, PAIEMENT…), et correspondance avec le nom commercial ou une
+   marque dont on a la titularité.
+3. **Conséquences code du nom** : « Relais : » est **en dur** dans `confirmation_artisan` et
+   `expiration_artisan` → doit devenir une variable de config produit, et le pire-cas de
+   R23 devra être rejoué avec un nom de 11 caractères. Et `sms.expediteur` est aujourd'hui
+   lu dans la config **artisan** → doit remonter au niveau produit, sinon chaque artisan
+   pourrait déclarer le sien, contre la décision actée.
+4. **Premier calendrier à brancher** (Google / Outlook / aucun) — tranché par les
+   **interviews terrain** du cousin, question ajoutée à sa liste. L'OAuth Google n'est
+   **volontairement pas lancé** : sa vérification exige nom d'app, domaine vérifié et
+   politique de confidentialité hébergée, donc la même décision de nom que le Sender ID.
+5. **Plateforme vocale** — décision structurante, à prendre en session dédiée. Les
+   plateformes managées (Vapi, Retell) fournissent leurs numéros ou s'intègrent en trunk
+   SIP ; prendre des numéros avant de choisir créerait une double tuyauterie.
+6. **Fournisseur SMS** — choix réversible (tout passe par le port `Envoyeur`). Critère :
+   qualité du processus de déclaration du Sender ID, DPA, hébergement UE. Candidats
+   équivalents : OVHcloud (en place), LinkMobility, Octopush, SMSFactor, Brevo.
+7. **Table `artisan`** + FK + état d'abonnement, en remplacement du registre fichier.
+8. **`FOR UPDATE SKIP LOCKED`** quand plusieurs workers tourneront (optimisation, pas
+   justesse).
+9. Formulation « d'ici 24 heures » à l'oral, un peu mécanique — à retoucher sciemment.
+10. **Document « décisions côté cousin »** (5 blocs : nom, structure juridique,
+    positionnement expéditeur, questions terrain, bêta/prix/confidentialité) : produit et
+    transmis, **pas encore versionné dans `docs/`**.
 
 ## Prochaine étape
 
-Deux chantiers à délai externe, à lancer AVANT de coder quoi que ce soit d'autre parce que
-l'attente court en arrière-plan : **la déclaration du Sender ID `DupontChauf`** (~72 h,
-sans quoi le lien de validation ne peut pas partir en SMS) et **l'OAuth Google Calendar**
-(délai de vérification). Le code pendant ce temps : brancher un vrai calendrier derrière
-`CalendarStub`, ou remplacer l'écran de connexion par un code SMS.
+1. **`confirmation_client`** — le gabarit manquant, son branchement sur valider/refuser, et
+   un test qui compare ce que l'agent PROMET à ce que le système ENVOIE. Court, et sans lui
+   aucune bêta n'est honnête.
+2. **Connexion par code SMS + table `artisan`** (avec état d'abonnement). Débloqué à 100 % :
+   un code à 6 chiffres ne contient pas d'URL, le numéro court suffit.
 
+Le spike vocal ne s'ouvre **qu'en session dédiée**. Le Sender ID et l'OAuth Google attendent
+le nom commercial — c'est-à-dire le cousin, pas nous.
 ---
 
 ## Sessions du 21–22/08/2026 — fondations + prototype texte
@@ -1411,3 +1434,146 @@ un test manquant : une réponse d'un seul mot (« Non », « Merci ») passe la 
 arrêtée que par lui. Cas ajoutés, mutation tuée.
 
 Suite : **30 PASS**.
+
+---
+
+## Session du 25/08/2026 — le Sender ID ne dépendait de rien de ce que je croyais
+
+**Décisions prises avec Claude (Cowork) les 24–25/08, consignées ici pour qu'elles fassent
+foi.** Cette entrée corrige explicitement une affirmation fausse produite le 24/08 en
+séance de code.
+
+### La correction, d'abord
+
+> ❌ **PÉRIMÉ — ne pas réutiliser :** « le Sender ID attend un premier artisan réel, qui
+> attend la voix ; la chaîne est voix → numéro → artisan → Sender ID ».
+
+Ce raisonnement partait d'une prémisse non vérifiée : que l'expéditeur déclaré serait celui
+de l'ARTISAN (`sms.expediteur = "DupontChauf"` dans sa config), donc qu'il faudrait le Kbis
+d'un artisan réel. La décision actée est l'inverse : **un expéditeur UNIQUE, déclaré sous
+notre propre société.** Le Sender ID n'attend donc ni artisan, ni voix, ni numéro.
+
+Quatre raisons retenues pour l'expéditeur unique :
+
+1. **Échelle des justificatifs** : un Kbis à fournir, pas un par artisan.
+2. **Réputation cumulée** : un seul expéditeur qui se construit une histoire chez les
+   opérateurs, au lieu de N expéditeurs neufs et suspects.
+3. **Les gabarits le permettent déjà** : les deux SMS clients ouvrent par « Bonjour, c'est
+   {nom_entreprise} » — l'artisan est nommé DANS le message, pas seulement dans
+   l'expéditeur. Vérifié dans `messages.py` : aucun des textes clients ne dépend de qui
+   signe l'envoi.
+4. **Honnêteté vis-à-vis de l'opérateur** : c'est nous qui émettons, techniquement et
+   juridiquement. Déclarer la marque d'un artisan reviendrait à dire autre chose.
+
+Le point restant avec le cousin est le **positionnement** (produit visible vs marque
+blanche), pas la faisabilité.
+
+### Ce que le Sender ID attend RÉELLEMENT
+
+a) le **nom commercial** — décision du cousin, et information nouvelle : **le nom final ne
+   sera pas « Relais »**, qui reste le nom de code interne ;
+b) la **structure juridique** au nom aligné — le Kbis est le justificatif demandé par OVH ;
+c) le **domaine** assorti.
+
+C'est-à-dire : un seul goulot, le nom.
+
+### DupontChauf supprimé
+
+Geoffrey a retiré l'expéditeur en validation chez OVH. Refus probable (entreprise fictive,
+aucun justificatif à produire) et surtout plus aucune valeur de test : le numéro court
+couvre tous les besoins actuels. Rien à regretter — l'hypothèse d'API OVH avait déjà été
+confirmée le 24/08 par un envoi réel.
+
+### Périmètre réel du besoin Sender ID, affiné
+
+Seuls les SMS **contenant une URL** sont bloqués en numéro court. Vérifié dans le
+catalogue : un seul gabarit porte un `{lien}`, `reproposition_client`. Tout le reste —
+`expiration_client`, les deux messages artisan, et le futur code de connexion à 6 chiffres
+— passe en numéro court **dès aujourd'hui**.
+
+Conséquence stratégique : une bêta sur le flux nominal ne dépend pas du Sender ID.
+
+⚠️ **Mais elle dépend d'autre chose, découvert en vérifiant ce point** — voir « le trou »
+ci-dessous.
+
+### Contraintes AF2M 2026 (sources consultées le 25/08)
+
+À consigner pour le choix du nom :
+
+- **11 caractères maximum** ;
+- **alphanumériques latins uniquement** — ni espace, ni caractère spécial ;
+- déclaration **en minuscules** ;
+- **termes génériques interdits** comme expéditeur : RDV, ALERTE, LIVRAISON, PAIEMENT… ;
+- l'expéditeur doit correspondre au **nom commercial** ou à une marque dont on a la
+  titularité.
+
+### OAuth Google : NE PAS lancer
+
+Contrairement au plan du 24/08. Deux raisons :
+
+1. la vérification exige nom d'app + domaine vérifié + politique de confidentialité
+   hébergée — elle attend donc **la même décision de nom** que le Sender ID ;
+2. le choix du premier calendrier à brancher (Google, Outlook, ou aucun) sera tranché par
+   les **interviews terrain** du cousin — la question est ajoutée à sa liste.
+
+Rappel utile, contre la tentation de traiter le calendrier comme urgent : `CalendarStub`
+couvre déjà le cas de l'artisan **sans agenda numérique**, qui n'est pas un cas dégradé
+mais probablement le cas courant. Le calendrier externe est un **anti-double-réservation**,
+pas une condition d'existence du produit.
+
+### Document « décisions côté cousin »
+
+Produit et transmis, en 5 blocs : nom commercial (goulot unique), structure juridique,
+positionnement de l'expéditeur unique, questions terrain (agenda utilisé, Android/iOS,
+acceptation d'un expéditeur au nom du produit, délais 24 h/2 h, prix annoncé), et
+bêta/prix/politique de confidentialité. **Pas encore versionné** : à déposer dans `docs/`
+si on veut qu'il fasse foi ici aussi.
+
+### Le trou, trouvé en vérifiant le point « bêta possible »
+
+**La boucle nominale n'envoie rien au client.** L'agent promet pourtant, verbatim et sans
+échappatoire (`engine.py`, phrase du script) :
+
+> « Vous recevrez un SMS de confirmation de Julien d'ici 2 heures. »
+
+Or quand l'artisan tape **Valider**, `api._decider` écrit le RDV et rend la réponse — **aucun
+message n'est mis en file**. Idem sur **Refuser**. Le catalogue ne contient que quatre
+gabarits, et aucun `confirmation_client` :
+
+| Chemin | Ce que le client reçoit |
+|---|---|
+| L'artisan valide | **rien** ❌ — alors qu'on le lui a promis à l'oral |
+| L'artisan refuse | **rien** ❌ |
+| L'artisan repropose | `reproposition_client` ✅ (avec lien) |
+| L'échéance passe | `expiration_client` ✅ |
+
+Les deux chemins couverts sont les chemins d'ÉCHEC. Le chemin nominal — celui qui
+justifie le produit — est muet. Ça n'a jamais été vu parce que tous les tests vérifient la
+transition d'état et la file, pas l'écart entre **ce que l'agent promet à l'oral** et ce
+que le système envoie ensuite.
+
+Donc : la bêta sur le flux nominal est bien indépendante du Sender ID, mais elle est
+bloquée par ce gabarit manquant. C'est petit (un template + un branchement + un test), et
+c'est à faire avant la connexion par code SMS.
+
+### Deux autres conséquences code, vérifiées
+
+- **« Relais : » est EN DUR** dans `confirmation_artisan` et `expiration_artisan`. Puisque
+  le nom final ne sera pas « Relais », il doit devenir une **variable de config produit**.
+  Et le pire-cas de R23 devra alors être joué avec un nom de **11 caractères**, la limite
+  AF2M. Note : le nom du produit n'apparaît dans **aucun** SMS client — il n'y a donc pas
+  d'enjeu de coût côté client, seulement côté messages artisan si ceux-ci deviennent un
+  jour des SMS de repli.
+- **`sms.expediteur` est lu dans la config ARTISAN** (`envoi_ovh.py` : « sms.expediteur
+  absent de la config artisan »). Avec un expéditeur unique, ce réglage doit remonter au
+  niveau produit — sinon chaque artisan pourrait déclarer le sien, ce qui contredit
+  frontalement la décision actée.
+
+### Prochaine brique code, confirmée
+
+**Connexion par code SMS + table `artisan`** (avec l'état d'abonnement, pour la facturation
+future). Débloquée à 100 % : un code à 6 chiffres n'a pas d'URL, donc le numéro court
+suffit. Précédée du `confirmation_client` ci-dessus, qui est plus court et plus urgent.
+
+**Le spike VOIX reste à discuter en session dédiée avec Claude (Cowork) avant tout
+engagement — ne pas l'ouvrir seul.**

@@ -1,5 +1,16 @@
 # Relais — point d'étape au 24/08/2026
 
+> ⚠️ **PÉRIMÉ SUR TROIS POINTS depuis le 25/08.** Ne pas diffuser tel quel — voir le bloc
+> ÉTAT de `docs/journal.md`, qui fait foi.
+>
+> 1. **Sender ID** : il n'attend ni artisan réel ni voix. Décision actée d'un expéditeur
+>    **unique sous notre propre société** ; il n'attend que le nom commercial, la structure
+>    juridique et le domaine. `DupontChauf` a été supprimé chez OVH.
+> 2. **OAuth Google** : volontairement **non lancé** — sa vérification attend la même
+>    décision de nom, et le choix du premier calendrier revient aux interviews terrain.
+> 3. **Un trou découvert le 25/08** : le chemin nominal n'envoie **rien** au client quand
+>    l'artisan valide, alors que l'agent le lui promet à l'oral.
+
 > Document **autonome** : écrit pour être lu ou collé hors du dépôt (Claude Desktop, un
 > tiers, soi-même dans trois semaines). Le journal de bord détaillé est `docs/journal.md`.
 
