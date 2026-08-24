@@ -121,6 +121,9 @@ label { display: block; font-size: .88rem; color: #5b6472; margin: 10px 0 4px; }
 input { width: 100%; min-height: 46px; font-size: 1rem; padding: 0 10px;
   border: 1px solid #cfd5de; border-radius: 8px; background: #fff; color: #14181f; }
 .vide { color: #5b6472; }
+.rdv.perime { opacity: .72; border-style: dashed; }
+.perdu { color: #98261a; font-size: .92rem; margin: 0; }
+a { color: #1a6b3c; }
 @media (prefers-color-scheme: dark) {
   .rdv { border-color: #2c3542; } .score { background: #2c3542; color: #c8d0da; }
   input { background: #14181f; color: #e8eaed; border-color: #2c3542; }
@@ -152,32 +155,59 @@ def boite_validation(prenom: str, rdvs: list[dict]) -> str:
             f"<h1>Bonjour {escape(prenom)}</h1>"
             '<p class="vide">Aucun rendez-vous en attente. Tout est à jour.</p>')
 
+    # Les RDV encore décidables d'abord, le plus pressé en tête ; les échus ensuite, à
+    # titre d'information. L'artisan doit voir en haut ce sur quoi il peut agir.
+    ordonnes = sorted(rdvs, key=lambda r: (r["echu"], r["expire_a"]))
     blocs = []
-    for r in rdvs:
+    for r in ordonnes:
         urgent = " urgent" if r["urgence"] else ""
         mention = " URGENCE" if r["urgence"] else ""
         raisons = escape(" · ".join(r["raisons"])) if r["raisons"] else ""
         ident = escape(r["id"])
+        if r["echu"]:
+            # Pas de boutons : le délai est passé, le domaine refuserait toute décision.
+            # Afficher des actions qui ne peuvent qu'échouer serait mentir à l'artisan —
+            # mais le masquer serait pire : il doit savoir qu'il a laissé filer un lead.
+            actions = ('<p class="perdu">Délai dépassé — le client est prévenu et le '
+                       "créneau libéré. Rappelez-le si vous voulez le récupérer.</p>")
+        else:
+            actions = (
+                '<div class="actions">'
+                f'<form method="post" action="/app/{ident}/valider">'
+                '<button type="submit">Valider</button></form>'
+                f'<form method="post" action="/app/{ident}/refuser">'
+                '<button type="submit" class="refus">Refuser</button></form>'
+                "</div>"
+                "<details><summary>Proposer un autre créneau</summary>"
+                f'<form method="post" action="/app/{ident}/reproposer">'
+                '<label>Date</label><input type="date" name="date" required>'
+                '<label>De</label><input type="time" name="de" required>'
+                '<label>À</label><input type="time" name="a" required>'
+                '<label></label><button type="submit">Envoyer au client</button>'
+                "</form></details>")
         blocs.append(
-            '<div class="rdv">'
+            f'<div class="rdv{" perime" if r["echu"] else ""}">'
             f'<span class="score{urgent}">{r["score"]}/5{mention}</span>'
             f'<p class="creneau">{escape(r["creneau"])}</p>'
             f'<p class="raisons">{raisons}</p>'
-            '<div class="actions">'
-            f'<form method="post" action="/app/{ident}/valider">'
-            '<button type="submit">Valider</button></form>'
-            f'<form method="post" action="/app/{ident}/refuser">'
-            '<button type="submit" class="refus">Refuser</button></form>'
-            "</div>"
-            "<details><summary>Proposer un autre créneau</summary>"
-            f'<form method="post" action="/app/{ident}/reproposer">'
-            '<label>Date</label><input type="date" name="date" required>'
-            '<label>De</label><input type="time" name="de" required>'
-            '<label>À</label><input type="time" name="a" required>'
-            '<label></label><button type="submit">Envoyer au client</button>'
-            "</form></details></div>")
-    return _page_app(f"{len(rdvs)} à valider",
-                     f"<h1>Bonjour {escape(prenom)}</h1>" + "".join(blocs))
+            f"{actions}</div>")
+    a_decider = sum(1 for r in rdvs if not r["echu"])
+    titre = f"{a_decider} à valider" if a_decider else "Rien à valider"
+    return _page_app(titre, f"<h1>Bonjour {escape(prenom)}</h1>" + "".join(blocs))
+
+
+def action_impossible(raison: str) -> str:
+    """Une action refusée par le domaine doit rendre une PAGE, pas du JSON.
+
+    Après un tap sur un téléphone, `{"detail":"RDV ... échu depuis ..."}` est illisible.
+    Le motif vient du domaine — c'est lui qui sait pourquoi — la page ne fait que
+    l'habiller et proposer le retour.
+    """
+    return _page_app(
+        "Action impossible",
+        "<h1>Action impossible</h1>"
+        f'<p class="raisons">{escape(raison)}</p>'
+        '<p class="apres"><a href="/app">Revenir à mes rendez-vous</a></p>')
 
 
 def connexion(erreur: str = "") -> str:

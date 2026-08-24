@@ -382,12 +382,18 @@ def creer_app(depot, registre: Registre, fabrique_llm, horloge=None,
             else:
                 indice = "Session expirée ou révoquée. Reconnecte-toi."
             return HTMLResponse(pages.connexion(indice), status_code=401)
+        t = maintenant()
         cartes = []
         for r in depot.rdvs_en_attente(artisan.id):
             donnees = depot.lead(r.lead_id).donnees
+            # `rdvs_en_attente` rend les RDV NON TERMINAUX, échus compris : le worker
+            # d'expiration ne passe qu'à intervalles. Il faut donc distinguer ici ce qui
+            # est encore décidable — sinon la page offre des boutons qui ne peuvent
+            # qu'échouer (constaté en usage réel le 24/08 : 409 sur un tap).
             cartes.append({"id": r.id, "creneau": r.creneau["label"],
                            "urgence": r.urgence, "score": donnees.get("score", 0),
-                           "raisons": donnees.get("raisons", [])})
+                           "raisons": donnees.get("raisons", []),
+                           "echu": r.est_echu(t), "expire_a": r.expire_a})
         return HTMLResponse(pages.boite_validation(
             artisan.config["entreprise"]["prenom_patron"], cartes))
 
@@ -399,10 +405,18 @@ def creer_app(depot, registre: Registre, fabrique_llm, horloge=None,
         """Une action, puis une redirection : le rechargement ne rejoue pas le POST."""
         if action not in ("valider", "refuser", "reproposer"):
             raise HTTPException(404, "action inconnue")
-        if action == "reproposer":
-            reproposer(rdv_id, ReproposerIn(date=date, de=de, a=a), artisan)
-        else:
-            _decider(rdv_id, artisan, action)
+        try:
+            if action == "reproposer":
+                reproposer(rdv_id, ReproposerIn(date=date, de=de, a=a), artisan)
+            else:
+                _decider(rdv_id, artisan, action)
+        except HTTPException as exc:
+            if exc.status_code == 404:
+                raise
+            # Un refus du domaine (échéance passée, RDV déjà décidé) doit rendre une PAGE :
+            # après un tap sur un téléphone, `{"detail": "..."}` est illisible.
+            return HTMLResponse(pages.action_impossible(str(exc.detail)),
+                                status_code=exc.status_code)
         return RedirectResponse("/app", status_code=303)
 
     return app

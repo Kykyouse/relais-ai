@@ -1726,6 +1726,32 @@ def check_app_artisan() -> bool:
             print("   Martin voit les rendez-vous de Dupont")
             return False
 
+    # (g bis) un RDV ÉCHU mais pas encore traité par le worker : il reste dans la liste
+    # (masquer un lead perdu serait pire) mais SANS boutons, et une action dessus rend une
+    # PAGE. Constaté en usage réel le 24/08 : un tap donnait 409 en JSON brut sur le
+    # téléphone, sur un RDV que la page proposait pourtant de valider.
+    with TestClient(app) as julien2:
+        julien2.post("/connexion", data={"jeton": TOK_A})
+        pendule[0] = rdv2.expire_a + dt.timedelta(hours=1)   # l'échéance est passée
+        page = julien2.get("/app").text
+        if "Délai dépassé" not in page:
+            print("   un RDV échu n'est pas signalé comme tel dans la boîte")
+            return False
+        if f"/app/{rdv2.id}/valider" in page:
+            print("   un RDV échu propose encore un bouton Valider : le tap ne peut "
+                  "qu'échouer")
+            return False
+        r = julien2.post(f"/app/{rdv2.id}/valider", follow_redirects=False)
+        if r.status_code != 409:
+            print(f"   action sur un RDV échu : {r.status_code}, attendu 409")
+            return False
+        if "text/html" not in r.headers.get("content-type", "") \
+                or "Action impossible" not in r.text or 'href="/app"' not in r.text:
+            print(f"   le refus n'est pas une page lisible : "
+                  f"{r.headers.get('content-type')!r} {r.text[:80]!r}")
+            return False
+        pendule[0] = LUNDI_9H
+
     # /sante expose le réglage : le vérifier depuis le téléphone doit prendre dix secondes
     with TestClient(app) as sonde:
         if sonde.get("/sante").json().get("cookie_secure") is not False:

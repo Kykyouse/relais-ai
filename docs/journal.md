@@ -1239,3 +1239,37 @@ un réglage décide qu'une chose marche ou non, **le rendre observable vaut mieu
 documenter**. J'ai passé deux tours à supposer au lieu d'une minute à instrumenter.
 
 Suite : **28 PASS**.
+
+### 24/08 — connexion OK depuis le téléphone, et un défaut que seul l'usage révèle
+
+`POST /connexion` → 303, `GET /app` → **200**. La boîte de validation s'ouvre sur le
+téléphone. Mais le premier tap réel a donné **409 Conflict** sur une reproposition.
+
+**Cause, vérifiée en base et non devinée** : le RDV était `en_attente_validation` avec une
+échéance à 11:00, alors qu'il était 15:23 — **échu depuis 4 h 23**. Le domaine avait raison
+de refuser. Ce sont deux autres choses qui avaient tort.
+
+**1. La boîte affichait des RDV sur lesquels l'artisan ne peut plus rien.**
+`rdvs_en_attente()` rend les RDV NON TERMINAUX, échus compris — et le worker d'expiration ne
+passe qu'à intervalles, donc il existe toujours une fenêtre pendant laquelle un RDV échu est
+encore là. La page proposait donc des boutons qui ne pouvaient qu'échouer.
+
+Choix retenu : **les garder visibles, mais sans boutons**, avec « Délai dépassé — le client
+est prévenu et le créneau libéré. Rappelez-le si vous voulez le récupérer. » Les masquer
+serait pire : l'artisan doit savoir qu'il a laissé filer un lead. Et l'ordre change — les
+décidables d'abord, le plus pressé en tête, les échus ensuite.
+
+**2. Le refus s'affichait en JSON brut.** Après un tap sur un téléphone,
+`{"detail":"RDV ... échu depuis ..."}` est illisible. Toute action refusée par le domaine
+rend maintenant une page, avec le motif venu du domaine et un lien de retour. Même défaut
+que la page client avant sa correction — je l'avais réparé d'un côté, pas de l'autre.
+
+**R24 verrouille les deux** : présence du signalement, absence du bouton, et refus rendu en
+HTML avec le lien de retour.
+
+**Leçon.** Aucun test ne pouvait trouver ça, parce que tous mes scénarios créaient des RDV
+dans les temps. C'est le RDV **oublié depuis quatre heures** — une donnée réelle, pas un cas
+construit — qui a révélé le trou. Les jeux d'essai propres ne produisent pas l'état sale que
+la production produit toute seule.
+
+Suite : **28 PASS**.
