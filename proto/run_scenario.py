@@ -1964,6 +1964,119 @@ def check_fuseaux() -> bool:
     return True
 
 
+def check_extraction_nom() -> bool:
+    """R26 : le nom de l'appelant dans `MockLLM`. Traîne depuis le 22/08.
+
+    Deux raisons pour que ça compte plus qu'un détail de test :
+
+    * `MockLLM` n'est pas qu'un double : c'est le **chemin de dégradation en production**
+      (`ResilientLLM`). Quand l'API LLM tombe, c'est lui qui extrait. Un nom raté devient
+      « un client » dans le push à l'artisan ; un nom FAUX devient « Nogent a validé le
+      créneau ».
+    * `nom` n'est pas dans `Conversation.OVERWRITABLE` : le premier nom capté est
+      **définitif**. Un faux positif au premier tour ne se rattrape pas.
+
+    D'où la règle que ce test verrouille : **dans le doute, pas de nom**. Un « un client »
+    est lisible ; un mauvais nom est une erreur qu'on affiche à l'artisan avec aplomb.
+
+    Le correctif NAÏF — ajouter `re.IGNORECASE` à la regex d'origine — est un piège, et
+    c'est pour ça que ce test liste autant de contre-exemples : `[A-ZÉÈ]` servait aussi de
+    filtre de capitalisation. En insensible à la casse, « Oui c'est bien ça » donne
+    nom='bien' et « le créneau c'est parfait » donne nom='parfait' — deux phrases qui sont
+    déjà dans les scénarios ci-dessus.
+    """
+    from relais_proto.llm import MockLLM
+
+    mock = MockLLM()
+    question_identite = ("Très bien. À quel nom, et sur quel numéro Julien peut vous "
+                         "confirmer le rendez-vous ?")
+
+    # (a) ce qui DOIT donner un nom. La casse n'est pas un critère fiable : un moteur de
+    # transcription vocale rend « je m'appelle garcia » aussi bien que « Je m'appelle
+    # Garcia ». On s'appuie sur l'introducteur, pas sur la majuscule.
+    doit_donner = [
+        ("Je m'appelle Garcia, mon numéro c'est 06 12 34 56 78", "Garcia"),
+        ("je m'appelle garcia", "garcia"),
+        ("Je m'appelle Monsieur Diallo", "Diallo"),
+        ("Je m'appelle Mme Lefèvre", "Lefèvre"),
+        ("Je m'appelle Dupont-Martin", "Dupont-Martin"),
+        ("Je m'appelle Müller", "Müller"),
+        ("Mon nom est Garcia", "Garcia"),
+        ("Mon nom c'est Bernard", "Bernard"),
+        ("C'est Monsieur Diallo", "Diallo"),      # « c'est » AVEC titre : sans ambiguïté
+        ("Garcia à l'appareil", "Garcia"),
+    ]
+    for phrase, attendu in doit_donner:
+        obtenu = mock.extract(phrase, {}).get("nom")
+        if obtenu != attendu:
+            print(f"   nom manqué : {obtenu!r} au lieu de {attendu!r} — « {phrase} »")
+            return False
+
+    # (b) ce qui ne doit SURTOUT PAS donner un nom. Les six premières sont des phrases
+    # réelles de nos scénarios : c'est exactement là que le correctif naïf déraille.
+    ne_doit_pas = [
+        "C'est en cours là, ça goutte dans le placard",
+        "Oui c'est bien ça",
+        "Le premier créneau c'est parfait, je suis chez moi quand vous voulez",
+        "c'est urgent",
+        "Je suis à Nogent-sur-Marne, 94130, je suis propriétaire",
+        "Non je préfère pas donner mon numéro, je rappellerai",
+        "C'est Nogent-sur-Marne",                 # une commune n'est pas un nom
+        "C'est pour un entretien",
+        "C'est Julien qui m'a donné votre numéro",  # « c'est » sans titre : on s'abstient
+        "Bonjour, j'ai une fuite sous l'évier, l'eau coule encore, c'est urgent !",
+    ]
+    for phrase in ne_doit_pas:
+        obtenu = mock.extract(phrase, {}).get("nom")
+        if obtenu is not None:
+            print(f"   faux nom {obtenu!r} inventé sur « {phrase} »")
+            return False
+
+    # (c) la réponse DIRECTE à la question d'identité. « Garcia, 06 12 34 56 78 » n'a aucun
+    # introducteur : c'est le contexte — l'agent vient de demander le nom — qui le rend
+    # lisible. `MockLLM` ignorait complètement le `context` que l'interface lui passe déjà.
+    ctx = {"dernier_agent": question_identite}
+    for phrase, attendu in [("Garcia, 06 12 34 56 78", "Garcia"),
+                            ("Diallo, 07 88 11 22 33", "Diallo"),
+                            ("Lefèvre 06 12 34 56 78", "Lefèvre"),
+                            ("Garcia", "Garcia")]:       # réponse d'un seul mot
+        obtenu = mock.extract(phrase, ctx).get("nom")
+        if obtenu != attendu:
+            print(f"   réponse à « à quel nom » : {obtenu!r} au lieu de {attendu!r} "
+                  f"— « {phrase} »")
+            return False
+    # ... mais la même question suivie d'un REFUS ne donne pas un nom. Les trois premiers
+    # sont arrêtés par la forme (rien ne suit le mot d'ouverture) ; les suivants sont des
+    # réponses d'UN SEUL MOT, qui passent la forme et que seul `_PAS_UN_NOM` arrête —
+    # c'est ce qui rend ce filet nécessaire et non décoratif.
+    for refus in ("Non je préfère pas donner mon numéro, je rappellerai",
+                  "Non merci", "je rappellerai plus tard",
+                  "Non", "Non,", "Merci", "Bonjour"):
+        if mock.extract(refus, ctx).get("nom") is not None:
+            print(f"   un refus est pris pour un nom : « {refus} »")
+            return False
+    # ... et hors de ce contexte, la même phrase ne donne rien : c'est la question de
+    # l'agent qui autorise la lecture, pas la forme de la phrase
+    if mock.extract("Garcia, 06 12 34 56 78", {}).get("nom") is not None:
+        print("   nom lu sans que l'agent l'ait demandé")
+        return False
+
+    # (d) le chemin « nom connu » de bout en bout : c'est CE trou que la note du journal
+    # signalait. Jusqu'ici tous les leads mock sortaient sans nom, donc tous les messages
+    # à l'artisan disaient « un client » — la moitié du gabarit n'était jamais rendue.
+    depot = DepotMemoire()
+    lead, rdv = _appel_avec_rdv(depot, "T01_urgence_fuite", LUNDI_9H)
+    if lead.donnees["slots"].get("nom") != "Garcia":
+        print(f"   lead sans nom après un scénario qui le donne : "
+              f"{lead.donnees['slots'].get('nom')!r}")
+        return False
+    texte = messages.relance_artisan(rdv, lead.donnees, CFG).texte
+    if "Garcia" not in texte or "un client" in texte:
+        print(f"   relance artisan : « {texte} »")
+        return False
+    return True
+
+
 def check_guard_prix() -> bool:
     """T05 (garde-fou prix) : on injecte une réplique fautive et on vérifie l'interception."""
     from relais_proto.guards import check_output
@@ -2119,6 +2232,15 @@ def run() -> int:
               "le passage à l'heure d'été, heure répétée du 25/10 sans décision "
               "volée, plage de silence à la pendule du client, fuseau invalide "
               "refusé au chargement : ✅ PASS")
+    else:
+        print("   → ❌ FAIL")
+        echecs += 1
+
+    print(f"\n──── R26_extraction_nom ────")
+    if check_extraction_nom():
+        print("   → nom capté quels que soient la casse, le titre et les accents, aucun "
+              "faux nom sur « c'est » nu, réponse directe à la question d'identité, "
+              "chemin « nom connu » exercé de bout en bout : ✅ PASS")
     else:
         print("   → ❌ FAIL")
         echecs += 1

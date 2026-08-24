@@ -53,6 +53,63 @@ Instruction du contrôleur (mets-la en mots naturellement, sans rien ajouter d'e
 {instruction}"""
 
 
+# --------------------------------------------------------------- extraction du nom
+# Le nom de l'appelant est le seul slot où se tromper coûte plus cher que de ne rien
+# trouver : il n'est pas dans `Conversation.OVERWRITABLE` (le premier capté est définitif)
+# et il finit affiché à l'artisan (« Garcia a validé le créneau »). D'où la règle :
+# **dans le doute, pas de nom.**
+#
+# ⚠️ Le correctif tentant — ajouter `re.IGNORECASE` à l'ancienne regex — est un PIÈGE.
+# `[A-ZÉÈ]` y servait aussi de filtre de capitalisation : en insensible à la casse,
+# « Oui c'est bien ça » donne nom='bien' et « c'est parfait » donne nom='parfait'.
+# Verrouillé par R26.
+#
+# On ne s'appuie donc PAS sur la majuscule — un moteur de transcription vocale rend aussi
+# bien « je m'appelle garcia » — mais sur un **introducteur explicite**. « c'est » nu en est
+# exclu : c'est l'une des tournures les plus fréquentes du français parlé (« c'est urgent »,
+# « c'est en cours », « c'est Nogent-sur-Marne »), et elle ne désigne un nom que suivie d'un
+# titre.
+_TITRE = r"(?:m\.|mr|mme|mlle|madame|monsieur)"
+# une lettre Unicode (donc les accents), liée par trait d'union ou apostrophe :
+# « Lefèvre », « Dupont-Martin », « D'Angelo », « Müller »
+_MOT_NOM = r"[^\W\d_]+(?:['’-][^\W\d_]+)*"
+
+_NOM_INTRODUIT = re.compile(
+    rf"""(?: je \s+ m['’] appelle \s+ (?:{_TITRE} \s+)?     # je m'appelle (M.) X
+          | mon \s+ nom \s+ (?: est | c['’]est ) \s+        # mon nom est X
+          | (?: c['’]est | ici ) \s+ {_TITRE} \s+           # c'est Monsieur X (titre EXIGÉ)
+          | au \s+ nom \s+ d[eu] \s+                             # au nom de X
+        )
+        ({_MOT_NOM})
+     """, re.IGNORECASE | re.VERBOSE)
+
+# « Garcia à l'appareil »
+_NOM_APPAREIL = re.compile(rf"\b({_MOT_NOM})\s+à\s+l['’]appareil", re.IGNORECASE)
+
+# Réponse DIRECTE à « À quel nom, et sur quel numéro ? » : « Garcia, 06 12 34 56 78 », ou
+# « Garcia » tout court. Aucun introducteur — c'est la question de l'agent qui rend la
+# phrase lisible. Le nom doit ouvrir la phrase ET être suivi d'une virgule, du numéro, ou
+# de rien : sans cette exigence de forme, « Non je préfère pas donner mon numéro »
+# donnerait nom='Non'.
+_NOM_EN_REPONSE = re.compile(rf"^\s*({_MOT_NOM})\s*(?:,|$|(?=0\d))", re.IGNORECASE)
+
+# Mots qui ne sont jamais un nom de famille, même bien introduits. Filet de sécurité étroit
+# et non une liste de courses : l'introducteur fait déjà l'essentiel du tri.
+_PAS_UN_NOM = {"non", "oui", "merci", "bonjour", "monsieur", "madame", "pas", "rien",
+               "je", "j", "euh", "alors", "bon", "ben"}
+
+
+def extraire_nom(utterance: str, dernier_agent: str = "") -> str | None:
+    """Le nom de famille de l'appelant, ou None. None est une réponse acceptable."""
+    m = _NOM_INTRODUIT.search(utterance) or _NOM_APPAREIL.search(utterance)
+    if not m and "à quel nom" in (dernier_agent or "").lower():
+        m = _NOM_EN_REPONSE.match(utterance)
+    if not m:
+        return None
+    nom = m.group(1)
+    return None if nom.lower() in _PAS_UN_NOM else nom
+
+
 class MockLLM:
     """Extraction par règles simples + répliques = l'instruction elle-même (déjà rédigée)."""
 
@@ -80,8 +137,10 @@ class MockLLM:
             out["code_postal"] = m.group(1)
         if m := re.search(r"\b(0\d(?:[\s.\-]?\d{2}){4})\b", utterance):
             out["telephone_rappel"] = re.sub(r"[\s.\-]", "", m.group(1))
-        if m := re.search(r"(?:je m'appelle|c'est) (?:m\.|mme|madame|monsieur)?\s*([A-ZÉÈ][a-zé-]+)", utterance):
-            out["nom"] = m.group(1)
+        # le seul extracteur qui lit le CONTEXTE : « Garcia, 06 12 34 56 78 » n'est un nom
+        # que parce que l'agent vient de demander « à quel nom ? »
+        if nom := extraire_nom(utterance, (context or {}).get("dernier_agent", "")):
+            out["nom"] = nom
         if "gaz" in u and ("odeur" in u or "sent" in u):
             out["danger_gaz"] = True
         if "propriétaire" in u:

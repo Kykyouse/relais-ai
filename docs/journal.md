@@ -22,7 +22,7 @@ voix** : les SMS sortent réellement, mais en mode numéro court qui bloque les 
 
 ```bash
 cd proto
-python run_scenario.py                              # 29 tests, ~3 s, sans clé ni base
+python run_scenario.py                              # 30 tests, ~3 s, sans clé ni base
 python run_depot_pg.py [--migrer]                   # contrat du port contre Supabase
 uvicorn serveur:app --port 8000                     # API HTTP
 python worker.py [--a-vide]                         # expiration + expédition (cron)
@@ -42,6 +42,7 @@ python run_llm_eval.py [--mock] [--n 3]             # éval appelant-simulé
 | Page de confirmation client (HTML, sans JS) | ✅ | mock — le lien SMS mène à une vraie page |
 | Boîte de validation artisan + session (R24) | ✅ | mock — utilisable dans un navigateur |
 | Instants UTC vs heures de pendule (R25) | ✅ | mock + **migration 007 sur Supabase** |
+| Extraction du nom de l'appelant (R26) | ✅ | mock, mutations 6/6 |
 
 ## Ce qui est encore un double (et non un manque caché)
 
@@ -60,8 +61,6 @@ python run_llm_eval.py [--mock] [--n 3]             # éval appelant-simulé
   Deviendra la table `artisan` (et la FK que `rdv.artisan_id` attend déjà).
 - **Écran de connexion artisan** : accepte le jeton du registre, à remplacer par un code
   reçu par SMS — le mobile EST l'identité professionnelle, et le canal existe.
-- **`MockLLM`** : rate « Je m'appelle X » (regex sans `IGNORECASE`) — le chemin
-  « nom connu » n'est donc jamais exercé dans les tests mock.
 
 ## Décisions verrouillées
 
@@ -1351,3 +1350,64 @@ test, pas du domaine) reste en `timestamp` : hors périmètre, signalé pour ne 
 pour un oubli.
 
 Suite : **29 PASS**, contrat Postgres rejoué contre Supabase après migration 007.
+
+### 24/08 — le nom de l'appelant : le correctif évident était le mauvais
+
+**Fait.** L'extraction du nom dans `MockLLM` est refaite et couverte par **R26**. La ligne
+« rate `Je m'appelle X` » disparaît du bloc ÉTAT, où elle traînait depuis le 22/08.
+
+**Le piège.** Le défaut noté était « regex sans `IGNORECASE` ». Ajouter `re.IGNORECASE`
+paraissait donc être le correctif — c'était une **régression**. La regex d'origine était :
+
+    (?:je m'appelle|c'est) (?:m\.|mme|madame|monsieur)?\s*([A-ZÉÈ][a-zé-]+)
+
+`[A-ZÉÈ]` n'y sert pas qu'à décrire un nom : il fait office de **filtre de
+capitalisation**, seul garde-fou contre l'alternative `c'est`. En insensible à la casse, ce
+garde-fou tombe, et six phrases sur dix produisent un faux nom :
+
+    nom='bien'    <- Oui c'est bien ça
+    nom='parfait' <- Le premier créneau c'est parfait, je suis chez moi quand vous voulez
+    nom='urgent'  <- c'est urgent
+    nom='en'      <- C'est en cours là, ça goutte dans le placard
+    nom='Nogent-sur-Marne' <- C'est Nogent-sur-Marne
+    nom='Julien'  <- C'est Julien qui m'a donné votre numéro
+
+Les deux premières sont des lignes **de nos propres scénarios de test**. Le correctif
+d'une ligne aurait donc empoisonné la suite en la faisant passer au vert.
+
+**Pourquoi ça méritait mieux qu'un rustine de test.** `MockLLM` n'est pas qu'un double :
+c'est le **chemin de dégradation en production** (`ResilientLLM`). Quand l'API LLM tombe,
+c'est lui qui extrait. Et `nom` n'est pas dans `OVERWRITABLE` : le premier nom capté est
+**définitif**. Un faux positif au premier tour part ensuite dans le push à l'artisan —
+« Nogent a validé le créneau ». D'où la règle retenue : **dans le doute, pas de nom.** Un
+« un client » se lit ; un mauvais nom est une erreur affichée avec aplomb.
+
+**Décidé.**
+
+- **On ne s'appuie plus sur la majuscule mais sur un introducteur explicite.** La casse
+  n'est pas un signal fiable : un moteur de transcription vocale rend aussi bien
+  « je m'appelle garcia ». `je m'appelle`, `mon nom est`, `au nom de`, `X à l'appareil`.
+- **`c'est` nu est exclu**, et c'est le cœur du correctif : c'est l'une des tournures les
+  plus fréquentes du français parlé. Il n'est accepté que suivi d'un titre
+  (« c'est Monsieur Diallo »). Conséquence assumée : « C'est Garcia » ne donne pas de nom.
+  Le coût est un nom manqué, c'est-à-dire la panne acceptable.
+- **Le contexte est enfin lu.** « Garcia, 06 12 34 56 78 » n'a aucun introducteur : il
+  n'est lisible que parce que l'agent vient de demander « à quel nom ? ». `MockLLM`
+  ignorait purement et simplement le `context` que l'interface lui passe déjà — le vrai
+  LLM, lui, s'en sert. Une exigence de forme (virgule, numéro ou fin de phrase) évite que
+  « Non je préfère pas donner mon numéro » devienne nom='Non'.
+- **Jeu de caractères Unicode** : Lefèvre, Dupont-Martin, D'Angelo, Müller passent. Ils
+  échouaient tous avec `[a-zé-]`, qui n'admettait qu'un seul accent de toute la langue.
+
+**Ce que ça débloque.** Le chemin « nom connu » des messages artisan n'était jamais
+exercé : tous les leads mock sortaient sans nom, donc tous les gabarits rendaient la
+branche « un client ». R26 vérifie maintenant de bout en bout qu'un scénario qui donne un
+nom produit « Garcia » dans la relance.
+
+**Mutation : 6/6.** Dont le correctif naïf lui-même, `c'est` nu accepté, le contexte
+ignoré, et le jeu de caractères sans accents. Le filet `_PAS_UN_NOM` a d'abord **survécu** —
+aucun cas ne l'exerçait, la règle de forme arrêtait tout. Ce n'était pas du code mort mais
+un test manquant : une réponse d'un seul mot (« Non », « Merci ») passe la forme et n'est
+arrêtée que par lui. Cas ajoutés, mutation tuée.
+
+Suite : **30 PASS**.
