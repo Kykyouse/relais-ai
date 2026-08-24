@@ -31,6 +31,8 @@ from relais_proto.expiration import WorkerExpiration
 from relais_proto.messages import StatutMessage
 from relais_proto.registre import Registre
 
+SEUIL_CREDITS = 20   # en dessous, on alerte : recharger prend du temps, une file
+                     # bloquée pendant ce temps-là, c'est des clients non prévenus
 RACINE = pathlib.Path(__file__).parent
 load_dotenv(RACINE.parent / ".env")
 
@@ -71,6 +73,13 @@ def run() -> int:
           f"{len(envoi.echecs)} en échec")
     if envoi.envoyes:
         print("    (EnvoyeurJournal : rien n'est réellement parti)")
+    # Réserve de crédits : une réserve à zéro arrête tous les SMS clients sans provoquer
+    # d'erreur applicative. Elle doit être VISIBLE à chaque passage, pas découverte par un
+    # client qui n'a rien reçu.
+    restants = getattr(envoyeur, "credits_restants", None)
+    if restants is not None:
+        alerte = "  ⚠️ RECHARGER" if restants < SEUIL_CREDITS else ""
+        print(f"  crédits SMS restants : {restants}{alerte}")
     depot.fermer()
     return 0
 

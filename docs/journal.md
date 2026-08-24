@@ -37,7 +37,7 @@ python run_llm_eval.py [--mock] [--n 3]             # éval appelant-simulé
 | API HTTP, 2 portes d'auth, 1 tour = 1 requête (R19) | ✅ | mock + câblage réel sur Supabase |
 | Plage de silence, réessais, multi-artisans (R20) | ✅ | mock, mutations 8/8 |
 | Validation client par lien à un tap (R21) | ✅ | mock, mutations 7/7 |
-| Adaptateur OVH : E.164, corps, échecs (R22) | ⚠️ écrit | mock seulement — **jamais envoyé** |
+| Adaptateur OVH : E.164, corps, échecs (R22) | ✅ | **envoi réel abouti le 24/08** (numéro court) |
 
 ## Ce qui est encore un double (et non un manque caché)
 
@@ -46,10 +46,10 @@ python run_llm_eval.py [--mock] [--n 3]             # éval appelant-simulé
   déclaré. `EnvoyeurJournal` reste le mode par défaut, donc **rien ne part**. Le premier
   envoi réel se fait à la main : `python envoyer_un_sms.py <num> --envoyer` (blanc par
   défaut), et `--comptes` liste les services SMS du compte. La forme de réponse d'OVH
-  encodée dans l'adaptateur est une **hypothèse** que ce premier appel confirmera ou
-  démentira. **Point d'avancement au 24/08** : l'authentification OVH fonctionne (requête
-  signée, acceptée, routée), mais aucun service SMS n'est encore joignable — un compte OVH
-  ne crée pas de service SMS, il faut le commander et le créditer.
+  encodée dans l'adaptateur est **CONFIRMÉE** : premier SMS réel envoyé le 24/08 en mode
+  numéro court (réf. `ovh:802084252`), réponse conforme à l'hypothèse. Reste à faire :
+  valider le Sender ID `DupontChauf` (~72 h, risque de refus) pour sortir du mode test — les
+  numéros courts **bloquent les URL**, donc le lien de validation ne peut pas passer par là.
 - **`CalendarStub`** : applique les vraies règles d'agenda mais n'est relié à aucun
   calendrier. Google/Outlook non branchés (OAuth Google à lancer tôt : délai calendaire).
 - **Pas de voix** : aucune plateforme vocale branchée, aucun numéro. L'API expose déjà les
@@ -948,3 +948,44 @@ une décision de positionnement autant que de conformité.
 du diagnostic, option `--expediteur`) étaient déjà dans `62293bc` : mon `git add -A` les avait
 balayées, comme le fichier de skill. Rien perdu, mais deuxième confirmation que le staging
 global est à abandonner.
+
+### 24/08 — PREMIER SMS RÉEL ENVOYÉ, et l'hypothèse d'API confirmée
+
+`python envoyer_un_sms.py 0635475379 --envoyer --numero-court` → **succès**, référence
+`ovh:802084252`.
+
+**L'hypothèse encodée dans l'adaptateur était juste.** Réponse observée :
+
+    {"ids": [802084252], "validReceivers": ["+33..."], "invalidReceivers": [],
+     "totalCreditsRemoved": 1, "creditsLeft": 99, "tag": "vtbnzoi6prvylh12"}
+
+Les trois clés que R22 supposait sont les bonnes, aux noms et aux formes près. Les doubles
+de test ont été **remplacés par cette réponse réelle** : ils ne disent plus ce que je croyais
+mais ce qui est.
+
+**Deux champs non anticipés, dont un opérationnellement important.**
+- `creditsLeft` : désormais capté par l'adaptateur (`credits_restants`) et remonté à chaque
+  passage de `worker.py`, avec alerte sous 20. **Une réserve épuisée arrête tous les SMS
+  clients sans provoquer la moindre erreur applicative** — c'est le genre de panne qu'on
+  découvre par l'appel d'un client qui n'a rien reçu.
+- `tag` : servira à rapprocher les accusés de réception le jour où l'on branchera les
+  rapports de livraison.
+
+**Trouvaille de coût, à arbitrer.** Longueur rendue des gabarits, sachant qu'OVH facture
+**1 crédit par tranche de 160 caractères** :
+
+| gabarit | caractères | crédits |
+|---|---|---|
+| `expiration_client` (SMS) | 195 | **2** |
+| `reproposition_client` (SMS) | 194 | **2** |
+| `expiration_artisan` (push) | 172 | — |
+| `confirmation_artisan` (push) | 93 | — |
+
+Les **deux SMS clients dépassent 160 de peu et coûtent donc le double**. Deux leviers :
+raccourcir la copie (~35 caractères à gagner), et surtout **raccourcir le jeton de
+confirmation** — 32 octets d'aléa donnent une URL de 64 caractères ; 16 octets suffisent
+largement pour un lien à usage unique et borné dans le temps (128 bits) et feraient gagner
+21 caractères. À arbitrer : c'est de la copie produit et un paramètre de sécurité.
+
+**Reste non vérifié :** le SMS est-il ARRIVÉ sur le téléphone ? `validReceivers` et un
+crédit débité disent que l'opérateur l'a accepté, pas qu'il a été délivré.

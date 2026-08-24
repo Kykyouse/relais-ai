@@ -12,10 +12,16 @@ donc réellement à nous, donc réellement testable hors ligne — c'est :
     n'y changera rien), une panne réseau est transitoire ;
   * le **diagnostic** des erreurs de l'API, qui est une connaissance du fournisseur.
 
-⚠️ **Le contrat d'API encodé ici reste une HYPOTHÈSE tant qu'aucun envoi n'a abouti.**
-Au 24/08, sont confirmés par des appels réels : l'authentification, le nom du service, et
-l'acceptation de la requête. Ne l'est PAS : la forme de la réponse en cas de succès
-(`ids` / `validReceivers` / `invalidReceivers`) — il manquait l'expéditeur.
+✅ **Contrat d'API CONFIRMÉ par un envoi réel abouti le 24/08/2026** (numéro court,
+référence `ovh:802084252`). La réponse de succès observée :
+
+    {"ids": [802084252], "validReceivers": ["+33..."], "invalidReceivers": [],
+     "totalCreditsRemoved": 1, "creditsLeft": 99, "tag": "vtbnzoi6prvylh12"}
+
+Les trois clés supposées par cet adaptateur sont donc les bonnes. Deux champs non anticipés
+en prime : `creditsLeft`, exploité ci-dessous (une réserve épuisée arrête TOUS les SMS
+clients, en silence), et `tag`, qui servira à rapprocher les accusés de réception le jour où
+l'on branchera les rapports de livraison.
 """
 from __future__ import annotations
 
@@ -67,6 +73,11 @@ class EnvoyeurOVH:
         self.transport = transport
         self.compte = compte
         self.numero_court = numero_court
+        # Dernière réserve de crédits vue dans une réponse OVH. Une réserve épuisée arrête
+        # TOUS les SMS clients sans rien casser côté application : c'est exactement le genre
+        # de panne qu'on ne découvre qu'en recevant l'appel d'un client. Le worker la
+        # remonte, l'attribut reste optionnel pour ne pas alourdir le port.
+        self.credits_restants: int | None = None
 
     def envoyer(self, message: MessageSortant, cfg: dict) -> str:
         destinataire = en_e164(message.cible)
@@ -106,6 +117,9 @@ class EnvoyeurOVH:
         ids = (reponse or {}).get("ids") or []
         if not ids:
             raise EchecEnvoi(f"OVH n'a rendu aucun identifiant d'envoi : {reponse!r}")
+        restants = (reponse or {}).get("creditsLeft")
+        if isinstance(restants, int):
+            self.credits_restants = restants
         return f"ovh:{ids[0]}"
 
 

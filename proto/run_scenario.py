@@ -1286,8 +1286,13 @@ def check_adaptateur_ovh() -> bool:
     vus = []
 
     def transport_ok(chemin, **corps):
+        """Réponse calquée sur celle RÉELLEMENT reçue d'OVH le 24/08 (réf. ovh:802084252),
+        champs non anticipés compris. Ce double n'est plus une hypothèse : c'est une
+        observation."""
         vus.append((chemin, corps))
-        return {"ids": [42], "validReceivers": corps["receivers"], "invalidReceivers": []}
+        return {"ids": [802084252], "validReceivers": corps["receivers"],
+                "invalidReceivers": [], "totalCreditsRemoved": 1, "creditsLeft": 99,
+                "tag": "vtbnzoi6prvylh12"}
 
     ref = EnvoyeurOVH(transport_ok, "sms-ab12345-1").envoyer(msg, CFG)
     chemin, corps = vus[0]
@@ -1304,7 +1309,7 @@ def check_adaptateur_ovh() -> bool:
         print("   noStopClause absent : la clause STOP mangerait 20 caractères utiles "
               "sur un SMS transactionnel qui n'en a pas besoin")
         return False
-    if corps["message"] != msg.texte or ref != "ovh:42":
+    if corps["message"] != msg.texte or ref != "ovh:802084252":
         print(f"   message ou référence : {corps['message']!r} / {ref!r}")
         return False
 
@@ -1332,7 +1337,7 @@ def check_adaptateur_ovh() -> bool:
         return False
     # le mode fonctionne même sans expéditeur configuré : c'est tout son intérêt
     if EnvoyeurOVH(transport_ok, "sms-ab12345-1",
-                   numero_court=True).envoyer(msg, cfg_sans_expediteur) != "ovh:42":
+                   numero_court=True).envoyer(msg, cfg_sans_expediteur) != "ovh:802084252":
         print("   numéro court : bloqué par l'absence d'expéditeur, alors qu'il s'en passe")
         return False
 
@@ -1352,6 +1357,18 @@ def check_adaptateur_ovh() -> bool:
     # en revanche le mode NORMAL doit accepter ce même message : c'est le cas de prod
     if not EnvoyeurOVH(transport_ok, "sms-ab12345-1").envoyer(msg_lien, CFG):
         print("   mode normal : le lien de validation devrait passer")
+        return False
+
+    # La réserve de crédits est lue dans la réponse : une réserve épuisée arrête TOUS les
+    # SMS clients sans erreur applicative. Sans cette capture, la panne ne serait visible
+    # que par un client qui n'a rien reçu.
+    envoyeur = EnvoyeurOVH(transport_ok, "sms-ab12345-1")
+    if envoyeur.credits_restants is not None:
+        print("   les crédits ne devraient pas être renseignés avant tout envoi")
+        return False
+    envoyeur.envoyer(msg, CFG)
+    if envoyeur.credits_restants != 99:
+        print(f"   réserve de crédits non captée : {envoyeur.credits_restants!r}")
         return False
 
     # (c) classification des échecs — c'est là que se joue le comportement du worker
