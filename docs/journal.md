@@ -39,6 +39,7 @@ python run_llm_eval.py [--mock] [--n 3]             # éval appelant-simulé
 | Validation client par lien à un tap (R21) | ✅ | mock, mutations 7/7 |
 | Adaptateur OVH : E.164, corps, échecs (R22) | ✅ | **SMS réellement reçu sur téléphone, 24/08** |
 | Page de confirmation client (HTML, sans JS) | ✅ | mock — le lien SMS mène à une vraie page |
+| Boîte de validation artisan + session (R24) | ✅ | mock — utilisable dans un navigateur |
 
 ## Ce qui est encore un double (et non un manque caché)
 
@@ -1137,3 +1138,45 @@ R21 le vérifie.
    point 1. L'échappement est le bon comportement ; c'était l'assertion qui était naïve.
 
 Suite : **27 PASS**.
+
+### 24/08 — boîte de validation artisan : le produit devient démontrable
+
+C'est « LA fonction » de la spec §6, et il n'y avait aucun moyen de la déclencher sans
+`curl`. Maintenant Julien ouvre une page sur son téléphone, voit ses RDV en attente avec
+score et raisons, et valide, refuse ou repropose. **Sans JavaScript**, sans ressource
+externe, avec les sélecteurs de date et d'heure natifs du téléphone.
+
+**La décision de conception qui compte, et elle vient d'une question de Geoffrey.** Je
+proposais un « lien magique » par notification — c'est-à-dire un jeton de capacité dans
+chaque SMS, chacun donnant accès à des données client. Sa question (« à terme ils auront
+bien des comptes, non ? ») a montré que je résolvais un problème trop étroit. La bonne
+réponse est une **session longue sur l'appareil** : Julien valide plusieurs fois par jour,
+il se connecte rarement. Et une fois la session posée, **les liens de notification
+redeviennent des URL banales** — la couche comptes SUPPRIME du travail au lieu d'en ajouter.
+
+Corollaire consigné : la **méthode** de connexion (code SMS, Google, mot de passe) devient
+un détail interchangeable au-dessus de la session. Ce qui compte est qu'elle soit simple le
+jour rare où elle sert.
+
+**Fait.**
+- `session.py` + migration 006 (`session_artisan`) : 32 octets d'aléa, **empreinte SHA-256
+  seule en base**, expiration appliquée PAR LE DÉPÔT (impossible d'oublier de la vérifier),
+  révocation à la déconnexion. Cookie `HttpOnly`, `SameSite=Lax`, `Secure` (désactivable
+  pour les tests en HTTP).
+- `pages.py` : boîte de validation et écran de connexion. Actions en POST + redirection 303,
+  pour qu'un rechargement ne rejoue pas la validation.
+- L'authentification artisan accepte **deux voies** : jeton porteur (API, future app mobile)
+  ou cookie de session (navigateur). Un lien ouvert depuis un SMS ne peut pas porter d'en-tête.
+- `/app` sans session rend la **page de connexion**, pas un code d'erreur nu : un artisan
+  dont la session a expiré doit voir un écran utilisable.
+- Test **R24** : session, contenu de la page, absence de JS et de ressource externe,
+  validation et reproposition depuis le navigateur, révocation côté serveur à la
+  déconnexion, étanchéité entre artisans. Contrat étendu aux sessions et **vérifié sur
+  Postgres** — sinon leur SQL n'aurait jamais tourné.
+
+**Dette assumée et datée.** `POST /connexion` accepte encore le **jeton d'artisan du
+registre fichier**. Faire saisir un secret de longue durée dans un champ est acceptable pour
+deux artisans de test, **pas pour des clients payants**. À remplacer par un code reçu par
+SMS, avec la table `artisan` — c'est la brique suivante.
+
+Suite : **28 PASS**. Postgres vert (via le pooler).

@@ -16,7 +16,7 @@ Cible V1 : plombiers/chauffagistes FR. Solo dev : Geoffrey (binôme Claude) ; ma
 ```bash
 cd proto
 pip install -r requirements.txt     # anthropic, python-dotenv (inutiles en mock)
-python run_scenario.py              # suite de non-régression (mock, sans clé, ~2 s) — 27 tests
+python run_scenario.py              # suite de non-régression (mock, sans clé, ~3 s) — 28 tests
 python run_llm_eval.py --mock       # plomberie de l'éval appelant-simulé (sans clé)
 python run_llm_eval.py [--n 3] [--only T05]   # éval LLM réel → evals/results-*.json
 python chat.py [--mock]             # conversation interactive (tu joues l'appelant)
@@ -57,7 +57,9 @@ persistance + implémentation mémoire · `depot_pg.py` adaptateur Postgres · `
 token porteur pour l'app artisan) · `registre.py` artisans + numéros Relais (futur table
 `artisan`) · `confirmation.py` jetons du lien de validation client (empreinte seule en base) ·
 `envoi.py` plage de silence + réessais + port fournisseur (aucun câblé : `EnvoyeurJournal`) ·
-`serveur.py` câblage de production · `worker.py` un passage des workers de fond. **L'API ne décide jamais** — corollaire
+`pages.py` pages HTML (client + boîte de validation artisan, sans JS ni ressource externe) ·
+`session.py` sessions artisan par cookie · `serveur.py` câblage de production ·
+`worker.py` un passage des workers de fond. **L'API ne décide jamais** — corollaire
 backend de la règle n°1 : elle transporte et persiste, le métier reste dans engine/rdv.
 
 `engine.py` contrôleur déterministe S0–S11 · `llm.py` extracteur+formuleur (Anthropic/Mock/Resilient,

@@ -284,6 +284,27 @@ class DepotPostgres:
             f"select {self._COLS_MSG} from message_sortant where statut = %s "
             "order by cree_a, id", (statut.value,))]
 
+    # ---- sessions ----
+    def creer_session(self, empreinte: str, artisan_id: str, expire_a: dt.datetime,
+                      maintenant: dt.datetime, appareil: str | None = None) -> None:
+        # ON CONFLICT : une reconnexion sur le même appareil réécrit sa session au lieu
+        # d'en empiler une seconde
+        self._executer(
+            "insert into session_artisan (empreinte, artisan_id, cree_a, expire_a, "
+            "appareil) values (%s,%s,%s,%s,%s) on conflict (empreinte) do update set "
+            "expire_a = excluded.expire_a, appareil = excluded.appareil",
+            (empreinte, artisan_id, maintenant, expire_a, appareil))
+
+    def artisan_de_session(self, empreinte: str, maintenant: dt.datetime) -> str:
+        """L'expiration est appliquée EN SQL : impossible d'oublier de la vérifier."""
+        ligne = self._un(
+            "select artisan_id from session_artisan where empreinte = %s "
+            "and expire_a > %s", (empreinte, maintenant), "session inconnue ou périmée")
+        return ligne[0]
+
+    def supprimer_session(self, empreinte: str) -> None:
+        self._executer("delete from session_artisan where empreinte = %s", (empreinte,))
+
     def marquer_message_envoye(self, message_id: str, maintenant: dt.datetime,
                                reference: str | None = None,
                                cout: int | None = None) -> None:

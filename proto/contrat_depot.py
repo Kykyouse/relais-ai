@@ -270,4 +270,27 @@ def verifier(fabrique, cfg: dict) -> list[str]:
                          lambda: depot.differer_message(ID_ABSENT, LUNDI_9H))):
         exiger_leve(Introuvable, action, f"{nom}(id inconnu) doit lever Introuvable")
 
+    # ---- sessions artisan ----
+    # Toute méthode du port doit passer par ici, sinon son SQL n'est jamais exercé.
+    emp_s = "a" * 64
+    fin = LUNDI_9H + dt.timedelta(days=90)
+    depot.creer_session(emp_s, "art-dupont", fin, LUNDI_9H, appareil="test")
+    exiger(depot.artisan_de_session(emp_s, LUNDI_9H) == "art-dupont",
+           "artisan_de_session ne retrouve pas la session")
+    # l'expiration est appliquée par le DÉPÔT, pas par l'appelant : sinon il suffirait
+    # d'oublier de la vérifier une seule fois quelque part
+    exiger_leve(Introuvable, lambda: depot.artisan_de_session(emp_s, fin),
+                "une session périmée doit être traitée comme absente")
+    exiger_leve(Introuvable,
+                lambda: depot.artisan_de_session("b" * 64, LUNDI_9H),
+                "artisan_de_session(empreinte inconnue) doit lever Introuvable")
+    # reconnexion sur le même appareil : on prolonge, on n'empile pas
+    depot.creer_session(emp_s, "art-dupont", fin + dt.timedelta(days=1), LUNDI_9H)
+    exiger(depot.artisan_de_session(emp_s, fin) == "art-dupont",
+           "une reconnexion doit prolonger la session existante")
+    depot.supprimer_session(emp_s)
+    exiger_leve(Introuvable, lambda: depot.artisan_de_session(emp_s, LUNDI_9H),
+                "supprimer_session doit révoquer la session côté serveur")
+    depot.supprimer_session(emp_s)      # déconnexion deux fois : sans effet, sans erreur
+
     return ecarts

@@ -102,3 +102,100 @@ def creneau_perime(prenom: str) -> str:
         "<h1>Ce créneau n'est plus disponible</h1>"
         f'<p class="apres">Le délai de validation est passé. {escape(prenom)} vous '
         f"recontacte pour vous en proposer un autre.</p>")
+
+
+# --------------------------------------------------------------- côté artisan
+_STYLE_APP = _STYLE + """
+main { max-width: 34rem; }
+.rdv { border: 1px solid #e2e5ea; border-radius: 12px; padding: 16px; margin: 0 0 14px; }
+.score { display: inline-block; font-weight: 700; font-size: .85rem; padding: 3px 9px;
+  border-radius: 999px; background: #eef1f5; color: #3c454a; margin-bottom: 8px; }
+.urgent { background: #fde8e4; color: #98261a; }
+.raisons { color: #5b6472; font-size: .92rem; margin: 0 0 12px; }
+.actions { display: flex; gap: 10px; }
+.actions form { flex: 1; }
+button.refus { background: #fff; color: #98261a; border: 1px solid #e2b5ae; }
+details { margin-top: 12px; }
+summary { cursor: pointer; color: #5b6472; font-size: .92rem; min-height: 32px; }
+label { display: block; font-size: .88rem; color: #5b6472; margin: 10px 0 4px; }
+input { width: 100%; min-height: 46px; font-size: 1rem; padding: 0 10px;
+  border: 1px solid #cfd5de; border-radius: 8px; background: #fff; color: #14181f; }
+.vide { color: #5b6472; }
+@media (prefers-color-scheme: dark) {
+  .rdv { border-color: #2c3542; } .score { background: #2c3542; color: #c8d0da; }
+  input { background: #14181f; color: #e8eaed; border-color: #2c3542; }
+  button.refus { background: #1d232c; border-color: #5a3a34; color: #f0a99f; }
+}
+"""
+
+
+def _page_app(titre: str, corps: str) -> str:
+    return (
+        "<!DOCTYPE html>\n"
+        '<html lang="fr"><head><meta charset="utf-8">'
+        '<meta name="viewport" content="width=device-width, initial-scale=1">'
+        '<meta name="robots" content="noindex, nofollow">'
+        f"<title>{escape(titre)}</title><style>{_STYLE_APP}</style></head>"
+        f"<body><main>{corps}</main></body></html>")
+
+
+def boite_validation(prenom: str, rdvs: list[dict]) -> str:
+    """LA fonction produit : les rendez-vous à valider, et rien d'autre à l'écran.
+
+    Sans JavaScript : chaque action est un formulaire qui poste puis redirige. Les champs
+    de date et d'heure utilisent les types natifs, donc le sélecteur du téléphone — c'est
+    précisément là qu'un composant maison serait pire que le natif.
+    """
+    if not rdvs:
+        return _page_app(
+            "Rien à valider",
+            f"<h1>Bonjour {escape(prenom)}</h1>"
+            '<p class="vide">Aucun rendez-vous en attente. Tout est à jour.</p>')
+
+    blocs = []
+    for r in rdvs:
+        urgent = " urgent" if r["urgence"] else ""
+        mention = " URGENCE" if r["urgence"] else ""
+        raisons = escape(" · ".join(r["raisons"])) if r["raisons"] else ""
+        ident = escape(r["id"])
+        blocs.append(
+            '<div class="rdv">'
+            f'<span class="score{urgent}">{r["score"]}/5{mention}</span>'
+            f'<p class="creneau">{escape(r["creneau"])}</p>'
+            f'<p class="raisons">{raisons}</p>'
+            '<div class="actions">'
+            f'<form method="post" action="/app/{ident}/valider">'
+            '<button type="submit">Valider</button></form>'
+            f'<form method="post" action="/app/{ident}/refuser">'
+            '<button type="submit" class="refus">Refuser</button></form>'
+            "</div>"
+            "<details><summary>Proposer un autre créneau</summary>"
+            f'<form method="post" action="/app/{ident}/reproposer">'
+            '<label>Date</label><input type="date" name="date" required>'
+            '<label>De</label><input type="time" name="de" required>'
+            '<label>À</label><input type="time" name="a" required>'
+            '<label></label><button type="submit">Envoyer au client</button>'
+            "</form></details></div>")
+    return _page_app(f"{len(rdvs)} à valider",
+                     f"<h1>Bonjour {escape(prenom)}</h1>" + "".join(blocs))
+
+
+def connexion(erreur: str = "") -> str:
+    """Écran de connexion **PROVISOIRE** : il accepte le jeton d'artisan du registre
+    fichier.
+
+    À remplacer par un code reçu par SMS — le numéro de mobile EST l'identité
+    professionnelle de l'artisan, et le canal existe déjà. Ce formulaire ne doit pas
+    survivre à la mise en service : faire saisir un secret de longue durée dans un champ
+    est acceptable pour deux artisans de test, pas pour des clients payants.
+    """
+    alerte = f'<p class="raisons">{escape(erreur)}</p>' if erreur else ""
+    return _page_app(
+        "Connexion",
+        "<h1>Connexion</h1>"
+        '<p class="raisons">Provisoire : un code reçu par SMS remplacera ce champ.</p>'
+        + alerte
+        + '<form method="post" action="/connexion">'
+          "<label>Jeton d'accès</label>"
+          '<input type="password" name="jeton" autocomplete="off" required>'
+          '<label></label><button type="submit">Entrer</button></form>')

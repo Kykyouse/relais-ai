@@ -13,11 +13,11 @@ from __future__ import annotations
 
 import datetime as dt
 
-from fastapi import Depends, FastAPI, Header, HTTPException, Request
-from fastapi.responses import HTMLResponse, JSONResponse
+from fastapi import Cookie, Depends, FastAPI, Form, Header, HTTPException, Request
+from fastapi.responses import HTMLResponse, JSONResponse, RedirectResponse
 from pydantic import BaseModel, Field
 
-from . import messages, pages
+from . import messages, pages, session
 from .calendar_stub import CalendarStub, libelle_creneau
 from .confirmation import creer_jeton, empreinte, lien
 from .depot import Introuvable
@@ -87,7 +87,8 @@ class ReproposerIn(BaseModel):
 
 # ------------------------------------------------------------------ fabrique
 def creer_app(depot, registre: Registre, fabrique_llm, horloge=None,
-              base_url: str = "https://relais.example") -> FastAPI:
+              base_url: str = "https://relais.example",
+              cookie_secure: bool = True) -> FastAPI:
     """Collaborateurs injectés explicitement plutôt que par variables globales : les tests
     passent un dépôt mémoire, un MockLLM et une horloge figée, la prod un dépôt Postgres."""
     maintenant = horloge or (lambda: dt.datetime.now())
@@ -98,13 +99,29 @@ def creer_app(depot, registre: Registre, fabrique_llm, horloge=None,
         return JSONResponse({"detail": "introuvable"}, status_code=404)
 
     # ---- authentification : deux portes distinctes ----
+    def _artisan_de_session(jeton: str) -> Artisan | None:
+        """Le cookie est la voie du NAVIGATEUR : un lien ouvert depuis un SMS ne peut pas
+        porter d'en-tête `Authorization`. L'expiration est appliquée par le dépôt."""
+        if not jeton:
+            return None
+        try:
+            artisan_id = depot.artisan_de_session(session.empreinte(jeton), maintenant())
+        except Introuvable:
+            return None
+        return registre.artisan(artisan_id)
+
     def artisan_authentifie(
-            authorization: str = Header(default="")) -> Artisan:
-        """Porte « app artisan » : token porteur propre à l'artisan."""
+            authorization: str = Header(default=""),
+            relais_session: str = Cookie(default="", alias=session.NOM_COOKIE),
+    ) -> Artisan:
+        """Porte « app artisan », par deux voies : token porteur (API, future app mobile)
+        ou cookie de session (navigateur). Une seule des deux suffit ; aucune ne remplace
+        le secret webhook de la plateforme vocale."""
         token = authorization.removeprefix("Bearer ").strip()
         artisan = registre.par_token(token) if token else None
+        artisan = artisan or _artisan_de_session(relais_session)
         if artisan is None:
-            raise HTTPException(401, "token artisan invalide")
+            raise HTTPException(401, "authentification artisan requise")
         return artisan
 
     def webhook_authentifie(
@@ -307,5 +324,70 @@ def creer_app(depot, registre: Registre, fabrique_llm, horloge=None,
         except messages.MessageInterdit:
             pass          # la validation du client compte, la notification est secondaire
         return _html(pages.confirmee(entreprise, prenom, rdv.creneau["label"]))
+
+    # ---- app artisan : pages HTML, sans JavaScript ----
+    # Routes distinctes des routes JSON : celles-ci redirigent après action (303) pour que
+    # le rechargement du navigateur ne rejoue pas le POST. Les routes JSON restent pour la
+    # future app mobile.
+    @app.get("/connexion", response_class=HTMLResponse)
+    def page_connexion() -> HTMLResponse:
+        return HTMLResponse(pages.connexion())
+
+    @app.post("/connexion")
+    def ouvrir_session(jeton: str = Form(...)):
+        """PROVISOIRE : accepte le jeton d'artisan du registre. Sera remplacé par un code
+        reçu par SMS — le numéro de mobile est l'identité professionnelle de l'artisan et
+        le canal existe déjà."""
+        artisan = registre.par_token(jeton.strip())
+        if artisan is None:
+            return HTMLResponse(pages.connexion("Jeton refusé."), status_code=401)
+        clair, emp = session.creer_jeton()
+        t = maintenant()
+        depot.creer_session(emp, artisan.id, session.expiration(t), t)
+        reponse = RedirectResponse("/app", status_code=303)
+        reponse.set_cookie(session.NOM_COOKIE, clair,
+                           **session.attributs_cookie(secure=cookie_secure))
+        return reponse
+
+    @app.post("/deconnexion")
+    def fermer_session(relais_session: str = Cookie(default="",
+                                                   alias=session.NOM_COOKIE)):
+        if relais_session:
+            depot.supprimer_session(session.empreinte(relais_session))
+        reponse = RedirectResponse("/connexion", status_code=303)
+        reponse.delete_cookie(session.NOM_COOKIE, path="/")
+        return reponse
+
+    @app.get("/app", response_class=HTMLResponse)
+    def page_app(relais_session: str = Cookie(default="", alias=session.NOM_COOKIE),
+                 authorization: str = Header(default="")) -> HTMLResponse:
+        """La boîte de validation. Pas de 401 ici mais la page de connexion : un artisan
+        dont la session a expiré doit voir un écran, pas un code d'erreur."""
+        artisan = (registre.par_token(authorization.removeprefix("Bearer ").strip())
+                   or _artisan_de_session(relais_session))
+        if artisan is None:
+            return HTMLResponse(pages.connexion(), status_code=401)
+        cartes = []
+        for r in depot.rdvs_en_attente(artisan.id):
+            donnees = depot.lead(r.lead_id).donnees
+            cartes.append({"id": r.id, "creneau": r.creneau["label"],
+                           "urgence": r.urgence, "score": donnees.get("score", 0),
+                           "raisons": donnees.get("raisons", [])})
+        return HTMLResponse(pages.boite_validation(
+            artisan.config["entreprise"]["prenom_patron"], cartes))
+
+    @app.post("/app/{rdv_id}/{action}")
+    def agir(rdv_id: str, action: str,
+             artisan: Artisan = Depends(artisan_authentifie),
+             date: str = Form(default=""), de: str = Form(default=""),
+             a: str = Form(default="")):
+        """Une action, puis une redirection : le rechargement ne rejoue pas le POST."""
+        if action not in ("valider", "refuser", "reproposer"):
+            raise HTTPException(404, "action inconnue")
+        if action == "reproposer":
+            reproposer(rdv_id, ReproposerIn(date=date, de=de, a=a), artisan)
+        else:
+            _decider(rdv_id, artisan, action)
+        return RedirectResponse("/app", status_code=303)
 
     return app

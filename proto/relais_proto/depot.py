@@ -81,6 +81,13 @@ class Depot(Protocol):
 
     def messages(self, statut: StatutMessage | None = None) -> list[MessageSortant]: ...
 
+    def creer_session(self, empreinte: str, artisan_id: str, expire_a: dt.datetime,
+                      maintenant: dt.datetime, appareil: str | None = None) -> None: ...
+
+    def artisan_de_session(self, empreinte: str, maintenant: dt.datetime) -> str: ...
+
+    def supprimer_session(self, empreinte: str) -> None: ...
+
     def marquer_message_envoye(self, message_id: str, maintenant: dt.datetime,
                                reference: str | None = None,
                                cout: int | None = None) -> None: ...
@@ -103,6 +110,7 @@ class DepotMemoire:
         self._rdvs: dict[str, dict] = {}
         self._messages: dict[str, dict] = {}
         self._par_cle: dict[str, str] = {}   # clé d'idempotence -> id message
+        self._sessions: dict[str, dict] = {}  # empreinte -> session
         self._compteurs: dict[str, int] = {}
 
     def _id(self, prefixe: str) -> str:
@@ -237,6 +245,26 @@ class DepotMemoire:
 
     def differer_message(self, message_id: str, envoyer_apres: dt.datetime) -> None:
         self._exige(self._messages, message_id)["envoyer_apres"] =             envoyer_apres.isoformat()
+
+    # ---- sessions ----
+    def creer_session(self, empreinte: str, artisan_id: str, expire_a: dt.datetime,
+                      maintenant: dt.datetime, appareil: str | None = None) -> None:
+        self._sessions[empreinte] = {"artisan_id": artisan_id, "cree_a": maintenant,
+                                     "expire_a": expire_a, "appareil": appareil}
+
+    def artisan_de_session(self, empreinte: str, maintenant: dt.datetime) -> str:
+        """Rend l'artisan de la session, ou lève `Introuvable`.
+
+        Une session PÉRIMÉE est traitée comme absente : c'est le dépôt qui applique
+        l'expiration, pas l'appelant. Sinon il suffirait d'oublier de la vérifier une fois.
+        """
+        brut = self._sessions.get(empreinte)
+        if brut is None or brut["expire_a"] <= maintenant:
+            raise Introuvable("session inconnue ou périmée")
+        return brut["artisan_id"]
+
+    def supprimer_session(self, empreinte: str) -> None:
+        self._sessions.pop(empreinte, None)   # déconnexion idempotente
 
     # ---- utils ----
     @staticmethod

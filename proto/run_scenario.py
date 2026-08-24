@@ -1584,6 +1584,137 @@ def check_cout_sms() -> bool:
     return ok
 
 
+def check_app_artisan() -> bool:
+    """R24 : la boîte de validation dans un NAVIGATEUR — session par cookie, pages HTML,
+    aucun JavaScript. C'est « LA fonction » de la spec §6 : sans elle, personne ne peut
+    déclencher une reproposition autrement qu'avec curl."""
+    try:
+        from fastapi.testclient import TestClient
+    except ImportError:
+        print("   fastapi/httpx absents : pip install -r requirements.txt")
+        return False
+
+    from relais_proto.api import creer_app
+    from relais_proto.registre import Artisan, Registre, empreinte as emp_token
+    from relais_proto.session import NOM_COOKIE
+
+    TOK_A, TOK_B = "tok-dupont", "tok-martin"
+    registre = Registre([Artisan("art-dupont", "+33189701234", emp_token(TOK_A), CFG),
+                         Artisan("art-martin", "+33189705678", emp_token(TOK_B), CFG)],
+                        emp_token("secret-voix"))
+    depot = DepotMemoire()
+    pendule = [LUNDI_9H]
+    # cookie_secure=False : les tests parlent en HTTP, un cookie Secure ne serait pas
+    # renvoyé. En production il reste à True.
+    app = creer_app(depot, registre, MockLLM, lambda: pendule[0],
+                    base_url="https://relais.test", cookie_secure=False)
+
+    lead, rdv = _appel_avec_rdv(depot, "T01_urgence_fuite", LUNDI_9H)
+    rdv.notifier(LUNDI_9H)
+    depot.sauver_rdv(rdv)
+
+    # (a) sans session : la page de connexion, PAS une erreur brute. Un artisan dont la
+    # session a expiré doit voir un écran utilisable.
+    with TestClient(app) as anonyme:
+        r = anonyme.get("/app")
+        if r.status_code != 401 or "<form" not in r.text or "Connexion" not in r.text:
+            print(f"   /app sans session : {r.status_code}, page = {r.text[:90]!r}")
+            return False
+        if anonyme.post("/connexion", data={"jeton": "mauvais"}).status_code != 401:
+            print("   un jeton refusé n'est pas rejeté")
+            return False
+
+    # (b) connexion, puis le cookie porte tout le reste — sans en-tête Authorization
+    with TestClient(app) as julien:
+        r = julien.post("/connexion", data={"jeton": TOK_A}, follow_redirects=False)
+        if r.status_code != 303 or r.headers.get("location") != "/app":
+            print(f"   connexion : {r.status_code} → {r.headers.get('location')!r}")
+            return False
+        biscuit = julien.cookies.get(NOM_COOKIE)
+        if not biscuit or len(biscuit) < 40:
+            print(f"   cookie de session absent ou trop court : {biscuit!r}")
+            return False
+        # le jeton en clair ne doit exister QUE dans le cookie
+        from relais_proto.session import empreinte as emp_session
+        if not depot._sessions.get(emp_session(biscuit)):
+            print("   la session n'est pas enregistrée sous son empreinte")
+            return False
+        if any(biscuit in str(v) for v in depot._sessions.values()):
+            print("   le jeton de session est stocké en clair")
+            return False
+
+        r = julien.get("/app")
+        if r.status_code != 200:
+            print(f"   /app avec session : {r.status_code}")
+            return False
+        # les valeurs interpolées sont ÉCHAPPÉES dans la page (l'apostrophe de
+        # « aujourd'hui » devient &#x27;) : on compare donc à la forme échappée, sinon
+        # c'est l'assertion qui est naïve, pas la page qui a tort
+        from html import escape as _esc
+        for attendu in ("<!DOCTYPE html>", "Julien", _esc(rdv.creneau["label"]), "5/5",
+                        "URGENCE", "Valider", "Refuser", 'type="date"'):
+            if attendu not in r.text:
+                print(f"   la boîte de validation ne contient pas {attendu!r}")
+                return False
+        if "<script" in r.text or "http://" in r.text:
+            print("   la page artisan charge une ressource externe ou du JS")
+            return False
+        # les raisons du score sont ce qui rend la carte utile : « URGENCE réelle », etc.
+        if not any(_esc(m) in r.text for m in lead.donnees["raisons"]):
+            print(f"   les raisons du lead n'apparaissent pas : {lead.donnees['raisons']}")
+            return False
+
+        # (c) valider depuis la page : POST puis redirection, pour qu'un rechargement
+        # ne rejoue pas l'action
+        r = julien.post(f"/app/{rdv.id}/valider", follow_redirects=False)
+        if r.status_code != 303 or r.headers.get("location") != "/app":
+            print(f"   validation depuis la page : {r.status_code}")
+            return False
+        if depot.rdv(rdv.id).statut is not StatutRdv.VALIDE:
+            print(f"   le RDV n'est pas validé : {depot.rdv(rdv.id).statut.value}")
+            return False
+        if "Aucun rendez-vous en attente" not in julien.get("/app").text:
+            print("   la boîte n'est pas vide après validation")
+            return False
+
+        # (d) reproposer depuis la page, avec les champs natifs date/heure
+        lead2, rdv2 = _appel_avec_rdv(depot, "R11_dispo_samedi_respectee", LUNDI_9H)
+        rdv2.notifier(LUNDI_9H)
+        depot.sauver_rdv(rdv2)
+        r = julien.post(f"/app/{rdv2.id}/reproposer",
+                        data={"date": "2026-08-26", "de": "14:00", "a": "16:00"},
+                        follow_redirects=False)
+        if r.status_code != 303:
+            print(f"   reproposition depuis la page : {r.status_code} {r.text[:120]}")
+            return False
+        sms = [m for m in depot.messages() if m.destinataire is Destinataire.CLIENT]
+        if len(sms) != 1 or "https://relais.test/c/" not in sms[0].texte:
+            print(f"   le SMS de reproposition n'est pas parti : {[m.texte for m in sms]}")
+            return False
+
+        # (e) une action inconnue ne doit pas être devinée
+        if julien.post(f"/app/{rdv2.id}/supprimer",
+                       follow_redirects=False).status_code != 404:
+            print("   une action inconnue n'est pas refusée")
+            return False
+
+        # (f) déconnexion : la session est révoquée côté serveur, pas seulement le cookie
+        julien.post("/deconnexion", follow_redirects=False)
+        if depot._sessions:
+            print("   la session survit à la déconnexion côté serveur")
+            return False
+
+    # (g) étanchéité : la session de Dupont ne donne rien chez Martin
+    with TestClient(app) as martin:
+        martin.post("/connexion", data={"jeton": TOK_B})
+        page = martin.get("/app").text
+        from html import escape as _esc2
+        if _esc2(rdv2.creneau["label"]) in page or "Aucun rendez-vous" not in page:
+            print("   Martin voit les rendez-vous de Dupont")
+            return False
+    return True
+
+
 def check_guard_prix() -> bool:
     """T05 (garde-fou prix) : on injecte une réplique fautive et on vérifie l'interception."""
     from relais_proto.guards import check_output
@@ -1721,6 +1852,14 @@ def run() -> int:
     if check_cout_sms():
         print("   → tous les gabarits en GSM-7 et en 1 seul segment, avec marge, même "
               "avec un artisan au nom long : ✅ PASS")
+    else:
+        print("   → ❌ FAIL")
+        echecs += 1
+
+    print(f"\n──── R24_app_artisan ────")
+    if check_app_artisan():
+        print("   → session par cookie, boîte de validation en HTML sans JS, valider et "
+              "reproposer depuis le navigateur, étanchéité entre artisans : ✅ PASS")
     else:
         print("   → ❌ FAIL")
         echecs += 1
