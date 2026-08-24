@@ -45,23 +45,34 @@ def en_e164(numero: str) -> str:
     return candidat
 
 
+# Un SMS envoyé depuis un numéro court OVH est BLOQUÉ s'il contient une URL. Or le cœur
+# du produit — la validation à un tap (§3.5bis) — est justement un lien. Le mode numéro
+# court est donc réservé aux tests, et cette règle est un GARDE, pas un commentaire : un
+# commentaire s'ignore, un garde-fou non. Sans lui, le SMS de reproposition partirait et
+# serait silencieusement jeté par l'opérateur.
+_RE_URL = re.compile(r"https?://|www\.", re.IGNORECASE)
+
+
 class EnvoyeurOVH:
-    def __init__(self, transport, compte: str):
+    def __init__(self, transport, compte: str, numero_court: bool = False):
         """`transport(chemin, **corps) -> dict` : en prod, `client.post` du SDK `ovh`.
-        `compte` est le service SMS (forme « sms-xy12345-1 »)."""
+        `compte` est le service SMS (forme « sms-xy12345-1 »).
+
+        `numero_court` : envoie via un numéro court OVH (`senderForResponse`), disponible
+        sans déclaration. **Mode explicite et non déduit de l'absence d'expéditeur** : une
+        config incomplète basculerait alors silencieusement en numéro court, où les URL
+        sont bloquées — le lien de validation disparaîtrait sans erreur visible. Une
+        omission de configuration doit lever, pas changer de comportement.
+        """
         self.transport = transport
         self.compte = compte
+        self.numero_court = numero_court
 
     def envoyer(self, message: MessageSortant, cfg: dict) -> str:
-        expediteur = (cfg.get("sms") or {}).get("expediteur")
-        if not expediteur:
-            raise EchecDefinitif("sms.expediteur absent de la config artisan")
         destinataire = en_e164(message.cible)
-
         corps = {
             "message": message.texte,
             "receivers": [destinataire],
-            "sender": expediteur,
             # SMS transactionnel : réponse à une demande entrante du client, pas de
             # prospection. La clause STOP n'est donc pas requise — et l'ajouter mangerait
             # une vingtaine de caractères utiles sur chaque message.
@@ -69,6 +80,19 @@ class EnvoyeurOVH:
             "charset": "UTF-8",
             "priority": "high",
         }
+        if self.numero_court:
+            if _RE_URL.search(message.texte or ""):
+                raise EchecDefinitif(
+                    "message avec URL en numéro court : l'opérateur le bloquerait. "
+                    "Le mode numéro court sert aux tests, jamais au lien de validation.")
+            # `sender` et `senderForResponse` sont mutuellement exclusifs côté OVH :
+            # en numéro court, on n'envoie PAS de clé `sender`.
+            corps["senderForResponse"] = True
+        else:
+            expediteur = (cfg.get("sms") or {}).get("expediteur")
+            if not expediteur:
+                raise EchecDefinitif("sms.expediteur absent de la config artisan")
+            corps["sender"] = expediteur
         try:
             reponse = self.transport(f"/sms/{self.compte}/jobs", **corps)
         except EchecDefinitif:

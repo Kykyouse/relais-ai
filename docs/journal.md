@@ -913,3 +913,38 @@ suite : le vrai défaut était de l'avoir laissée hors suite.
 **Prochain essai côté Geoffrey** : créer l'expéditeur `DupontChauf` (Telecom > SMS >
 Expéditeurs), puis relancer. Attention, un expéditeur alphanumérique passe par une
 validation opérateur — le délai peut être de quelques jours.
+
+### 24/08 — mode numéro court, pour ne pas attendre 72 h
+
+**Objectif : un premier envoi réel aujourd'hui**, sans attendre la validation du Sender ID
+`DupontChauf` (lancée, ~72 h, et **risque de refus** : Dupont Chauffage est fictif, aucun
+justificatif à ce nom).
+
+**Fait.** `EnvoyeurOVH(..., numero_court=True)` envoie via `senderForResponse: true` et
+**sans** clé `sender` — les deux sont mutuellement exclusifs côté OVH. Un numéro court est
+disponible par défaut, sans déclaration. Exposé par `--numero-court`, affiché en clair dans
+le récapitulatif, et incompatible avec `--expediteur` (refus explicite).
+
+**Deux choix de conception.**
+1. **Mode explicite, pas déduit de l'absence d'expéditeur.** Une config incomplète
+   basculerait sinon silencieusement en numéro court — où les URL sont bloquées — et le lien
+   de validation disparaîtrait sans erreur visible. Une omission de configuration doit
+   lever, pas changer de comportement.
+2. **La limite « URL bloquée » est un GARDE, pas un commentaire.** Un commentaire s'ignore.
+   `EchecDefinitif` si le texte contient une URL en mode numéro court : sans ça le SMS de
+   reproposition partirait et serait jeté par l'opérateur, silencieusement. R22 vérifie aussi
+   que le mode **normal** accepte ce même message — c'est le cas de production.
+
+**Question produit à trancher (soulevée par Geoffrey).** Un Sender ID par artisan = un
+justificatif par artisan : **ça ne passe pas à l'échelle**. Un expéditeur unique
+« **Relais** » est probablement la réponse. Argument technique en sa faveur : nos gabarits
+identifient déjà l'artisan **dans le corps** du message (« Bonjour, c'est {nom_entreprise} »
+et « {prenom} vous propose plutôt… »), donc un expéditeur unique ne perd aucune information.
+Contrepartie à assumer : le client voit « Relais » et non la marque de l'artisan — le produit
+devient visiblement le nôtre plutôt qu'en marque blanche. À arbitrer avec le cousin ; c'est
+une décision de positionnement autant que de conformité.
+
+**Note de méthode.** Les deux modifications que Geoffrey croyait non commitées (réordonnancement
+du diagnostic, option `--expediteur`) étaient déjà dans `62293bc` : mon `git add -A` les avait
+balayées, comme le fichier de skill. Rien perdu, mais deuxième confirmation que le staging
+global est à abandonner.

@@ -1308,6 +1308,52 @@ def check_adaptateur_ovh() -> bool:
         print(f"   message ou référence : {corps['message']!r} / {ref!r}")
         return False
 
+    cfg_sans_expediteur = {**CFG, "sms": {k: v for k, v in CFG["sms"].items()
+                                          if k != "expediteur"}}
+    try:
+        EnvoyeurOVH(transport_ok, "sms-ab12345-1").envoyer(msg, cfg_sans_expediteur)
+        print("   expéditeur manquant accepté en mode normal")
+        return False
+    except EchecDefinitif:
+        pass
+
+    # (b bis) mode NUMÉRO COURT : `senderForResponse` remplace `sender`, et les deux sont
+    # mutuellement exclusifs côté OVH. Permet de tester sans attendre la déclaration d'un
+    # Sender ID (~72 h, avec risque de refus).
+    vus.clear()
+    ref = EnvoyeurOVH(transport_ok, "sms-ab12345-1", numero_court=True).envoyer(msg, CFG)
+    _, corps = vus[0]
+    if corps.get("senderForResponse") is not True:
+        print(f"   numéro court : senderForResponse absent ({corps.get('senderForResponse')!r})")
+        return False
+    if "sender" in corps:
+        print(f"   numéro court : la clé « sender » est présente ({corps['sender']!r}) — "
+              f"OVH refuse les deux ensemble")
+        return False
+    # le mode fonctionne même sans expéditeur configuré : c'est tout son intérêt
+    if EnvoyeurOVH(transport_ok, "sms-ab12345-1",
+                   numero_court=True).envoyer(msg, cfg_sans_expediteur) != "ovh:42":
+        print("   numéro court : bloqué par l'absence d'expéditeur, alors qu'il s'en passe")
+        return False
+
+    # GARDE : une URL en numéro court est bloquée par l'opérateur. Le cœur du produit
+    # étant un lien de validation, ce garde-fou empêche un SMS silencieusement jeté.
+    msg_lien = MessageSortant(
+        id="m2", cle_idempotence="k2", destinataire=Destinataire.CLIENT, canal=Canal.SMS,
+        cible="0612345678", texte="Validez ici : https://relais.test/c/abc",
+        cree_a=LUNDI_9H, artisan_id="art-dupont")
+    try:
+        EnvoyeurOVH(transport_ok, "sms-ab12345-1", numero_court=True).envoyer(msg_lien, CFG)
+        print("   numéro court : un message contenant une URL a été accepté — "
+              "il serait jeté par l'opérateur sans erreur visible")
+        return False
+    except EchecDefinitif:
+        pass
+    # en revanche le mode NORMAL doit accepter ce même message : c'est le cas de prod
+    if not EnvoyeurOVH(transport_ok, "sms-ab12345-1").envoyer(msg_lien, CFG):
+        print("   mode normal : le lien de validation devrait passer")
+        return False
+
     # (c) classification des échecs — c'est là que se joue le comportement du worker
     def transport_refuse(chemin, **corps):
         return {"ids": [], "validReceivers": [], "invalidReceivers": corps["receivers"]}
@@ -1336,15 +1382,6 @@ def check_adaptateur_ovh() -> bool:
             return False
         print(f"   {libelle} : rien levé")
         return False
-
-    cfg_sans_expediteur = {**CFG, "sms": {k: v for k, v in CFG["sms"].items()
-                                          if k != "expediteur"}}
-    try:
-        EnvoyeurOVH(transport_ok, "sms-ab12345-1").envoyer(msg, cfg_sans_expediteur)
-        print("   expéditeur manquant accepté")
-        return False
-    except EchecDefinitif:
-        pass
 
     # (d) intégration : un échec DÉFINITIF sort de la file au PREMIER passage, sans
     # consommer les trois tentatives — sinon on retarde toute la file pour un numéro faux
@@ -1538,8 +1575,8 @@ def run() -> int:
     print(f"\n──── R22_adaptateur_ovh ────")
     if check_adaptateur_ovh():
         print("   → format E.164, corps de requête (noStopClause), échec définitif "
-              "immédiat vs transitoire réessayé, diagnostic sur les erreurs réelles "
-              "d'OVH : ✅ PASS")
+              "immédiat vs transitoire réessayé, mode numéro court (URL bloquée), "
+              "diagnostic sur les erreurs réelles d'OVH : ✅ PASS")
     else:
         print("   → ❌ FAIL")
         echecs += 1

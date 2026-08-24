@@ -3,9 +3,14 @@
 
     python envoyer_un_sms.py 0612345678              # blanc : montre, n'envoie pas
     python envoyer_un_sms.py 0612345678 --envoyer    # envoie pour de vrai
-    python envoyer_un_sms.py 0612345678 --envoyer --expediteur 0612345678
-                                                     # force l'expéditeur (au lieu de
-                                                     # sms.expediteur de dupont.json)
+    python envoyer_un_sms.py 0612345678 --envoyer --numero-court
+                                                    # via un numero court OVH : aucune
+                                                    # declaration d'expediteur requise,
+                                                    # MAIS les URL y sont bloquees ->
+                                                    # tests seulement, jamais le lien 1-tap
+    python envoyer_un_sms.py 0612345678 --envoyer --expediteur Relais
+                                                    # force l'expediteur, sans toucher
+                                                    # sms.expediteur de dupont.json
 
 Par défaut ce script **n'envoie rien** : il affiche le corps exact de la requête. Il faut
 `--envoyer` pour qu'un SMS parte. Un script qui sort du système ne doit pas pouvoir le faire
@@ -18,14 +23,13 @@ tranche.
 
 Variables requises (dans `.env` à la racine) :
     OVH_APPLICATION_KEY / OVH_APPLICATION_SECRET / OVH_CONSUMER_KEY
-    OVH_SMS_COMPTE      le service SMS, forme « sms-ab12345-1 »
+    OVH_SMS_COMPTE      le service SMS, lisible dans l'espace client (Telecom > SMS)
 
 Le consumer key doit être limité à `POST /sms/*` avec une expiration — jamais `/*`.
 
-Échec probable au premier essai : « sender not allowed » ou équivalent, si l'expéditeur
-alphanumérique n'est pas encore déclaré auprès des opérateurs. C'est une information utile,
-pas une panne : la déclaration prend des jours (Charte AF2M du 01/03/2026), autant le savoir
-maintenant.
+En cas d'échec, le script affiche une PISTE selon le motif renvoyé par OVH (expéditeur non
+déclaré, service inconnu, portée de la clé, crédits). La table de correspondance vit dans
+`relais_proto/envoi_ovh.py` et est couverte par R22.
 """
 from __future__ import annotations
 
@@ -94,6 +98,12 @@ def run() -> int:
         if _re.fullmatch(r"[\d+\s.\-]+", expediteur_force):
             expediteur_force = en_e164(expediteur_force)
 
+    numero_court = "--numero-court" in args
+    if numero_court and expediteur_force:
+        print("--numero-court et --expediteur sont contradictoires : en numéro court,")
+        print("OVH impose senderForResponse et refuse toute clé « sender ».")
+        return 2
+
     cibles = [a for a in args if not a.startswith("--")]
     if len(cibles) != 1:
         print(__doc__)
@@ -126,7 +136,11 @@ def run() -> int:
         texte=TEXTE, cree_a=dt.datetime.now())
 
     print(f"destinataire : {destinataire}")
-    print(f"expéditeur   : {CFG['sms']['expediteur']}")
+    if numero_court:
+        print("expéditeur   : NUMÉRO COURT OVH (senderForResponse) — mode TEST")
+        print("               les SMS contenant une URL sont bloqués dans ce mode")
+    else:
+        print(f"expéditeur   : {CFG['sms']['expediteur']}")
     print(f"compte SMS   : {compte or '(absent)'}")
     print(f"texte        : {TEXTE}")
     print(f"longueur     : {len(TEXTE)} caractères")
@@ -157,7 +171,8 @@ def run() -> int:
         return reponse
 
     try:
-        reference = EnvoyeurOVH(transport_bavard, compte).envoyer(message, CFG)
+        reference = EnvoyeurOVH(transport_bavard, compte,
+                                numero_court=numero_court).envoyer(message, CFG)
     except Exception as exc:
         print(f"\n❌ {type(exc).__name__}: {exc}")
         print(diagnostic(f"{type(exc).__name__}: {exc}"))
