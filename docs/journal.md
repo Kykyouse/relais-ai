@@ -38,6 +38,7 @@ python run_llm_eval.py [--mock] [--n 3]             # éval appelant-simulé
 | Plage de silence, réessais, multi-artisans (R20) | ✅ | mock, mutations 8/8 |
 | Validation client par lien à un tap (R21) | ✅ | mock, mutations 7/7 |
 | Adaptateur OVH : E.164, corps, échecs (R22) | ✅ | **SMS réellement reçu sur téléphone, 24/08** |
+| Page de confirmation client (HTML, sans JS) | ✅ | mock — le lien SMS mène à une vraie page |
 
 ## Ce qui est encore un double (et non un manque caché)
 
@@ -1099,3 +1100,40 @@ révèle un vrai défaut — le gabarit `.env` trompeur, le motif de diagnostic 
 repli manquant. Aucun n'aurait été trouvé en relisant le code.
 
 Suite : **27 PASS**, Postgres vert (via le pooler).
+
+### 24/08 — page de confirmation client : le lien mène enfin quelque part
+
+Le lien qu'on avait rendu délivrable menait à `{"entreprise":"Dupont Chauffage",...}`. Il n'y
+avait **aucune ligne de HTML dans le projet**. C'est corrigé.
+
+**`relais_proto/pages.py`** : HTML rendu côté serveur, **aucun framework, aucune étape de
+build, aucun JS**. 1,7 ko autonome. Pourquoi ce choix : la page est ouverte une fois, depuis
+un SMS, sur un téléphone dont on ne sait rien — réseau de chantier, navigateur intégré à
+l'application de messagerie. Et **aucune ressource externe** : ni police distante, ni script
+tiers. Rien qui puisse échouer, rien qui puisse pister l'appelant d'un artisan. R21 vérifie
+l'absence de `<script>` et de `http://` dans la page.
+
+Le formulaire poste sur la **même URL**, donc ça marche sans JavaScript, partout.
+
+**Quatre états, tous rendus en pages lisibles** (plus aucune erreur brute) :
+- proposition (200) : entreprise, créneau, un bouton de 52 px ;
+- confirmée (200) ;
+- lien inconnu **ou déjà utilisé** (404) ;
+- créneau périmé (410 en consultation, 409 en validation).
+
+**La décision d'UX la plus utile de cette brique.** L'usage unique du jeton reste intact,
+mais un client qui recharge sa page après avoir validé tombait sur un « lien invalide » —
+il pouvait croire que sa validation avait échoué. Le texte du 404 dit désormais : « Si vous
+venez de valider, **c'est bien pris en compte** et l'artisan a été prévenu. » Le même texte
+sert au lien inconnu, donc on ne renseigne pas un curieux tout en rassurant le client.
+R21 le vérifie.
+
+**Deux erreurs de ma part attrapées par le test.**
+1. J'asseyais l'assertion sur `rdv.creneau["label"]`, l'objet local **d'avant** la
+   reproposition. Remplacé par une assertion plus utile : la page doit montrer le NOUVEAU
+   créneau et **pas** l'ancien — afficher au client le créneau qu'on remplace serait une
+   vraie confusion.
+2. Le `html.escape` transformait l'apostrophe de « aujourd'hui », ce qui a révélé le
+   point 1. L'échappement est le bon comportement ; c'était l'assertion qui était naïve.
+
+Suite : **27 PASS**.

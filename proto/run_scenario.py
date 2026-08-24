@@ -1163,7 +1163,9 @@ def check_confirmation_lien() -> bool:
     if r.status_code != 200 or r.json()["statut"] != "repropose":
         print(f"   reproposer : {r.status_code} {r.text[:150]}")
         return False
-    if r.json()["creneau"]["label"] != "mercredi 26/08 entre 14h et 16h":
+    LABEL_NOUVEAU = "mercredi 26/08 entre 14h et 16h"
+    LABEL_ANCIEN = rdv.creneau["label"]          # celui d'avant la reproposition
+    if r.json()["creneau"]["label"] != LABEL_NOUVEAU:
         print(f"   libellé du créneau reproposé : {r.json()['creneau']['label']!r}")
         return False
     # l'échéance repart de zéro : c'est le client qu'on attend maintenant, il n'hérite pas
@@ -1205,20 +1207,39 @@ def check_confirmation_lien() -> bool:
         print(f"   page de confirmation : {r.status_code} {r.text[:120]}")
         return False
     vu = r.text
+    if "text/html" not in r.headers.get("content-type", ""):
+        print(f"   la page client n'est pas du HTML : "
+              f"{r.headers.get('content-type')!r} — un client ne lit pas du JSON")
+        return False
+    for attendu in ("<!DOCTYPE html>", 'lang="fr"', "viewport",
+                    CFG["entreprise"]["nom"], LABEL_NOUVEAU, "<form",
+                    'method="post"'):
+        if attendu not in vu:
+            print(f"   la page client ne contient pas {attendu!r}")
+            return False
+    # et surtout PAS l'ancien créneau : montrer au client celui qu'on remplace serait
+    # une vraie confusion, pas un détail d'affichage
+    if LABEL_ANCIEN in vu:
+        print(f"   la page client affiche l'ANCIEN créneau ({LABEL_ANCIEN!r})")
+        return False
+    # aucune ressource externe : rien qui échoue sur un réseau de chantier, rien qui
+    # piste l'appelant d'un artisan
+    for interdit in ("http://", "https://fonts", "<script"):
+        if interdit in vu:
+            print(f"   la page client charge une ressource externe : {interdit!r}")
+            return False
     for secret in (lead.donnees["slots"]["telephone_rappel"], "transcript"):
         if secret in vu:
             print(f"   la page client expose « {secret} »")
             return False
-    if r.json()["entreprise"] != CFG["entreprise"]["nom"]:
-        print("   la page client n'indique pas l'entreprise")
-        return False
-    if cli().get("/c/jeton-invente-de-toutes-pieces").status_code != 404:
-        print("   un jeton inventé ne rend pas 404")
+    r404 = cli().get("/c/jeton-invente-de-toutes-pieces")
+    if r404.status_code != 404 or "n'est plus valide" not in r404.text:
+        print(f"   jeton inventé : {r404.status_code}, page = {r404.text[:80]!r}")
         return False
 
     # (e) validation par le client
     r = cli().post(f"/c/{jeton}")
-    if r.status_code != 200 or r.json()["statut"] != "valide":
+    if r.status_code != 200 or "confirmé" not in r.text:
         print(f"   validation client : {r.status_code} {r.text[:150]}")
         return False
     if depot.rdv(rdv.id).statut is not StatutRdv.VALIDE:
@@ -1228,9 +1249,14 @@ def check_confirmation_lien() -> bool:
             and "validé" in m.texte]:
         print("   l'artisan n'est pas prévenu de la validation")
         return False
-    # usage unique : le lien ne resservira pas
-    if cli().post(f"/c/{jeton}").status_code != 404 \
-            or cli().get(f"/c/{jeton}").status_code != 404:
+    # Usage unique : le lien ne resservira pas. Mais le client qui recharge sa page après
+    # avoir validé doit être RASSURÉ, pas inquiété — le même texte sert au lien inconnu.
+    apres = cli().get(f"/c/{jeton}")
+    if apres.status_code != 404 or "c'est bien pris en compte" not in apres.text:
+        print(f"   rechargement après validation : {apres.status_code}, le message ne "
+              f"rassure pas le client : {apres.text[:90]!r}")
+        return False
+    if cli().post(f"/c/{jeton}").status_code != 404:
         print("   le lien de confirmation est réutilisable")
         return False
     if cli().get("/rdv", headers=art_a).json():
@@ -1247,8 +1273,13 @@ def check_confirmation_lien() -> bool:
     jeton2 = sms2[0].texte.split(f"{BASE}/c/")[1].strip()
     pendule[0] = LUNDI_9H + dt.timedelta(days=3)
     r = cli().post(f"/c/{jeton2}")
-    if r.status_code != 409:
-        print(f"   lien périmé : {r.status_code}, attendu 409")
+    if r.status_code != 409 or "plus disponible" not in r.text:
+        print(f"   lien périmé (POST) : {r.status_code}, page = {r.text[:80]!r}")
+        return False
+    # en simple consultation : 410 Gone, avec une page qui explique la suite
+    r = cli().get(f"/c/{jeton2}")
+    if r.status_code != 410 or "recontacte" not in r.text:
+        print(f"   lien périmé (GET) : {r.status_code}, page = {r.text[:80]!r}")
         return False
     # et un client qui ne répond jamais finit par expirer comme les autres
     if not depot.rdvs_echus(pendule[0]):

@@ -14,10 +14,10 @@ from __future__ import annotations
 import datetime as dt
 
 from fastapi import Depends, FastAPI, Header, HTTPException, Request
-from fastapi.responses import JSONResponse
+from fastapi.responses import HTMLResponse, JSONResponse
 from pydantic import BaseModel, Field
 
-from . import messages
+from . import messages, pages
 from .calendar_stub import CalendarStub, libelle_creneau
 from .confirmation import creer_jeton, empreinte, lien
 from .depot import Introuvable
@@ -83,16 +83,6 @@ class ReproposerIn(BaseModel):
     date: str                   # AAAA-MM-JJ
     de: str                     # "14:00"
     a: str                      # "16:00"
-
-
-class PropositionOut(BaseModel):
-    """Ce que voit le client au bout du lien. Aucune donnée le concernant : l'URL vaut
-    capacité, elle ne doit rien révéler sur la personne."""
-    entreprise: str
-    prenom: str
-    creneau: dict
-    statut: str
-    expire_a: dt.datetime
 
 
 # ------------------------------------------------------------------ fabrique
@@ -266,42 +256,56 @@ def creer_app(depot, registre: Registre, fabrique_llm, horloge=None,
     def _rdv_du_jeton(jeton: str):
         return depot.rdv_par_confirmation(empreinte(jeton))   # 404 si inconnu ou consommé
 
-    def _proposition(rdv, artisan: Artisan) -> PropositionOut:
-        return PropositionOut(entreprise=artisan.config["entreprise"]["nom"],
-                              prenom=artisan.config["entreprise"]["prenom_patron"],
-                              creneau=rdv.creneau, statut=rdv.statut.value,
-                              expire_a=rdv.expire_a)
+    # Ces deux routes rendent du HTML, pas du JSON : c'est une PAGE, ouverte depuis un SMS
+    # sur un téléphone. Un client ne lit pas `{"statut":"repropose"}`.
+    def _html(corps: str, code: int = 200) -> HTMLResponse:
+        return HTMLResponse(corps, status_code=code)
 
-    @app.get("/c/{jeton}", response_model=PropositionOut)
-    def voir_proposition(jeton: str) -> PropositionOut:
-        """Page vue par le client. Volontairement pauvre : nom de l'entreprise, prénom de
-        l'artisan, créneau. **Ni son nom, ni son téléphone, ni le transcript** — l'URL vaut
-        capacité, quiconque la possède ne doit rien apprendre de la personne."""
-        rdv = _rdv_du_jeton(jeton)
+    def _identite(rdv) -> tuple[str, str]:
         artisan = registre.artisan(rdv.artisan_id)
         if artisan is None:
             raise HTTPException(409, "artisan introuvable au registre")
-        return _proposition(rdv, artisan)
+        e = artisan.config["entreprise"]
+        return e["nom"], e["prenom_patron"]
 
-    @app.post("/c/{jeton}", response_model=PropositionOut)
-    def confirmer(jeton: str) -> PropositionOut:
-        rdv = _rdv_du_jeton(jeton)
-        artisan = registre.artisan(rdv.artisan_id)
-        if artisan is None:
-            raise HTTPException(409, "artisan introuvable au registre")
+    @app.get("/c/{jeton}", response_class=HTMLResponse)
+    def voir_proposition(jeton: str) -> HTMLResponse:
+        """Page vue par le client. Volontairement pauvre : entreprise, prénom, créneau.
+        **Ni son nom, ni son téléphone, ni le transcript** — l'URL vaut capacité, quiconque
+        la possède ne doit rien apprendre de la personne."""
+        try:
+            rdv = _rdv_du_jeton(jeton)
+        except Introuvable:
+            # 404 avec une page lisible, et le MÊME texte qu'un lien déjà utilisé :
+            # on ne renseigne pas un curieux, et on rassure celui qui a déjà validé
+            return _html(pages.lien_invalide(), 404)
+        entreprise, prenom = _identite(rdv)
+        if rdv.est_echu(maintenant()):
+            return _html(pages.creneau_perime(prenom), 410)
+        return _html(pages.proposition(entreprise, prenom, rdv.creneau["label"],
+                                       action=f"/c/{jeton}"))
+
+    @app.post("/c/{jeton}", response_class=HTMLResponse)
+    def confirmer(jeton: str) -> HTMLResponse:
+        try:
+            rdv = _rdv_du_jeton(jeton)
+        except Introuvable:
+            return _html(pages.lien_invalide(), 404)
+        entreprise, prenom = _identite(rdv)
         t = maintenant()
         try:
             rdv.confirmer_par_client(jeton, t)
-        except TransitionInterdite as exc:
-            raise HTTPException(409, str(exc)) from None
+        except TransitionInterdite:
+            # échéance passée, ou RDV déjà décidé : le domaine tranche, la page explique
+            return _html(pages.creneau_perime(prenom), 409)
         depot.sauver_rdv(rdv)
         # l'artisan doit l'apprendre sans avoir à ouvrir l'app
         try:
             depot.enfiler_message(
                 messages.confirmation_artisan(rdv, depot.lead(rdv.lead_id).donnees,
-                                              artisan.config), t)
+                                              registre.artisan(rdv.artisan_id).config), t)
         except messages.MessageInterdit:
             pass          # la validation du client compte, la notification est secondaire
-        return _proposition(rdv, artisan)
+        return _html(pages.confirmee(entreprise, prenom, rdv.creneau["label"]))
 
     return app
