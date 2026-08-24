@@ -44,7 +44,7 @@ RACINE = pathlib.Path(__file__).parent
 load_dotenv(RACINE.parent / ".env")
 
 CFG = json.loads((RACINE / "config" / "dupont.json").read_text(encoding="utf-8"))
-TEXTE = ("Bonjour, c'est un test technique Relais. Aucun rendez-vous n'est concerne. "
+TEXTE = ("Bonjour Adélan, c'est un test technique Relais-ai. Aucun rendez-vous n'est concerne. "
          "Vous pouvez ignorer ce message.")
 
 

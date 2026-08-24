@@ -37,7 +37,7 @@ python run_llm_eval.py [--mock] [--n 3]             # éval appelant-simulé
 | API HTTP, 2 portes d'auth, 1 tour = 1 requête (R19) | ✅ | mock + câblage réel sur Supabase |
 | Plage de silence, réessais, multi-artisans (R20) | ✅ | mock, mutations 8/8 |
 | Validation client par lien à un tap (R21) | ✅ | mock, mutations 7/7 |
-| Adaptateur OVH : E.164, corps, échecs (R22) | ✅ | **envoi réel abouti le 24/08** (numéro court) |
+| Adaptateur OVH : E.164, corps, échecs (R22) | ✅ | **SMS réellement reçu sur téléphone, 24/08** |
 
 ## Ce qui est encore un double (et non un manque caché)
 
@@ -989,3 +989,38 @@ largement pour un lien à usage unique et borné dans le temps (128 bits) et fer
 
 **Reste non vérifié :** le SMS est-il ARRIVÉ sur le téléphone ? `validReceivers` et un
 crédit débité disent que l'opérateur l'a accepté, pas qu'il a été délivré.
+
+### 24/08 — LIVRAISON CONFIRMÉE : la chaîne sort enfin du système
+
+Les SMS sont **bien arrivés sur le téléphone**. Ce n'était pas acquis :
+`validReceivers` + un crédit débité disaient seulement que l'opérateur avait accepté.
+Chaîne complète prouvée : notre code → API OVH → opérateur → téléphone.
+
+**C'est le premier maillon du produit qui sort réellement du système.** Tout le reste —
+conversation, RDV, expiration, API, workers — était vérifié en boucle fermée.
+
+**Observation qui débloque la moitié du chemin.** Les deux SMS clients n'ont pas la même
+contrainte :
+
+| gabarit | contient une URL ? | numéro court possible ? |
+|---|---|---|
+| `expiration_client` | non | **oui — utilisable dès maintenant** |
+| `reproposition_client` | oui (lien de validation) | non, URL bloquée |
+
+Donc le **SMS de repli sur expiration peut passer en production tout de suite**, sans
+attendre la validation du Sender ID. Seule la reproposition doit attendre `DupontChauf` ou
+l'expéditeur unique « Relais ». La contrepartie à peser : le client verrait un numéro court
+pour un message et un expéditeur nommé pour l'autre — incohérence de marque assumée
+temporairement, ou attendre et tout livrer ensemble.
+
+**Deux décisions toujours en attente.**
+1. **Jeton à 16 octets au lieu de 32** (128 bits, largement suffisant pour un lien à usage
+   unique et borné) + copie raccourcie : ferait passer les deux SMS clients sous 160
+   caractères, donc **1 crédit au lieu de 2**. Paramètre de sécurité + copie produit.
+2. **Expéditeur unique « Relais »** plutôt qu'un Sender ID par artisan (un justificatif par
+   artisan ne passe pas à l'échelle). Décision de positionnement.
+
+**Prochaine étape technique.** `worker.py` utilise encore `EnvoyeurJournal` en dur : rien
+ne part du pipeline automatisé. Câbler `EnvoyeurOVH` **en opt-in explicite** (variable
+d'environnement, journal par défaut) est le pas qui fait passer de « on sait envoyer à la
+main » à « le système sait envoyer ».
