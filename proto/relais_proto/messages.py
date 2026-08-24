@@ -15,6 +15,7 @@ import datetime as dt
 from dataclasses import dataclass
 from enum import Enum
 
+from . import temps
 from .guards import check_output
 
 
@@ -88,7 +89,7 @@ class MessageSortant:
 
     @classmethod
     def from_dict(cls, d: dict) -> MessageSortant:
-        horodatages = {c: dt.datetime.fromisoformat(d[c]) if d.get(c) else None
+        horodatages = {c: temps.depuis_iso(d[c]) if d.get(c) else None
                        for c in cls.HORODATAGES}
         return cls(id=d["id"], cle_idempotence=d["cle_idempotence"],
                    destinataire=Destinataire(d["destinataire"]), canal=Canal(d["canal"]),

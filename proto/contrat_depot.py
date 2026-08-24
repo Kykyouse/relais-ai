@@ -12,6 +12,7 @@ from __future__ import annotations
 
 import datetime as dt
 import json
+from zoneinfo import ZoneInfo
 
 from relais_proto.calendar_stub import CalendarStub
 from relais_proto.depot import Introuvable
@@ -21,7 +22,11 @@ from relais_proto.messages import Brouillon, Canal, Destinataire, StatutMessage
 from relais_proto.rdv import StatutRdv
 from relais_proto.scoring import build_lead
 
-LUNDI_9H = dt.datetime(2026, 8, 24, 9, 0)
+# Un INSTANT, pas une heure de pendule (cf. relais_proto/temps.py) : c'est ce que les deux
+# implémentations doivent rendre à l'identique. Contre Postgres, le contrat vérifie donc
+# aussi que `timestamptz` n'a pas décalé l'aller-retour.
+LUNDI_9H = dt.datetime(2026, 8, 24, 9, 0,
+                       tzinfo=ZoneInfo("Europe/Paris")).astimezone(dt.UTC)
 
 # Identifiant absent des deux implémentations, mais de forme UUID VALIDE : contre Postgres,
 # comparer une chaîne quelconque à une colonne uuid lève une erreur de cast au lieu de

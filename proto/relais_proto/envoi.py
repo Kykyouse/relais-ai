@@ -22,6 +22,7 @@ import datetime as dt
 from dataclasses import dataclass, field
 from typing import Protocol
 
+from . import temps
 from .messages import Canal, Destinataire, MessageSortant, StatutMessage
 
 
@@ -112,14 +113,20 @@ def heure_d_envoi_autorisee(message: MessageSortant, cfg: dict,
 
     La plage traverse minuit (21 h → 08 h) : on compare donc en minutes depuis minuit avec
     un OU, et non un ET — l'erreur classique qui rendrait la plage vide.
+
+    « 21 h » et « 08 h » sont des heures de PENDULE : c'est le réveil du client qu'on
+    protège, pas un offset. Tout le calcul se fait donc sur `local`, et le résultat
+    redevient un instant (`temps.instant_de`). Calculée en UTC, la fin de plage tomberait
+    à 9 h locale l'été et à 7 h l'hiver — soit exactement ce qu'on cherche à éviter.
     """
     plage = (cfg.get("sms") or {}).get("plage_silence")
     # ne concerne que le client : l'artisan a choisi son outil et ses horaires
     if not plage or message.destinataire is not Destinataire.CLIENT:
         return maintenant
 
+    local = temps.en_local(maintenant, cfg)
     debut, fin = _minutes(plage["de"]), _minutes(plage["a"])
-    courant = maintenant.hour * 60 + maintenant.minute
+    courant = local.hour * 60 + local.minute
     if debut < fin:                              # plage dans la même journée
         dans_la_plage = debut <= courant < fin
     else:                                        # plage à cheval sur minuit
@@ -127,9 +134,8 @@ def heure_d_envoi_autorisee(message: MessageSortant, cfg: dict,
     if not dans_la_plage:
         return maintenant
 
-    heure_fin = dt.time(fin // 60, fin % 60)
-    jour = maintenant.date() if courant < fin else maintenant.date() + dt.timedelta(days=1)
-    return dt.datetime.combine(jour, heure_fin)
+    jour = local.date() if courant < fin else local.date() + dt.timedelta(days=1)
+    return temps.instant_de(jour, dt.time(fin // 60, fin % 60), cfg)
 
 
 # ------------------------------------------------------------- worker d'envoi

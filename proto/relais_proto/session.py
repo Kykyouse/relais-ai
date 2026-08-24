@@ -38,6 +38,9 @@ def empreinte(jeton: str) -> str:
 
 
 def expiration(maintenant: dt.datetime, jours: int = DUREE_JOURS) -> dt.datetime:
+    """90 jours RÉELS : `maintenant` est un instant UTC (cf. temps.py), donc les deux
+    changements d'heure de l'intervalle ne décalent rien. Le `max_age` du cookie compte
+    lui aussi des secondes réelles — les deux échéances restent alignées."""
     return maintenant + dt.timedelta(days=jours)
 
 

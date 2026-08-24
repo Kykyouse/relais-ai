@@ -7,6 +7,8 @@ from __future__ import annotations
 
 import datetime as dt
 
+from . import temps
+
 JOURS_FR = ["lundi", "mardi", "mercredi", "jeudi", "vendredi", "samedi", "dimanche"]
 
 
@@ -23,11 +25,21 @@ def libelle_creneau(d: dt.date, de: str, a: str, aujourd_hui: dt.date) -> str:
 class CalendarStub:
     def __init__(self, config: dict, now: dt.datetime | None = None,
                  urgences_consommees_aujourdhui: int = 0, jours_pleins: int = 0):
+        self.config = config
         self.cfg = config["agenda"]
-        self.now = now or dt.datetime.now()
+        # `now` est un INSTANT ; tout ce que ce module en tire (« aujourd'hui », « avant
+        # 17 h », les libellés) est de l'heure de PENDULE. D'où les deux attributs : celui
+        # qu'on sérialise et celui sur lequel on raisonne (cf. temps.py).
+        self.now = temps.exige_instant(now) if now else temps.maintenant()
         self.urgences_consommees = urgences_consommees_aujourdhui
         self.jours_pleins = jours_pleins  # pour simuler T12 (calendrier saturé)
         self.holds: list[dict] = []
+
+    @property
+    def local(self) -> dt.datetime:
+        """L'instant `now` à la pendule de l'artisan : la seule base valable pour dire
+        « aujourd'hui », « demain » ou « avant 17 h »."""
+        return temps.en_local(self.now, self.config)
 
     # ---- règles ----
     def _fenetres_du_jour(self, d: dt.date) -> list[tuple[str, str]]:
@@ -59,17 +71,18 @@ class CalendarStub:
         disponibilités exprimées : `jours` (weekdays 0–6) et `moment` (matin/apres_midi)."""
         n_total = n + skip
         slots: list[dict] = []
+        local = self.local
         # Urgence : d'abord la fenêtre réservée du jour si dispo (et compatible)
         if urgent and self.cfg["urgences"]["acceptees"] \
                 and self.urgences_consommees < self.cfg["urgences"]["max_par_jour"]:
             f = self.cfg["urgences"]["fenetres_reservees"][0]
-            d = self.now.date()
-            if d.weekday() <= 4 and self.now.time() < dt.time(17, 0) \
+            d = local.date()
+            if d.weekday() <= 4 and local.time() < dt.time(17, 0) \
                     and (not jours or d.weekday() in jours) \
                     and self._moment_ok(int(f["de"].split(":")[0]), moment):
                 slots.append(self._mk(d, f["de"], f["a"], urgence=True))
         # Puis les jours suivants (en sautant les jours "pleins" simulés)
-        day = self.now.date() + dt.timedelta(days=1 + self.jours_pleins)
+        day = local.date() + dt.timedelta(days=1 + self.jours_pleins)
         while len(slots) < n_total:
             if not jours or day.weekday() in jours:
                 for de, a in self._fenetres_du_jour(day):
@@ -83,13 +96,13 @@ class CalendarStub:
                             if len(slots) >= n_total:
                                 return slots[skip:skip + n]
             day += dt.timedelta(days=1)
-            if (day - self.now.date()).days > 21:
+            if (day - local.date()).days > 21:
                 break  # garde-fou (21 j : laisse leur chance aux jours rares type samedi)
         return slots[skip:skip + n]
 
     def _mk(self, d: dt.date, de: str, a: str, urgence: bool = False) -> dict:
         return {"date": d.isoformat(), "de": de, "a": a, "urgence": urgence,
-                "label": libelle_creneau(d, de, a, self.now.date())}
+                "label": libelle_creneau(d, de, a, self.local.date())}
 
     # ---- sérialisation (l'état d'appel doit survivre au process : cf. Conversation.to_dict) ----
     def to_dict(self) -> dict:
@@ -102,7 +115,7 @@ class CalendarStub:
     def from_dict(cls, data: dict, config: dict) -> CalendarStub:
         # `now` est RECHARGÉ, jamais relu à l'horloge : sinon les libellés déjà
         # prononcés ("demain", "samedi 29/08") changeraient de sens d'un tour à l'autre.
-        cal = cls(config, now=dt.datetime.fromisoformat(data["now"]),
+        cal = cls(config, now=temps.depuis_iso(data["now"], config),
                   urgences_consommees_aujourdhui=data["urgences_consommees"],
                   jours_pleins=data["jours_pleins"])
         cal.holds = [dict(h) for h in data["holds"]]

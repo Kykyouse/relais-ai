@@ -16,6 +16,7 @@ import datetime as dt
 from dataclasses import dataclass, field
 from typing import Protocol
 
+from . import temps
 from .messages import Brouillon, MessageSortant, StatutMessage
 from .rdv import Rdv, StatutRdv, TERMINAUX
 
@@ -282,7 +283,7 @@ class DepotMemoire:
     @staticmethod
     def _appel_de_dict(d: dict) -> Appel:
         return Appel(id=d["id"], artisan_id=d["artisan_id"],
-                     debut_a=dt.datetime.fromisoformat(d["debut_a"]),
+                     debut_a=temps.depuis_iso(d["debut_a"]),
                      etat_conversation=d["etat_conversation"],
-                     fin_a=dt.datetime.fromisoformat(d["fin_a"]) if d["fin_a"] else None,
+                     fin_a=temps.depuis_iso(d["fin_a"]) if d["fin_a"] else None,
                      lead_id=d["lead_id"])

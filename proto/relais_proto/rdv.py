@@ -11,12 +11,19 @@ sont en CODE, pas en convention d'appel. Trois règles non négociables ici :
   3. Le chrono part de la RÉSERVATION, pas de la notification push. C'est à la
      réservation que l'agent a promis un SMS « d'ici 4 heures » à l'appelant : la
      promesse court dès qu'elle est prononcée, même si le push échoue derrière.
+
+Et depuis le 24/08 : **les horodatages sont des INSTANTS en UTC** (cf. `temps.py`). Les
+délais se comptent donc en heures réelles même la nuit d'un changement d'heure, et deux
+instants qui portent la même pendule restent distinguables — sans quoi la règle n°1
+serait fausse deux heures par an.
 """
 from __future__ import annotations
 
 import datetime as dt
 from dataclasses import dataclass, field
 from enum import Enum
+
+from . import temps
 
 
 class StatutRdv(str, Enum):
@@ -64,25 +71,30 @@ def _fenetres_ouvrees(cfg: dict, jour: dt.date) -> list[tuple[str, str]]:
     return [(f["de"], f["a"]) for f in source.get(cle, [])]
 
 
-def _a(jour: dt.date, hhmm: str) -> dt.datetime:
-    h, m = (int(x) for x in hhmm.split(":"))
-    return dt.datetime.combine(jour, dt.time(h, m))
-
-
 def _ajouter_heures_ouvrees(cfg: dict, depuis: dt.datetime, heures: float) -> dt.datetime:
-    """Avance de `heures` en ne consommant que les fenêtres ouvrées."""
+    """Avance de `heures` en ne consommant que les fenêtres ouvrées.
+
+    Le seul calcul du domaine qui raisonne en heures de PENDULE : les fenêtres sont
+    écrites « 08:00 » — « 18:00 » dans la config de l'artisan. On parcourt donc des jours
+    locaux, mais on soustrait des durées entre INSTANTS (`temps.instant_de`). Conséquence
+    voulue : le dimanche du basculement, une fenêtre 08h–18h vaut 9 ou 11 heures réelles,
+    et c'est juste — c'est bien le temps pendant lequel l'artisan peut regarder son
+    téléphone.
+    """
     restant = dt.timedelta(hours=heures)
     curseur = depuis
+    jour = temps.en_local(depuis, cfg).date()
     for _ in range(60):  # garde-fou : 60 jours d'avance max (config d'horaires vide)
-        for de, a in _fenetres_ouvrees(cfg, curseur.date()):
-            debut = max(_a(curseur.date(), de), curseur)
-            fin = _a(curseur.date(), a)
+        for de, a in _fenetres_ouvrees(cfg, jour):
+            debut = max(temps.instant_de(jour, de, cfg), curseur)
+            fin = temps.instant_de(jour, a, cfg)
             if fin <= debut:
                 continue
             if fin - debut >= restant:
                 return debut + restant
             restant -= fin - debut
-        curseur = _a(curseur.date() + dt.timedelta(days=1), "00:00")
+        jour += dt.timedelta(days=1)
+        curseur = temps.instant_de(jour, "00:00", cfg)
     raise ValueError("aucune heure ouvrée trouvée en 60 jours : horaires de config vides ?")
 
 
@@ -103,9 +115,12 @@ def calculer_expiration(cfg: dict, urgence: bool, depuis: dt.datetime) -> dt.dat
     son intérêt : la fenêtre contient de toute façon une soirée. Le mode "ouvrees" reste
     disponible pour un artisan qui voudrait un délai court sans expirer la nuit.
     """
+    depuis = temps.exige_instant(depuis, "depuis")
     v = cfg["validation"]
     heures = v["delai_max_urgence_heures"] if urgence else v["delai_max_heures"]
     if urgence or v.get("base_delai", "reelles") == "reelles":
+        # addition sur un instant UTC : 24 h RÉELLES, pas 24 h de pendule. La même
+        # addition sur un aware en heure locale rendrait 23 h le dimanche de mars.
         return depuis + dt.timedelta(hours=heures)
     return _ajouter_heures_ouvrees(cfg, depuis, heures)
 
@@ -147,6 +162,9 @@ class Rdv:
         # de persistance, et qu'un RDV en base est un engagement vis-à-vis du client.
         if lead["slots"].get("tel_confirme") is not True:
             raise ValueError(f"RDV {id} refusé : téléphone non confirmé")
+        # même frontière, même exigence : un instant naïf n'entre pas en base. Ce qui est
+        # persisté ici sera comparé pendant des heures par le worker (cf. temps.py).
+        maintenant = temps.exige_instant(maintenant, "maintenant")
         urgence = bool(lead["slots"].get("urgence_reelle"))
         rdv = cls(id=id, lead_id=lead_id, artisan_id=artisan_id,
                   creneau={c: hold.get(c) for c in cls.CHAMPS_CRENEAU},
@@ -257,7 +275,7 @@ class Rdv:
 
     @classmethod
     def from_dict(cls, d: dict) -> Rdv:
-        horodatages = {c: dt.datetime.fromisoformat(d[c]) if d[c] else None
+        horodatages = {c: temps.depuis_iso(d[c]) if d[c] else None
                        for c in cls.HORODATAGES}
         return cls(id=d["id"], lead_id=d["lead_id"], artisan_id=d["artisan_id"],
                    creneau=dict(d["creneau"]), duree_min=d["duree_min"],

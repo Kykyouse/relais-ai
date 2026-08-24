@@ -62,8 +62,7 @@ def _choisir_envoyeur():
 
 
 def run() -> int:
-    import datetime as dt
-
+    from relais_proto import temps
     from relais_proto.depot_pg import candidats_env, resoudre_connexion
     try:
         dsn, opts, libelle = resoudre_connexion(candidats_env())
@@ -78,8 +77,12 @@ def run() -> int:
         return artisan.config if artisan else None
 
     depot = DepotPostgres(dsn, **opts)
-    maintenant = dt.datetime.now()
-    print(f"passage du {maintenant.isoformat(timespec='seconds')}")
+    # l'un des DEUX seuls endroits où l'horloge système entre (l'autre est api.py).
+    # Affichée à la pendule française : un log de cron se lit à l'heure du pays, l'instant
+    # UTC est rappelé entre parenthèses pour pouvoir le recouper avec la base.
+    maintenant = temps.maintenant()
+    print(f"passage du {temps.en_local(maintenant).isoformat(timespec='seconds')} "
+          f"({maintenant.strftime('%H:%M:%S')} UTC)")
 
     rapport = WorkerExpiration(depot, config_pour).passer(maintenant)
     print(f"  expiration : {rapport.examines} examiné(s), {len(rapport.expires)} expiré(s), "

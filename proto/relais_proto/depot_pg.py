@@ -86,6 +86,12 @@ class DepotPostgres:
         statements que psycopg active de lui-même après quelques exécutions."""
         import psycopg  # import tardif : dépendance optionnelle
         self.cx = psycopg.connect(dsn, autocommit=True, **options)
+        # Les colonnes sont en `timestamptz` (migration 007) : psycopg rend des instants
+        # aware, exprimés dans le fuseau de la SESSION. On le fixe à UTC pour que le
+        # domaine reçoive exactement ce qu'il a écrit, quel que soit le réglage du serveur
+        # — sinon deux machines liraient la même ligne avec deux offsets, et les tests de
+        # contrat passeraient ici pour échouer ailleurs.
+        self.cx.execute("set time zone 'UTC'")
 
     def fermer(self) -> None:
         self.cx.close()

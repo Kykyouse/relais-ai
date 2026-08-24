@@ -10,6 +10,7 @@ import datetime as dt
 import json
 import pathlib
 import sys
+from zoneinfo import ZoneInfo
 
 from relais_proto import messages
 from relais_proto.calendar_stub import CalendarStub
@@ -254,7 +255,7 @@ def check_serialisation() -> bool:
     # Figée et non dt.datetime.now(), parce que la fenêtre d'urgence réservée dépend du
     # jour et de l'heure : un run lancé un dimanche soir ne testerait jamais le quota
     # d'urgences du jour, et le trou passerait inaperçu.
-    maintenant = dt.datetime(2026, 8, 24, 9, 0)
+    maintenant = heure_fr(2026, 8, 24, 9, 0)
     compares = ("score", "categorie", "zone", "raisons", "slots", "rdv",
                 "violations_gardes_fous", "degradations_llm", "transcript")
     cal_neuf = lambda: CalendarStub(CFG, now=maintenant)
@@ -313,7 +314,31 @@ def check_serialisation() -> bool:
     return True
 
 
-LUNDI_9H = dt.datetime(2026, 8, 24, 9, 0)  # horloge de référence des tests RDV
+PARIS = ZoneInfo("Europe/Paris")
+
+
+def heure_fr(annee: int, mois: int, jour: int, h: int = 0, mn: int = 0, *,
+             fold: int = 0) -> dt.datetime:
+    """L'INSTANT (en UTC) correspondant à une heure de PENDULE française.
+
+    Les tests décrivent ce que voient l'artisan et le client — « vendredi 17 h », « 3 h du
+    matin » — jamais des offsets : c'est le niveau auquel les règles produit sont écrites.
+    La conversion vers l'instant se fait ici, une fois, et pas dans chaque cas de test.
+
+    `fold=1` désigne la SECONDE occurrence d'une heure répétée (nuit du retour à l'heure
+    d'hiver). C'est le seul moyen de distinguer deux instants qui portent la même pendule,
+    donc d'écrire le cas (e) de R25.
+    """
+    return dt.datetime(annee, mois, jour, h, mn,
+                       tzinfo=PARIS, fold=fold).astimezone(dt.UTC)
+
+
+def heure_fr_le(jour: dt.date, heure: dt.time) -> dt.datetime:
+    """Même chose depuis une date et une heure déjà construites."""
+    return heure_fr(jour.year, jour.month, jour.day, heure.hour, heure.minute)
+
+
+LUNDI_9H = heure_fr(2026, 8, 24, 9, 0)  # horloge de référence des tests RDV (heure locale)
 
 
 def cfg_pour(artisan_id: str):
@@ -378,9 +403,9 @@ def check_cycle_vie_rdv() -> bool:
     # (b) défauts de la config : 24 h réelles hors urgence, 2 h réelles en urgence
     # (retour terrain 23/08 : l'app n'est souvent regardée que le soir)
     cas_reels = [
-        (False, dt.datetime(2026, 8, 24, 9, 0), dt.datetime(2026, 8, 25, 9, 0)),
-        (False, dt.datetime(2026, 8, 28, 17, 0), dt.datetime(2026, 8, 29, 17, 0)),
-        (True, dt.datetime(2026, 8, 30, 20, 0), dt.datetime(2026, 8, 30, 22, 0)),
+        (False, heure_fr(2026, 8, 24, 9, 0), heure_fr(2026, 8, 25, 9, 0)),
+        (False, heure_fr(2026, 8, 28, 17, 0), heure_fr(2026, 8, 29, 17, 0)),
+        (True, heure_fr(2026, 8, 30, 20, 0), heure_fr(2026, 8, 30, 22, 0)),
     ]
     for urgence, depuis, attendu in cas_reels:
         obtenu = calculer_expiration(CFG, urgence=urgence, depuis=depuis)
@@ -395,18 +420,18 @@ def check_cycle_vie_rdv() -> bool:
                                          "base_delai": "ouvrees",
                                          "delai_max_heures": 4}}
     cas_ouvrees = [
-        ("lundi 09:00 (en pleine fenêtre)", dt.datetime(2026, 8, 24, 9, 0),
-         dt.datetime(2026, 8, 24, 13, 0)),
-        ("lundi 07:00 (avant ouverture)", dt.datetime(2026, 8, 24, 7, 0),
-         dt.datetime(2026, 8, 24, 12, 0)),
-        ("lundi 17:00 (déborde sur mardi)", dt.datetime(2026, 8, 24, 17, 0),
-         dt.datetime(2026, 8, 25, 11, 0)),
-        ("vendredi 17:00 (déborde sur samedi court)", dt.datetime(2026, 8, 28, 17, 0),
-         dt.datetime(2026, 8, 29, 12, 0)),
-        ("samedi 12:00 (dimanche fermé, saute au lundi)", dt.datetime(2026, 8, 29, 12, 0),
-         dt.datetime(2026, 8, 31, 11, 0)),
-        ("dimanche 10:00 (jour fermé)", dt.datetime(2026, 8, 30, 10, 0),
-         dt.datetime(2026, 8, 31, 12, 0)),
+        ("lundi 09:00 (en pleine fenêtre)", heure_fr(2026, 8, 24, 9, 0),
+         heure_fr(2026, 8, 24, 13, 0)),
+        ("lundi 07:00 (avant ouverture)", heure_fr(2026, 8, 24, 7, 0),
+         heure_fr(2026, 8, 24, 12, 0)),
+        ("lundi 17:00 (déborde sur mardi)", heure_fr(2026, 8, 24, 17, 0),
+         heure_fr(2026, 8, 25, 11, 0)),
+        ("vendredi 17:00 (déborde sur samedi court)", heure_fr(2026, 8, 28, 17, 0),
+         heure_fr(2026, 8, 29, 12, 0)),
+        ("samedi 12:00 (dimanche fermé, saute au lundi)", heure_fr(2026, 8, 29, 12, 0),
+         heure_fr(2026, 8, 31, 11, 0)),
+        ("dimanche 10:00 (jour fermé)", heure_fr(2026, 8, 30, 10, 0),
+         heure_fr(2026, 8, 31, 12, 0)),
     ]
     for libelle, depuis, attendu in cas_ouvrees:
         obtenu = calculer_expiration(cfg_ouvrees, urgence=False, depuis=depuis)
@@ -417,22 +442,22 @@ def check_cycle_vie_rdv() -> bool:
     # l'urgence reste en heures RÉELLES même en mode "ouvrees" : une fuite prise dimanche
     # 20 h n'attend pas l'ouverture du lundi, sinon le mot urgence ne veut plus rien dire
     urgent = calculer_expiration(cfg_ouvrees, urgence=True,
-                                 depuis=dt.datetime(2026, 8, 30, 20, 0))
-    if urgent != dt.datetime(2026, 8, 30, 22, 0):
+                                 depuis=heure_fr(2026, 8, 30, 20, 0))
+    if urgent != heure_fr(2026, 8, 30, 22, 0):
         print(f"   urgence en mode ouvrées : {urgent}, attendu dimanche 22:00 (réelles)")
         return False
 
     # les mêmes règles traversées par Rdv.depuis_hold, à une heure où les deux modes
     # DIVERGENT (vendredi 17 h) : 24 h réelles → samedi 17 h ; 4 h ouvrées → samedi 12 h ;
     # urgence → vendredi 19 h dans les deux modes.
-    vendredi_17h = dt.datetime(2026, 8, 28, 17, 0)
+    vendredi_17h = heure_fr(2026, 8, 28, 17, 0)
     hold_nu = {"date": "2026-09-01", "de": "08:00", "a": "10:00", "urgence": False,
                "label": "mardi 01/09 entre 08h et 10h", "duree_min": 90}
     cas_hold = [
-        (CFG, None, dt.datetime(2026, 8, 29, 17, 0)),
-        (CFG, True, dt.datetime(2026, 8, 28, 19, 0)),
-        (cfg_ouvrees, None, dt.datetime(2026, 8, 29, 12, 0)),
-        (cfg_ouvrees, True, dt.datetime(2026, 8, 28, 19, 0)),
+        (CFG, None, heure_fr(2026, 8, 29, 17, 0)),
+        (CFG, True, heure_fr(2026, 8, 28, 19, 0)),
+        (cfg_ouvrees, None, heure_fr(2026, 8, 29, 12, 0)),
+        (cfg_ouvrees, True, heure_fr(2026, 8, 28, 19, 0)),
     ]
     for cfg, urgence_reelle, echeance in cas_hold:
         obtenu = Rdv.depuis_hold(
@@ -523,7 +548,7 @@ def check_cycle_vie_rdv() -> bool:
     lead2 = depot.cloturer_appel(appel2.id, lead2_donnees, LUNDI_9H)
     rdv2 = depot.creer_rdv(lead_id=lead2.id, hold=lead2_donnees["rdv"],
                            lead_donnees=lead2_donnees, cfg=CFG, maintenant=LUNDI_9H)
-    if rdv2.expire_a != dt.datetime(2026, 8, 25, 9, 0):  # 24 h réelles depuis lundi 9 h
+    if rdv2.expire_a != heure_fr(2026, 8, 25, 9, 0):  # 24 h réelles depuis lundi 9 h
         print(f"   échéance non urgente {rdv2.expire_a}, attendu mardi 09:00")
         return False
     if depot.rdvs_echus(LUNDI_9H + dt.timedelta(hours=20)):
@@ -963,19 +988,19 @@ def check_expedition() -> bool:
     # rendrait vide. Et elle ne concerne QUE le client.
     jour = dt.date(2026, 8, 24)
     cas = [
-        (Destinataire.CLIENT, dt.time(3, 0), dt.datetime.combine(jour, dt.time(8, 0))),
-        (Destinataire.CLIENT, dt.time(7, 59), dt.datetime.combine(jour, dt.time(8, 0))),
+        (Destinataire.CLIENT, dt.time(3, 0), heure_fr_le(jour, dt.time(8, 0))),
+        (Destinataire.CLIENT, dt.time(7, 59), heure_fr_le(jour, dt.time(8, 0))),
         (Destinataire.CLIENT, dt.time(21, 0),
-         dt.datetime.combine(jour + dt.timedelta(days=1), dt.time(8, 0))),
+         heure_fr_le(jour + dt.timedelta(days=1), dt.time(8, 0))),
         (Destinataire.CLIENT, dt.time(23, 30),
-         dt.datetime.combine(jour + dt.timedelta(days=1), dt.time(8, 0))),
+         heure_fr_le(jour + dt.timedelta(days=1), dt.time(8, 0))),
         (Destinataire.CLIENT, dt.time(8, 0), None),      # None = tout de suite
         (Destinataire.CLIENT, dt.time(20, 59), None),
         # l'artisan est un professionnel qui a choisi ses horaires : jamais différé
         (Destinataire.ARTISAN, dt.time(3, 0), None),
     ]
     for dest, heure, attendu in cas:
-        t = dt.datetime.combine(jour, heure)
+        t = heure_fr_le(jour, heure)
         msg = MessageSortant(id="m", cle_idempotence="k", destinataire=dest,
                              canal=Canal.SMS, cible="06", texte="t", cree_a=t)
         obtenu = heure_d_envoi_autorisee(msg, CFG, t)
@@ -988,7 +1013,7 @@ def check_expedition() -> bool:
     depot = DepotMemoire()
     journal = EnvoyeurJournal()
     expediteur = Expediteur(depot, journal, cfg_pour)
-    midi = dt.datetime.combine(jour, dt.time(12, 0))
+    midi = heure_fr_le(jour, dt.time(12, 0))
     m_client, _ = depot.enfiler_message(brouillon("r20:client", Destinataire.CLIENT), midi)
     rapport = expediteur.passer(midi)
     if rapport.envoyes != [m_client.id] or len(journal.envoyes) != 1:
@@ -1013,7 +1038,7 @@ def check_expedition() -> bool:
     depot2 = DepotMemoire()
     journal2 = EnvoyeurJournal()
     exp2 = Expediteur(depot2, journal2, cfg_pour)
-    nuit = dt.datetime.combine(jour, dt.time(3, 0))
+    nuit = heure_fr_le(jour, dt.time(3, 0))
     mc, _ = depot2.enfiler_message(brouillon("r20:nuit-client", Destinataire.CLIENT), nuit)
     ma, _ = depot2.enfiler_message(brouillon("r20:nuit-artisan", Destinataire.ARTISAN), nuit)
     rapport = exp2.passer(nuit)
@@ -1024,7 +1049,7 @@ def check_expedition() -> bool:
         print("   un SMS client est parti en pleine nuit")
         return False
     # à 8 h, le client reçoit enfin
-    rapport = exp2.passer(dt.datetime.combine(jour, dt.time(8, 0)))
+    rapport = exp2.passer(heure_fr_le(jour, dt.time(8, 0)))
     if rapport.envoyes != [mc.id]:
         print(f"   à 8 h le SMS client n'est pas parti : {rapport}")
         return False
@@ -1452,7 +1477,7 @@ def check_adaptateur_ovh() -> bool:
                           canal=Canal.SMS, cible="pas-un-numero", texte="test",
                           artisan_id="art-dupont")
     m, _ = depot.enfiler_message(brouillon, LUNDI_9H)
-    midi = dt.datetime(2026, 8, 24, 12, 0)
+    midi = heure_fr(2026, 8, 24, 12, 0)
     rapport = Expediteur(depot, EnvoyeurOVH(transport_ok, "sms-ab12345-1"),
                          cfg_pour).passer(midi)
     if rapport.echecs != [m.id]:
@@ -1782,6 +1807,163 @@ def check_app_artisan() -> bool:
     return True
 
 
+def check_fuseaux() -> bool:
+    """R25 : le temps. Deux natures d'horodatage, qui ne doivent jamais se mélanger.
+
+    * un INSTANT (échéance, création, envoi, session) est un point sur la ligne du temps :
+      il vit en UTC, et une durée s'y ajoute en heures RÉELLES ;
+    * une HEURE DE PENDULE (plage de silence 21h–08h, heures ouvrées, « demain entre 08h
+      et 10h ») n'a de sens que dans le fuseau de l'artisan, et doit y être calculée.
+
+    Ce que ce test verrouille, et qu'aucun test précédent ne pouvait voir parce qu'ils se
+    tenaient tous en août : **les deux changements d'heure**. Trouvé en traitant la dette
+    n°1 du journal, pas en production — mais la panne était réelle, et de deux sortes.
+    """
+    from relais_proto import temps
+    from relais_proto.envoi import heure_d_envoi_autorisee
+    from relais_proto.messages import Canal
+
+    hold_nu = {"date": "2026-04-01", "de": "08:00", "a": "10:00", "urgence": False,
+               "label": "mercredi 01/04 entre 08h et 10h", "duree_min": 90}
+    lead_nu = {"slots": {"tel_confirme": True, "urgence_reelle": None}}
+
+    # (a) l'horloge du système rend un INSTANT, pas une heure de pendule
+    t = temps.maintenant()
+    if t.tzinfo is None or t.utcoffset() != dt.timedelta(0):
+        print(f"   temps.maintenant() n'est pas un instant UTC : {t!r}")
+        return False
+
+    # (b) un instant naïf est REFUSÉ à la frontière du domaine. C'est la propriété qui
+    # rend toutes les autres tenables : un chemin oublié plante au lieu de dériver d'une
+    # heure en silence, et il plante en test avant de planter en production.
+    try:
+        Rdv.depuis_hold(hold_nu, id="rdv-naif", lead_id="lead-n", artisan_id="art-t",
+                        lead=lead_nu, cfg=CFG,
+                        maintenant=dt.datetime(2026, 3, 28, 20, 0))
+    except (ValueError, TypeError):
+        pass
+    else:
+        print("   un instant naïf est entré dans le domaine sans protester")
+        return False
+
+    # (c) 24 h de délai à travers le PASSAGE À L'HEURE D'ÉTÉ (29/03/2026, 02h → 03h).
+    # L'artisan a droit à 24 heures réelles : son échéance tombe donc à 21 h à sa pendule,
+    # pas à 20 h. Le calcul naïf en heure locale ne lui en laissait que 23.
+    samedi_20h = heure_fr(2026, 3, 28, 20, 0)
+    echeance = calculer_expiration(CFG, urgence=False, depuis=samedi_20h)
+    if echeance - samedi_20h != dt.timedelta(hours=24):
+        print(f"   passage à l'heure d'été : {echeance - samedi_20h} de délai réel "
+              f"au lieu de 24 h")
+        return False
+    if temps.en_local(echeance, CFG).strftime("%d/%m %H:%M") != "29/03 21:00":
+        print(f"   24 h réelles depuis samedi 20 h devraient tomber dimanche 21 h à la "
+              f"pendule : {temps.en_local(echeance, CFG)}")
+        return False
+
+    # (d) le mode "ouvrees" raisonne en heure de PENDULE, et doit continuer de le faire
+    # après le changement d'offset : lundi 09:00 + 4 h ouvrées = lundi 13:00 à la pendule.
+    cfg_ouvrees_r25 = {**CFG, "validation": {**CFG["validation"],
+                                             "base_delai": "ouvrees",
+                                             "delai_max_heures": 4}}
+    lundi_apres = heure_fr(2026, 3, 30, 9, 0)
+    obtenu = calculer_expiration(cfg_ouvrees_r25, urgence=False, depuis=lundi_apres)
+    if obtenu != heure_fr(2026, 3, 30, 13, 0):
+        print(f"   heures ouvrées après le changement d'heure : "
+              f"{temps.en_local(obtenu, CFG)}, attendu lundi 13:00")
+        return False
+
+    # (e) LE RETOUR À L'HEURE D'HIVER (25/10/2026) : 02h00 → 02h59 arrive DEUX FOIS.
+    # Deux instants portent la même pendule, séparés d'une heure réelle. Une échéance
+    # posée à la seconde occurrence ne doit pas être opposée à l'artisan qui tape à la
+    # première — sinon on lui vole une heure et une décision valide.
+    premier_2h30 = heure_fr(2026, 10, 25, 2, 30, fold=0)
+    second_2h30 = heure_fr(2026, 10, 25, 2, 30, fold=1)
+    if second_2h30 - premier_2h30 != dt.timedelta(hours=1):
+        print("   repère cassé : les deux 2h30 du 25/10 devraient être à 1 h d'écart")
+        return False
+    rdv_nuit = Rdv(id="rdv-nuit", lead_id="lead-n", artisan_id="art-t",
+                   creneau=dict(hold_nu), duree_min=90, urgence=False,
+                   cree_a=heure_fr(2026, 10, 25, 0, 30),
+                   expire_a=second_2h30, statut=StatutRdv.EN_ATTENTE_VALIDATION)
+    if rdv_nuit.est_echu(premier_2h30):
+        print("   RDV échu une heure AVANT son échéance (pendule ambiguë du 25/10)")
+        return False
+    if not rdv_nuit.est_echu(second_2h30):
+        print("   RDV pas échu à son échéance exacte")
+        return False
+    rdv_nuit.valider(premier_2h30)          # la décision de l'artisan doit passer
+    if rdv_nuit.statut is not StatutRdv.VALIDE:
+        print("   validation refusée dans l'heure répétée alors qu'elle est dans les temps")
+        return False
+
+    # et le dépôt doit trancher exactement pareil : c'est lui qui alimente le worker
+    depot = DepotMemoire()
+    lead_donnees = {**lead_nu, "categorie": "rdv_reserve", "score": 4, "raisons": []}
+    minuit_30 = heure_fr(2026, 10, 25, 0, 30)
+    appel = depot.ouvrir_appel("art-dupont", minuit_30)
+    ref = depot.cloturer_appel(appel.id, lead_donnees, minuit_30)
+    rdv_d = depot.creer_rdv(lead_id=ref.id, hold=hold_nu, lead_donnees=lead_donnees,
+                            cfg={**CFG, "validation": {**CFG["validation"],
+                                                       "delai_max_heures": 2}},
+                            maintenant=premier_2h30)
+    if depot.rdvs_echus(premier_2h30 + dt.timedelta(minutes=90)):
+        print("   rdvs_echus() a sorti un RDV encore dans les temps (heure répétée)")
+        return False
+    if not depot.rdvs_echus(premier_2h30 + dt.timedelta(hours=2)):
+        print("   rdvs_echus() n'a pas vu un RDV échu de 2 h réelles")
+        return False
+
+    # (f) l'aller-retour par le dépôt rend le MÊME instant, pas un instant décalé
+    relu = depot.rdv(rdv_d.id)
+    for champ in ("cree_a", "expire_a"):
+        h = getattr(relu, champ)
+        if h.tzinfo is None or h.utcoffset() != dt.timedelta(0):
+            print(f"   {champ} relu du dépôt n'est pas un instant UTC : {h!r}")
+            return False
+    if relu.expire_a != rdv_d.expire_a or relu.cree_a != premier_2h30:
+        print(f"   aller-retour du dépôt : {relu.expire_a} au lieu de {rdv_d.expire_a}")
+        return False
+    # un blob écrit AVANT la migration 007 porte une heure locale naïve : elle doit être
+    # relue comme telle (Europe/Paris), pas comme de l'UTC — sinon 2 h d'écart silencieux
+    ancien = {**rdv_d.to_dict(), "expire_a": "2026-03-29T21:00:00"}
+    if Rdv.from_dict(ancien).expire_a != heure_fr(2026, 3, 29, 21, 0):
+        print(f"   blob d'avant la migration relu de travers : "
+              f"{Rdv.from_dict(ancien).expire_a}")
+        return False
+
+    # (g) la plage de silence est une heure de PENDULE : un SMS bloqué à 3 h du matin part
+    # à 8 h chez le client, le jour du changement d'heure comme les autres. Calculée en UTC
+    # elle l'aurait fait partir à 9 h locale — une heure de retard pour un client qui
+    # attend, et 7 h du matin l'autre jour de l'année, ce qui est bien pire.
+    for nuit, libelle in ((heure_fr(2026, 10, 25, 3, 0), "retour à l'heure d'hiver"),
+                          (heure_fr(2026, 3, 29, 3, 0), "passage à l'heure d'été")):
+        msg = MessageSortant(id="m-r25", cle_idempotence="k-r25",
+                             destinataire=Destinataire.CLIENT, canal=Canal.SMS,
+                             cible="0612345678", texte="t", cree_a=nuit)
+        local = temps.en_local(nuit, CFG)
+        attendu = heure_fr(local.year, local.month, local.day, 8, 0)
+        obtenu = heure_d_envoi_autorisee(msg, CFG, nuit)
+        if obtenu != attendu:
+            print(f"   plage de silence · {libelle} : {temps.en_local(obtenu, CFG)}, "
+                  f"attendu 08:00 à la pendule du client")
+            return False
+
+    # (h) un fuseau mal orthographié est refusé au CHARGEMENT du registre. Sans ce
+    # contrôle, « Europe/Pari » ne se manifesterait qu'au premier calcul d'heure : en
+    # plein appel, chez un artisan donné, un jour donné.
+    from relais_proto.registre import Artisan, Registre
+    try:
+        Registre([Artisan(id="art-faute", numero_relais="+33189700000",
+                          token_sha256="0" * 64,
+                          config={**CFG, "fuseau": "Europe/Pari"})], "x")
+    except RuntimeError:
+        pass
+    else:
+        print("   un fuseau inexistant a été accepté au chargement du registre")
+        return False
+    return True
+
+
 def check_guard_prix() -> bool:
     """T05 (garde-fou prix) : on injecte une réplique fautive et on vérifie l'interception."""
     from relais_proto.guards import check_output
@@ -1927,6 +2109,16 @@ def run() -> int:
     if check_app_artisan():
         print("   → session par cookie, boîte de validation en HTML sans JS, valider et "
               "reproposer depuis le navigateur, étanchéité entre artisans : ✅ PASS")
+    else:
+        print("   → ❌ FAIL")
+        echecs += 1
+
+    print(f"\n──── R25_fuseaux ────")
+    if check_fuseaux():
+        print("   → instants en UTC et instant naïf refusé, 24 h réelles à travers "
+              "le passage à l'heure d'été, heure répétée du 25/10 sans décision "
+              "volée, plage de silence à la pendule du client, fuseau invalide "
+              "refusé au chargement : ✅ PASS")
     else:
         print("   → ❌ FAIL")
         echecs += 1

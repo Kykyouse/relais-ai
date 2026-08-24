@@ -129,11 +129,11 @@ def run() -> int:
     if expediteur_force:
         CFG.setdefault("sms", {})["expediteur"] = expediteur_force
 
-    import datetime as dt
+    from relais_proto import temps
     message = MessageSortant(
         id="test-manuel", cle_idempotence="test-manuel", artisan_id="art-dupont",
         destinataire=Destinataire.CLIENT, canal=Canal.SMS, cible=destinataire,
-        texte=TEXTE, cree_a=dt.datetime.now())
+        texte=TEXTE, cree_a=temps.maintenant())
 
     print(f"destinataire : {destinataire}")
     if numero_court:

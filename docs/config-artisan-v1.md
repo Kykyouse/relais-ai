@@ -14,6 +14,17 @@ Version 0.1 — 21/08/2026 · Compagnon de `script-conversation-v1.md`
 
 ```jsonc
 {
+  "fuseau": "Europe/Paris",                   // fuseau de l'artisan (base IANA). Défaut
+                                              // Europe/Paris. TOUTES les heures de ce
+                                              // fichier — horaires_rdv, fenêtres
+                                              // d'urgence, heures_ouvrees, plage_silence
+                                              // — sont des heures de PENDULE lues dans ce
+                                              // fuseau. Les échéances, elles, sont des
+                                              // instants stockés en UTC (proto/relais_proto/temps.py).
+                                              // Écrit en config et non en dur : le jour
+                                              // où un artisan est à La Réunion, ça doit
+                                              // se lire comme un réglage, pas comme un bug.
+
   "entreprise": {
     "nom": "string",                          // « Dupont Chauffage »
     "prenom_patron": "string",                // utilisé par l'agent : « Julien est en intervention »
@@ -170,6 +181,9 @@ sensée (durées, buffers, fenêtres d'urgence). L'artisan personnalise, il ne c
 3. `zone.codes_postaux` non vide ; `prestations.couvertes` non vide ; `telephonie.renvoi_verifie=true`
    avant activation.
 4. Somme `max_rdv_agent_par_jour` + fenêtres urgences cohérente avec `horaires_rdv` (lint config).
+4 bis. `fuseau` doit être un identifiant IANA connu. Absent ou vide → `Europe/Paris` ;
+   mais une faute de frappe (`Europe/Pari`) lève une `ZoneInfoKeyError` au premier calcul
+   d'heure, donc en plein appel. À vérifier au chargement de la config, pas à l'usage.
 5. Tout changement de config est versionné (audit : « qu'est-ce que l'agent savait le jour de cet appel ? »).
 
 ## 5. Questions ouvertes (interviews / bêta)

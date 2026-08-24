@@ -4,14 +4,16 @@ Chaque score est accompagné de raisons AFFICHABLES : c'est la carte lead du das
 """
 from __future__ import annotations
 
-import datetime as dt
+from . import temps
 
 
 def build_lead(convo) -> dict:
     s, f = convo.slots, convo.flags
     score, raisons = _score(s, f)
     return {
-        "horodatage": dt.datetime.now().isoformat(timespec="seconds"),
+        # instant UTC, comme tout le reste : cette date sert à trier des leads entre eux,
+        # pas à être lue telle quelle. L'affichage la convertira (cf. temps.en_local).
+        "horodatage": temps.maintenant().isoformat(timespec="seconds"),
         "source": "appel_telephonique",
         "base_legale": "demande_entrante",   # loi 11/08/2026 : consentement tracé
         "categorie": f["categorie"] or "autre",

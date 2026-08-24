@@ -2,13 +2,13 @@
 --
 -- Choix de types assumés :
 --
--- * `timestamp` SANS fuseau, pas `timestamptz`. Le domaine (`rdv.py`) manipule des
---   datetime naïfs en heure locale française, et les libellés de créneau prononcés à
---   l'appelant (« demain entre 08h et 10h ») le sont aussi. Stocker en timestamptz
---   appliquerait le fuseau de session et ferait dériver l'aller-retour.
---   ⚠️ À REVOIR AVANT LA PROD : avec un délai de 24 h en heures réelles et le changement
---   d'heure, une échéance posée la veille du basculement vaut 23 h ou 25 h. Passer le
---   domaine en tz-aware est une décision à prendre, pas un détail d'implémentation.
+-- * `timestamp` SANS fuseau — CHOIX ANNULÉ, voir la migration 007 (24/08/2026). Le
+--   raisonnement d'origine confondait deux natures : les libellés de créneau (« demain
+--   entre 08h et 10h ») sont bien des heures de pendule, mais ils sont stockés en texte
+--   dans le `jsonb` `creneau` et n'ont jamais été concernés. Les échéances, elles, sont
+--   des INSTANTS, et les garder naïfs rendait les durées fausses et l'ordre ambigu deux
+--   nuits par an. Les colonnes ci-dessous sont donc passées en `timestamptz` par 007 ;
+--   la doctrine est dans `relais_proto/temps.py`, les cas verrouillés dans R25.
 --
 -- * `jsonb` pour `etat_conversation`, `donnees` (lead), `creneau`, `historique` : ce sont
 --   des blobs versionnés côté application (cf. Conversation.ETAT_VERSION), pas des

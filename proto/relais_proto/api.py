@@ -17,7 +17,7 @@ from fastapi import Cookie, Depends, FastAPI, Form, Header, HTTPException, Reque
 from fastapi.responses import HTMLResponse, JSONResponse, RedirectResponse
 from pydantic import BaseModel, Field
 
-from . import messages, pages, session
+from . import messages, pages, session, temps
 from .calendar_stub import CalendarStub, libelle_creneau
 from .confirmation import creer_jeton, empreinte, lien
 from .depot import Introuvable
@@ -91,7 +91,9 @@ def creer_app(depot, registre: Registre, fabrique_llm, horloge=None,
               cookie_secure: bool = True) -> FastAPI:
     """Collaborateurs injectés explicitement plutôt que par variables globales : les tests
     passent un dépôt mémoire, un MockLLM et une horloge figée, la prod un dépôt Postgres."""
-    maintenant = horloge or (lambda: dt.datetime.now())
+    # l'un des DEUX seuls endroits où l'horloge système entre (l'autre est worker.py) :
+    # elle rend un instant UTC, et tout ce qui suit en hérite (cf. temps.py)
+    maintenant = horloge or temps.maintenant
     app = FastAPI(title="Relais — API backend", version="0.1.0")
 
     @app.exception_handler(Introuvable)
@@ -255,8 +257,12 @@ def creer_app(depot, registre: Registre, fabrique_llm, horloge=None,
             raise HTTPException(422, "date attendue au format AAAA-MM-JJ") from None
         creneau = {"date": corps.date, "de": corps.de, "a": corps.a, "urgence": False,
                    # même fonction que le calendrier : le libellé lu par le client est
-                   # celui qu'aurait prononcé l'agent
-                   "label": libelle_creneau(jour, corps.de, corps.a, t.date())}
+                   # celui qu'aurait prononcé l'agent. « aujourd'hui » se juge à la
+                   # pendule de l'artisan — en UTC, un créneau reproposé à 00h30 le
+                   # deviendrait « demain » pour tout le monde sauf pour lui.
+                   "label": libelle_creneau(
+                       jour, corps.de, corps.a,
+                       temps.en_local(t, artisan.config).date())}
         jeton, empreinte_jeton = creer_jeton()
         try:
             rdv.reproposer(creneau, artisan.config, t, empreinte_jeton)

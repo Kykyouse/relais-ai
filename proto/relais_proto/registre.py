@@ -20,6 +20,8 @@ import pathlib
 import secrets
 from dataclasses import dataclass
 
+from . import temps
+
 
 def empreinte(secret: str) -> str:
     return hashlib.sha256(secret.encode("utf-8")).hexdigest()
@@ -35,6 +37,20 @@ class Artisan:
 
 class Registre:
     def __init__(self, artisans: list[Artisan], secret_webhook_sha256: str):
+        for a in artisans:
+            # Le fuseau est vérifié À LA CONSTRUCTION, pas à l'usage : `ZoneInfo` lève sur
+            # un identifiant inconnu, et sans ce contrôle une faute de frappe dans une
+            # config (« Europe/Pari ») ne se manifesterait qu'au premier calcul d'heure —
+            # donc en plein appel, chez un artisan, un jour donné. Même esprit que
+            # `_exige` dans serveur.py : refuser de démarrer plutôt que tourner à moitié
+            # configuré. Ici et pas dans `depuis_fichier` : l'invariant est celui du
+            # registre, quelle que soit la source (fichier aujourd'hui, table demain).
+            try:
+                temps.fuseau(a.config)
+            except Exception as exc:
+                raise RuntimeError(
+                    f"artisan « {a.id} » : fuseau invalide "
+                    f"({a.config.get('fuseau')!r}) — {exc}") from None
         self._artisans = {a.id: a for a in artisans}
         # normalisé DES DEUX CÔTÉS : le registre peut être écrit en +33..., la plateforme
         # vocale annoncer 01... — sans ça la recherche échoue silencieusement

@@ -5,7 +5,7 @@
 
 ---
 
-# ÉTAT AU 23/08/2026 — à lire en premier
+# ÉTAT AU 24/08/2026 — à lire en premier
 
 > **Ce bloc se REMPLACE, il ne s'empile pas.** Les entrées datées plus bas sont le journal
 > chronologique (le pourquoi des décisions) ; ce bloc-ci est le où-on-en-est.
@@ -13,15 +13,16 @@
 ## En une phrase
 
 Le backend de la phase 1 est fonctionnel et vérifié contre un vrai Postgres : un appel
-entre par HTTP, produit un lead scoré et un RDV, l'artisan valide en 1 tap, l'expiration et
-les messages sortants sont gérés. **Rien ne sort encore du système** : ni voix, ni SMS, ni
-push — les trois attendent un fournisseur.
+entre par HTTP, produit un lead scoré et un RDV, l'artisan valide en 1 tap **depuis son
+navigateur**, l'expiration et les messages sortants sont gérés — et le temps est enfin
+traité correctement (instants UTC, changements d'heure compris). **Il ne manque que la
+voix** : les SMS sortent réellement, mais en mode numéro court qui bloque les URL.
 
 ## Ce qui tourne
 
 ```bash
 cd proto
-python run_scenario.py                              # 26 tests, ~2 s, sans clé ni base
+python run_scenario.py                              # 29 tests, ~3 s, sans clé ni base
 python run_depot_pg.py [--migrer]                   # contrat du port contre Supabase
 uvicorn serveur:app --port 8000                     # API HTTP
 python worker.py [--a-vide]                         # expiration + expédition (cron)
@@ -40,18 +41,16 @@ python run_llm_eval.py [--mock] [--n 3]             # éval appelant-simulé
 | Adaptateur OVH : E.164, corps, échecs (R22) | ✅ | **SMS réellement reçu sur téléphone, 24/08** |
 | Page de confirmation client (HTML, sans JS) | ✅ | mock — le lien SMS mène à une vraie page |
 | Boîte de validation artisan + session (R24) | ✅ | mock — utilisable dans un navigateur |
+| Instants UTC vs heures de pendule (R25) | ✅ | mock + **migration 007 sur Supabase** |
 
 ## Ce qui est encore un double (et non un manque caché)
 
-- **Envoi SMS** : l'adaptateur OVH (`envoi_ovh.py`) est écrit et testé hors ligne (R22),
-  mais **aucun envoi réel n'a eu lieu** : pas d'identifiants, et le Sender ID n'est pas
-  déclaré. `EnvoyeurJournal` reste le mode par défaut, donc **rien ne part**. Le premier
-  envoi réel se fait à la main : `python envoyer_un_sms.py <num> --envoyer` (blanc par
-  défaut), et `--comptes` liste les services SMS du compte. La forme de réponse d'OVH
-  encodée dans l'adaptateur est **CONFIRMÉE** : premier SMS réel envoyé le 24/08 en mode
-  numéro court (réf. `ovh:802084252`), réponse conforme à l'hypothèse. Reste à faire :
-  valider le Sender ID `DupontChauf` (~72 h, risque de refus) pour sortir du mode test — les
-  numéros courts **bloquent les URL**, donc le lien de validation ne peut pas passer par là.
+- **Envoi SMS** : la chaîne sort réellement du système — premier SMS réel le 24/08 en mode
+  **numéro court** (réf. `ovh:802084252`), forme de réponse d'OVH confirmée. Mais les
+  numéros courts **bloquent les URL** : le lien de validation ne peut pas encore passer.
+  Reste à faire : valider le Sender ID `DupontChauf` (~72 h, risque de refus) pour sortir
+  du mode test. `EnvoyeurJournal` reste le défaut (`RELAIS_SMS=journal`), donc un cron mal
+  configuré n'écrit à personne.
 - **`CalendarStub`** : applique les vraies règles d'agenda mais n'est relié à aucun
   calendrier. Google/Outlook non branchés (OAuth Google à lancer tôt : délai calendaire).
 - **Pas de voix** : aucune plateforme vocale branchée, aucun numéro. L'API expose déjà les
@@ -59,15 +58,20 @@ python run_llm_eval.py [--mock] [--n 3]             # éval appelant-simulé
 - **Pas de push** : la relance artisan est mise en file, jamais délivrée.
 - **`config/artisans.json`** : registre en fichier, avec des jetons de dév **publics**.
   Deviendra la table `artisan` (et la FK que `rdv.artisan_id` attend déjà).
+- **Écran de connexion artisan** : accepte le jeton du registre, à remplacer par un code
+  reçu par SMS — le mobile EST l'identité professionnelle, et le canal existe.
 - **`MockLLM`** : rate « Je m'appelle X » (regex sans `IGNORECASE`) — le chemin
   « nom connu » n'est donc jamais exercé dans les tests mock.
 
-## Décisions verrouillées cette session
+## Décisions verrouillées
 
 - **Délais de validation : 24 h / 2 h en heures réelles**, réglables par artisan. À 24 h le
   calcul en heures ouvrées devient nuisible ; il reste disponible via `base_delai`.
 - **L'échéance fait foi, pas le passage du worker** : valider une seconde trop tard est
   refusé, sinon la décision dépend de la latence d'un cron.
+- **Un horodatage est un INSTANT en UTC ; une heure de config est une heure de PENDULE**
+  (`temps.py`, règle n°7). Le fuseau est une config d'artisan, pas une constante. Sans
+  quoi « l'échéance fait foi » était fausse deux heures par an (heure répétée d'octobre).
 - **Effets idempotents avant changement d'état** dans les workers : l'inverse perd le SMS
   du client pour de bon.
 - **SMS strictement sortant, « Répondez OUI » remplacé par un lien à un tap.** Motif
@@ -80,18 +84,16 @@ python run_llm_eval.py [--mock] [--n 3]             # éval appelant-simulé
 
 ## Dettes et décisions ouvertes
 
-1. **Fuseaux / changement d'heure** — le domaine est en datetime naïfs et le schéma en
-   `timestamp` sans fuseau. Avec 24 h de délai réel, une échéance posée la veille du
-   basculement vaut 23 h ou 25 h. **À trancher avant la prod**, c'est une décision de
-   conception, pas un détail.
+1. ~~Fuseaux / changement d'heure~~ — **traité le 24/08** (instants UTC, migration 007,
+   R25). Reste un résidu connu et assumé : `relais_base_de_test.autorise_le`, table du
+   harnais de test, est encore en `timestamp`.
 2. **Fournisseur SMS** — choix ouvert et **réversible** (tout passe par le port
    `Envoyeur`). Depuis le flux par lien, le seul besoin est : envoyer un SMS transactionnel
    vers un mobile FR avec un **sender ID alphanumérique déclaré**. Critère de sélection =
    qualité du processus de déclaration du Sender ID (Charte AF2M du 01/03/2026), + DPA et
    hébergement UE. Candidats FR/UE équivalents : OVHcloud, LinkMobility, Octopush,
-   SMSFactor, Brevo. Aucune clé n'est nécessaire tant que l'adaptateur n'existe pas
-   (`EnvoyeurJournal` par défaut) ; le jour où l'on en crée, la porter au strict minimum
-   (chez OVH : consumer key limité à `POST /sms/*`, avec expiration).
+   SMSFactor, Brevo. Le jour où l'on crée une clé, la porter au strict minimum (chez OVH :
+   consumer key limité à `POST /sms/*`, avec expiration).
 3. **Fournisseur de NUMÉROS / plateforme vocale** — décision distincte de la précédente,
    et à ne pas anticiper : les plateformes managées (Vapi, Retell) fournissent leurs propres
    numéros ou s'intègrent en trunk SIP. Prendre des numéros chez un opérateur avant d'avoir
@@ -104,8 +106,11 @@ python run_llm_eval.py [--mock] [--n 3]             # éval appelant-simulé
 
 ## Prochaine étape
 
-L'app mobile qui consomme `GET /rdv` — c'est là que la validation 1-tap devient tangible,
-et c'est indépendant de tout fournisseur.
+Deux chantiers à délai externe, à lancer AVANT de coder quoi que ce soit d'autre parce que
+l'attente court en arrière-plan : **la déclaration du Sender ID `DupontChauf`** (~72 h,
+sans quoi le lien de validation ne peut pas partir en SMS) et **l'OAuth Google Calendar**
+(délai de vérification). Le code pendant ce temps : brancher un vrai calendrier derrière
+`CalendarStub`, ou remplacer l'écran de connexion par un code SMS.
 
 ---
 
@@ -1273,3 +1278,76 @@ construit — qui a révélé le trou. Les jeux d'essai propres ne produisent pa
 la production produit toute seule.
 
 Suite : **28 PASS**.
+
+### 24/08 — les fuseaux : la dette n°1 était deux pannes, pas une
+
+**Fait.** Le domaine passe aux **instants tz-aware en UTC**, le schéma en `timestamptz`
+(migration 007, appliquée sur Supabase). Doctrine et outils dans un module dédié,
+`relais_proto/temps.py` ; règle n°7 de `CLAUDE.md` ; test **R25**.
+
+**Ce que j'ai trouvé en ouvrant le sujet.** Le journal notait une panne — « une échéance
+posée la veille du basculement vaut 23 h ou 25 h ». Il y en avait **deux**, et la seconde
+était la plus grave :
+
+1. **Une durée fausse.** `depuis + 24 h` sur une pendule vaut 23 heures réelles le dernier
+   dimanche de mars. L'artisan à qui on promet 24 heures en perd une.
+2. **Un ordre ambigu.** Le dernier dimanche d'octobre, 02h00–02h59 arrive **deux fois**.
+   `maintenant >= expire_a` pouvait donc être vrai, puis redevenir faux. Un RDV
+   **dé-expiré** — en contradiction frontale avec l'invariant n°1 de `rdv.py` (aucune
+   sortie d'un état terminal) et avec la décision verrouillée le 23/08 : « l'échéance fait
+   foi, pas le passage du worker ». Deux heures par an, cette décision était fausse.
+
+Le cas concret que R25 écrit : l'échéance tombe à la **seconde** occurrence de 2 h 30,
+l'artisan tape à la **première**. Il est dans les temps d'une heure pleine. Le code naïf
+lisait deux fois « 02:30 » et lui refusait sa décision.
+
+**Ce qui était déjà sain, par chance plus que par choix.** Les créneaux prononcés au
+client (`{date, de:"08:00", a:"10:00", label}`) sont des **chaînes** dans un `jsonb`,
+jamais des colonnes datetime : « demain entre 08h et 10h » ne pouvait pas dériver. Et la
+règle n°2 de `rdv.py` — l'horloge est toujours un paramètre — laissait exactement **deux**
+points d'entrée à convertir, `api.py` et `worker.py`. Une règle écrite pour la testabilité
+a payé sur un sujet qu'elle ne visait pas.
+
+**Décidé.**
+
+- **Instants en UTC, heures de pendule dans le fuseau de l'artisan** (`cfg["fuseau"]`,
+  défaut `Europe/Paris`). Restent des heures de pendule, et doivent le rester : la plage de
+  silence 21h–08h, les heures ouvrées, la fenêtre d'urgence, les libellés de créneau.
+- **tz-aware plutôt qu'une convention « naïf = UTC ».** Python refuse de comparer un naïf
+  et un aware : un chemin oublié lève une `TypeError` bruyante au lieu de dériver d'une
+  heure en silence. La bascule l'a prouvé tout de suite — la suite a planté au premier
+  calcul d'heures ouvrées, exactement là où il fallait.
+- **Jamais d'arithmétique sur un aware en heure locale.** `paris_aware + timedelta(24 h)`
+  ajoute 24 h à la *pendule* : c'est le piège d'origine reproduit avec un objet aware.
+  Tout circule en UTC, la conversion n'a lieu qu'aux bords.
+- **Le fuseau est une config d'artisan, pas une constante.** Le jour où un artisan est à
+  La Réunion, ça doit se lire comme un réglage, pas comme un bug. Vérifié à la
+  construction du `Registre` : « Europe/Pari » refuse de démarrer au lieu de lever en
+  plein appel.
+- **Ambiguïté et trou : choix explicites.** Heure inexistante (saut de mars) → l'instant
+  tombe après le saut. Heure répétée (octobre) → première occurrence. Une fin de plage de
+  silence s'applique ainsi au plus tôt : on ne fait pas attendre un client parce que la
+  pendule bégaie. Postgres tranche pareil dans la migration 007 — c'est le point.
+
+**Migration.** `at time zone 'Europe/Paris'` sur chaque colonne : les valeurs en base
+étaient de l'heure locale, un cast nu les aurait prises pour de l'UTC et décalées de deux
+heures sans rien dire. Même précaution côté blobs : `temps.depuis_iso` relit un horodatage
+naïf (état de conversation écrit avant aujourd'hui) comme de l'heure de Paris. Repli
+supprimable quand plus aucun blob d'avant le 24/08 ne circulera. La session Postgres est
+fixée à UTC : deux machines ne doivent pas lire la même ligne avec deux offsets.
+
+**R25 a été écrit avant le correctif** (règle n°4) et **éprouvé par mutation** : six
+erreurs de conception réintroduites, dont l'arithmétique sur une pendule locale, la plage
+de silence calculée en UTC, et les blobs relus comme de l'UTC. Quatre tuées directement ;
+une cinquième (l'instant naïf accepté) ne tombe qu'en retirant les *deux* gardes, ce qui
+est de la défense en profondeur et non un trou ; la sixième (heures ouvrées calculées sur
+la date UTC) est un **mutant équivalent** — l'algorithme se rattrape par son `max()`.
+Noté ici pour ne pas la re-chercher : elle ne peut pas être tuée, et `temps.en_local` reste
+la bonne expression de l'intention.
+
+**Ce que ça ne couvre pas.** Le contrôle de fuseau porte sur le registre, pas sur les
+fichiers de config lus ailleurs. Et `relais_base_de_test.autorise_le` (table du harnais de
+test, pas du domaine) reste en `timestamp` : hors périmètre, signalé pour ne pas passer
+pour un oubli.
+
+Suite : **29 PASS**, contrat Postgres rejoué contre Supabase après migration 007.
