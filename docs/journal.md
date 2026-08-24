@@ -21,7 +21,8 @@ du produit — et le nom commercial, qui commande le reste.
 
 ```bash
 cd proto
-python run_scenario.py                              # 31 tests, ~3 s, sans clé ni base
+python run_scenario.py                              # 32 tests, ~3 s, sans clé ni base
+python semer_artisans.py [--ecrire]                 # amorce la table `artisan`
 python run_depot_pg.py [--migrer]                   # contrat du port contre Supabase
 uvicorn serveur:app --port 8000                     # API HTTP
 python worker.py [--a-vide]                         # expiration + expédition (cron)
@@ -43,6 +44,8 @@ python run_llm_eval.py [--mock] [--n 3]             # éval appelant-simulé
 | Instants UTC vs heures de pendule (R25) | ✅ | mock + **migration 007 sur Supabase** |
 | Extraction du nom de l'appelant (R26) | ✅ | mock, mutations 6/6 |
 | SMS de confirmation au client, chemin nominal (R27) | ✅ | mock, mutations 5/5 |
+| Table `artisan` + FK sur 5 tables (migration 008) | ✅ | **Supabase réel**, contrat du port |
+| Connexion artisan par code SMS (R28) | ✅ | mock, mutations 7/8 (1 défense en profondeur) |
 
 ## Ce qui est encore un double (et non un manque caché)
 
@@ -60,10 +63,9 @@ python run_llm_eval.py [--mock] [--n 3]             # éval appelant-simulé
   condition d'existence du produit. Google/Outlook : **volontairement non lancé** (cf.
   dette n°4).
 - **Pas de push** : la relance artisan est mise en file, jamais délivrée.
-- **`config/artisans.json`** : registre en fichier, avec des jetons de dév **publics**.
-  Deviendra la table `artisan`.
-- **Écran de connexion artisan** : accepte le jeton du registre, à remplacer par un code
-  reçu par SMS.
+- **Onboarding d'un artisan** : la table `artisan` existe, mais le seul chemin
+  d'écriture est `semer_artisans.py` depuis `config/artisans.json`. Il faudra un vrai
+  parcours d'inscription, pas un script.
 
 ## Décisions verrouillées
 
@@ -112,7 +114,10 @@ python run_llm_eval.py [--mock] [--n 3]             # éval appelant-simulé
 6. **Fournisseur SMS** — choix réversible (tout passe par le port `Envoyeur`). Critère :
    qualité du processus de déclaration du Sender ID, DPA, hébergement UE. Candidats
    équivalents : OVHcloud (en place), LinkMobility, Octopush, SMSFactor, Brevo.
-7. **Table `artisan`** + FK + état d'abonnement, en remplacement du registre fichier.
+7. ~~Table `artisan`~~ et ~~écran de connexion provisoire~~ — **traités le 25/08**
+   (migrations 008 et 009, R28). Le jeton porteur survit pour l'API et la future app
+   mobile : c'est aussi le filet si le SMS ne part pas (crédits épuisés, fournisseur en
+   panne) — sans lui, une panne SMS nous enfermerait dehors.
 8. **`FOR UPDATE SKIP LOCKED`** quand plusieurs workers tourneront (optimisation, pas
    justesse).
 9. Formulation « d'ici 24 heures » à l'oral, un peu mécanique — à retoucher sciemment.
@@ -122,10 +127,19 @@ python run_llm_eval.py [--mock] [--n 3]             # éval appelant-simulé
 
 ## Prochaine étape
 
-**Connexion par code SMS + table `artisan`** (avec état d'abonnement, pour la facturation
-future). Débloqué à 100 % : un code à 6 chiffres ne contient pas d'URL, le numéro court
-suffit. Remplace l'écran de connexion provisoire et ferme la dette du registre fichier
-avec ses jetons de dév publics.
+Rien n'est plus débloqué à 100 % côté code : ce qui reste attend soit **le nom commercial**
+(Sender ID, OAuth Google, et les trois endroits où « Relais » est en dur), soit une
+**décision** (plateforme vocale, premier calendrier à brancher), soit le terrain.
+
+Les candidats sans dépendance externe, par valeur décroissante :
+
+1. **Qualité de l'agent** — faire tourner l'éval contre le vrai modèle, analyser, corriger.
+   C'est le différenciateur du produit et le seul chantier qui ne dépend de personne.
+2. **Un vrai parcours d'onboarding** pour remplacer `semer_artisans.py`.
+3. **Le nom du produit en config** (dette n°3) : faisable sans connaître le nom final,
+   justement pour que le jour où il arrive, ce soit une ligne de config.
+
+Le spike vocal ne s'ouvre **qu'en session dédiée**.
 
 Le spike vocal ne s'ouvre **qu'en session dédiée**. Le Sender ID et l'OAuth Google attendent
 le nom commercial — c'est-à-dire le cousin, pas nous.
@@ -1630,3 +1644,104 @@ rattrapage (les RDV validés sans message associé) serait la vraie réponse ; i
 besoin réel.
 
 Suite : **31 PASS**, contrat Postgres toujours vert.
+
+### 25/08 — connexion par code SMS : le champ « jeton » disparaît
+
+**Fait.** Table `artisan` (migration 008, FK sur cinq tables), puis connexion par **code à
+6 chiffres reçu par SMS** (migration 009, R28). L'écran qui faisait saisir un secret de
+longue durée dans un champ n'existe plus.
+
+**Ce que ça ferme.** La dette n°7 (registre fichier avec jetons de dév publics) et l'écran
+de connexion provisoire, tous deux ouverts depuis le 23/08.
+
+### La table `artisan` : deux choix de schéma contre-intuitifs
+
+Les deux sont imposés par les données déjà en base, pas par le goût :
+
+- **`id` en `text`, pas en `uuid`.** Les colonnes `artisan_id` portent déjà « art-dupont » :
+  une clé en uuid rendait toute reprise impossible. L'identifiant lisible se révèle un
+  avantage en exploitation — « artisan art-dupont inconnu » se lit sans jointure.
+- **`numero_relais` et `telephone` NULLABLES**, ce qui surprend pour des champs aussi
+  essentiels. C'est la condition pour poser les FK sur des données existantes : la
+  migration crée d'abord une ligne par `artisan_id` déjà référencé, dont elle ne connaît en
+  SQL que l'identifiant. Ces lignes portent `etat_abonnement = 'a_reprendre'`, et le
+  registre les écarte **en le disant** au démarrage. Vérifié en vrai : `art-martin`, qui
+  avait des données mais aucune graine, a été récupéré exactement ainsi.
+
+Les FK sont posées dans une boucle conditionnelle : **les migrations sont rejouées en
+entier** à chaque `--migrer`, et un `add constraint` nu passerait une fois puis casserait
+tout. Rejouée deux fois pour le vérifier.
+
+`on delete restrict` est volontaire : on ne supprime pas un artisan qui porte des
+rendez-vous ou des messages — ce sont des engagements envers des clients. Une résiliation
+se marque dans `etat_abonnement`, elle n'efface rien.
+
+### Le code SMS : la sûreté ne vient pas de la longueur
+
+Six chiffres, c'est un million de possibilités — confortable pour un humain sur un
+chantier, dérisoire pour une machine. Trois propriétés compensent, et chacune est
+verrouillée par R28 :
+
+1. **le code meurt vite** (10 minutes) ;
+2. **les essais sont comptés** (3), et le code meurt avec eux ;
+3. **un seul code vivant par artisan** — d'où la clé primaire sur `artisan_id` et non sur
+   l'empreinte. Sans ça, chaque demande ajouterait une cible, et en demander mille
+   donnerait mille chances au lieu de trois.
+
+S'y ajoutent un **frein au renvoi** (60 s : chaque code est un SMS facturé et une
+notification chez quelqu'un — sans frein, un tiers fait sonner le téléphone d'un artisan à
+nos frais) et l'**absence d'énumération** : la page répond exactement la même chose pour un
+numéro connu et pour un inconnu. Ce dernier point protège nos clients, pas nous : sinon
+n'importe qui peut demander à cette page si tel numéro est celui d'un de nos artisans.
+
+L'essai est **consommé avant la comparaison**. Un processus tué au mauvais moment ne doit
+pas offrir une tentative gratuite — c'est tout ce qui sépare six chiffres d'un secret
+devinable.
+
+### Un bug trouvé par le test, pas par la relecture
+
+La clé d'idempotence du SMS dérivait d'abord de **l'horodatage à la seconde**. Ça paraît
+marcher et ça ne marche pas : deux demandes dans la même seconde rendent le PREMIER
+message, donc l'ANCIEN code, alors que la base porte déjà l'empreinte du nouveau —
+l'artisan reçoit un code que le système refusera. Trouvé en rejouant deux connexions
+rapprochées dans R24. La clé dérive maintenant de l'**empreinte du code** : un code donné a
+un message et un seul, un code neuf a toujours le sien.
+
+### Envoi immédiat, et une leçon réapprise
+
+Un code qui arrive au prochain passage du cron n'est pas un code de connexion. L'API prend
+donc un `Envoyeur` injecté et expédie **ce message seul** (`Expediteur.passer(seulement=…)`)
+— surtout pas la file entière : un artisan qui se connecte déclencherait sinon tous les SMS
+clients en attente, hors du cron et hors de tout contrôle de débit. La file reste la source
+de vérité et le worker rattrape si l'envoi direct échoue.
+
+Le choix du fournisseur (`RELAIS_SMS`) a été **remonté dans `envoi.choisir_envoyeur`**,
+partagé par le serveur et le worker. Même leçon que le 24/08 avec `resoudre_connexion` :
+une logique de composition qui ne vit que dans un point d'entrée laisse l'autre diverger en
+silence.
+
+### Effets sur les tests existants
+
+- **R23** : sa convention de nommage (« `*_client` part en SMS ») est remplacée par une
+  **liste explicite**. Le code de connexion est un SMS envoyé à l'ARTISAN : la règle
+  déduite du nom laissait passer sans contrôle de coût le seul message que tout artisan
+  reçoit à chaque connexion.
+- **R24** : se connecte désormais comme un humain — demande, lecture du code **dans le
+  SMS**, saisie. Aucun test ne va chercher le code en base : il n'y est pas, et c'est
+  précisément la propriété à préserver.
+- Le contrôle des attributs de cookie a dû être restructuré : `httpx` refuse d'envoyer un
+  cookie `Secure` sur du HTTP — donc une connexion complète en `cookie_secure=True` est
+  impossible en test, exactement comme dans un navigateur. C'est le bug du 24/08 qui se
+  rejoue, correctement cette fois. Le test repose le cookie à la main pour lire l'en-tête
+  émis sans éprouver le transport, et contrôle maintenant **les deux** cookies.
+
+**Mutation : 7/8 sur R28.** Le survivant est le plafond d'essais, doublé par la suppression
+du code au troisième échec : en retirant les DEUX gardes, R28 tombe. Défense en profondeur,
+pas trou de test.
+
+**Reste ouvert.** Le jeton porteur survit pour l'API et la future app mobile : c'est aussi
+le filet si le SMS ne part pas (crédits épuisés, fournisseur en panne) — sans lui, une
+panne SMS nous enfermerait dehors. Et `semer_artisans.py` reste le seul chemin d'écriture
+du registre : il faudra un vrai onboarding, pas un script.
+
+Suite : **32 PASS**, contrat Postgres vert contre les deux migrations.

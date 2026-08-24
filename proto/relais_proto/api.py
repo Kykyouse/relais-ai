@@ -17,7 +17,9 @@ from fastapi import Cookie, Depends, FastAPI, Form, Header, HTTPException, Reque
 from fastapi.responses import HTMLResponse, JSONResponse, RedirectResponse
 from pydantic import BaseModel, Field
 
-from . import messages, pages, session, temps
+import secrets
+
+from . import connexion, messages, pages, session, temps
 from .calendar_stub import CalendarStub, libelle_creneau
 from .confirmation import creer_jeton, empreinte, lien
 from .depot import Introuvable
@@ -28,6 +30,20 @@ from .scoring import build_lead
 from .states import State
 
 CONTRAT_LEAD_VERSION = 1
+
+# Cookie de la connexion EN COURS : il ne porte que l'identifiant de l'artisan à qui un
+# code vient d'être envoyé, le temps de le taper. Ce n'est pas un secret — la sécurité
+# tient au code, à sa durée de vie et au nombre d'essais — mais il est `httponly` comme
+# les autres, et il disparaît dès la session ouverte.
+COOKIE_CONNEXION = "relais_connexion"
+
+
+def _masquer(numero: str) -> str:
+    """« +33612345678 » → « +33 6 •• •• •• 78 ». Assez pour que l'artisan reconnaisse son
+    numéro, pas assez pour qu'un visiteur qui pose un cookie au hasard le recopie."""
+    if len(numero) < 4:
+        return numero or "votre mobile"
+    return f"{numero[:4]} •• •• •• {numero[-2:]}"
 
 
 # ------------------------------------------------------------------ schémas
@@ -88,12 +104,24 @@ class ReproposerIn(BaseModel):
 # ------------------------------------------------------------------ fabrique
 def creer_app(depot, registre: Registre, fabrique_llm, horloge=None,
               base_url: str = "https://relais.example",
-              cookie_secure: bool = True) -> FastAPI:
+              cookie_secure: bool = True, envoyeur=None) -> FastAPI:
     """Collaborateurs injectés explicitement plutôt que par variables globales : les tests
-    passent un dépôt mémoire, un MockLLM et une horloge figée, la prod un dépôt Postgres."""
+    passent un dépôt mémoire, un MockLLM et une horloge figée, la prod un dépôt Postgres.
+
+    `envoyeur` est facultatif et ne sert qu'au **code de connexion**, qui doit partir tout
+    de suite : un code qui arrive au prochain passage du cron n'est pas un code. Sans lui,
+    tout continue de fonctionner — le message reste en file et le worker l'expédiera, avec
+    la latence du cron.
+    """
     # l'un des DEUX seuls endroits où l'horloge système entre (l'autre est worker.py) :
     # elle rend un instant UTC, et tout ce qui suit en hérite (cf. temps.py)
     maintenant = horloge or temps.maintenant
+    expediteur = None
+    if envoyeur is not None:
+        from .envoi import Expediteur
+        expediteur = Expediteur(
+            depot, envoyeur,
+            lambda aid: (a.config if (a := registre.artisan(aid)) else None))
     app = FastAPI(title="Relais — API backend", version="0.1.0")
 
     @app.exception_handler(Introuvable)
@@ -360,21 +388,100 @@ def creer_app(depot, registre: Registre, fabrique_llm, horloge=None,
     def page_connexion() -> HTMLResponse:
         return HTMLResponse(pages.connexion())
 
-    @app.post("/connexion")
-    def ouvrir_session(jeton: str = Form(...)):
-        """PROVISOIRE : accepte le jeton d'artisan du registre. Sera remplacé par un code
-        reçu par SMS — le numéro de mobile est l'identité professionnelle de l'artisan et
-        le canal existe déjà."""
-        artisan = registre.par_token(jeton.strip())
-        if artisan is None:
-            return HTMLResponse(pages.connexion("Jeton refusé."), status_code=401)
+    def _ouvrir_session(artisan_id: str, t) -> RedirectResponse:
+        """Session posée et cookie émis. Le seul endroit qui les crée."""
         clair, emp = session.creer_jeton()
-        t = maintenant()
-        depot.creer_session(emp, artisan.id, session.expiration(t), t)
+        depot.creer_session(emp, artisan_id, session.expiration(t), t)
         reponse = RedirectResponse("/app", status_code=303)
         reponse.set_cookie(session.NOM_COOKIE, clair,
                            **session.attributs_cookie(secure=cookie_secure))
+        reponse.delete_cookie(COOKIE_CONNEXION, path="/")
         return reponse
+
+    @app.post("/connexion")
+    def demander_code(telephone: str = Form(...)):
+        """Envoie un code à 6 chiffres au mobile de l'artisan.
+
+        **La réponse est la MÊME que le numéro soit connu ou non** : sinon cette page
+        dirait à quiconque la sollicite si tel numéro est celui d'un de nos artisans.
+        Un numéro mal tapé mène donc à l'écran de saisie, où le code sera simplement
+        refusé — et le lien « recommencer » est là pour ça.
+        """
+        numero = connexion.normaliser_telephone(telephone)
+        artisan = registre.par_telephone(numero)
+        t = maintenant()
+        reponse = HTMLResponse(pages.saisie_code(_masquer(numero)))
+        if artisan is None:
+            return reponse
+
+        # Frein au renvoi : chaque code est un SMS facturé et une notification chez
+        # quelqu'un. Sans lui, un tiers fait sonner le téléphone d'un artisan en boucle à
+        # nos frais. Le code précédent reste valable, donc rien n'est perdu pour l'artisan
+        # qui insiste — et il n'apprend rien de plus qu'un inconnu, la page est la même.
+        precedent = depot.code_connexion(artisan.id)
+        if precedent and (t - precedent.cree_a).total_seconds() < \
+                connexion.DELAI_RENVOI_SECONDES:
+            return reponse
+
+        code, emp = connexion.creer_code()
+        depot.poser_code_connexion(artisan.id, emp, connexion.expiration(t), t,
+                                   telephone=numero)
+        try:
+            brouillon = messages.code_connexion_artisan(
+                artisan.id, numero, code, artisan.config,
+                connexion.DUREE_MINUTES, empreinte_code=emp)
+        except messages.MessageInterdit:
+            return reponse           # gabarit refusé : on n'en dit pas plus au visiteur
+        message, _ = depot.enfiler_message(brouillon, t)
+        # Envoi IMMÉDIAT et ciblé : un code de connexion qui arrive au prochain passage du
+        # cron n'est pas un code de connexion. La file reste la source de vérité (et le
+        # worker rattrapera si l'envoi direct échoue), on ne fait que la doubler ici.
+        if expediteur is not None:
+            expediteur.passer(t, seulement={message.id})
+        reponse.set_cookie(COOKIE_CONNEXION, artisan.id,
+                           max_age=connexion.DUREE_MINUTES * 60, path="/",
+                           httponly=True, samesite="lax", secure=cookie_secure)
+        return reponse
+
+    @app.post("/connexion/code")
+    def verifier_code(code: str = Form(...),
+                      relais_connexion: str = Cookie(default="",
+                                                     alias=COOKIE_CONNEXION)):
+        """Vérifie le code et ouvre la session.
+
+        **Un seul message d'erreur pour toutes les causes** (pas de code en cours, périmé,
+        essais épuisés, mauvais code) : les distinguer dirait à qui tâtonne s'il vise un
+        numéro connu et combien d'essais il lui reste.
+        """
+        REFUS = "Code incorrect ou expiré. Demandez-en un nouveau."
+        t = maintenant()
+        pose = depot.code_connexion(relais_connexion) if relais_connexion else None
+        if pose is None or t >= pose.expire_a:
+            if pose is not None:
+                depot.supprimer_code_connexion(pose.artisan_id)
+            return HTMLResponse(pages.saisie_code("", REFUS), status_code=401)
+
+        # L'essai est consommé AVANT la comparaison : un processus tué au mauvais moment,
+        # ou une comparaison qui lève, ne doit pas offrir une tentative gratuite. C'est
+        # tout ce qui sépare 6 chiffres d'un secret devinable.
+        essais = depot.consommer_essai_code(pose.artisan_id)
+        if essais > connexion.ESSAIS_MAX:
+            depot.supprimer_code_connexion(pose.artisan_id)
+            return HTMLResponse(pages.saisie_code("", REFUS), status_code=401)
+        if not secrets.compare_digest(pose.empreinte,
+                                      connexion.empreinte(code)):
+            if essais >= connexion.ESSAIS_MAX:
+                depot.supprimer_code_connexion(pose.artisan_id)
+            return HTMLResponse(pages.saisie_code(_masquer(pose.telephone or ""), REFUS),
+                                status_code=401)
+
+        artisan = registre.artisan(pose.artisan_id)
+        if artisan is None:          # retiré du registre entre la demande et la saisie
+            depot.supprimer_code_connexion(pose.artisan_id)
+            return HTMLResponse(pages.connexion(REFUS), status_code=401)
+        # usage unique : le code ne resservira pas, même dans sa fenêtre de validité
+        depot.supprimer_code_connexion(pose.artisan_id)
+        return _ouvrir_session(artisan.id, t)
 
     @app.post("/deconnexion")
     def fermer_session(relais_session: str = Cookie(default="",

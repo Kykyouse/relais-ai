@@ -34,7 +34,7 @@ import sys
 from dotenv import load_dotenv
 
 from relais_proto.depot_pg import DepotPostgres
-from relais_proto.envoi import EnvoyeurJournal, Expediteur
+from relais_proto.envoi import EnvoyeurJournal, Expediteur, choisir_envoyeur
 from relais_proto.expiration import WorkerExpiration
 from relais_proto.messages import StatutMessage
 from relais_proto.registre import Registre
@@ -45,20 +45,8 @@ RACINE = pathlib.Path(__file__).parent
 load_dotenv(RACINE.parent / ".env")
 
 
-def _choisir_envoyeur():
-    """Rend (envoyeur, libellé). Défaut inoffensif : un cron mal configuré ne doit pas se
-    mettre à écrire à de vrais clients. L'envoi réel se demande explicitement."""
-    mode = (os.environ.get("RELAIS_SMS") or "journal").strip().lower()
-    if mode != "ovh":
-        return EnvoyeurJournal(), "journal (rien ne part)"
-    compte = os.environ.get("OVH_SMS_COMPTE")
-    if not compte:
-        raise RuntimeError("RELAIS_SMS=ovh exige OVH_SMS_COMPTE (voir .env.example)")
-    from relais_proto.envoi_ovh import EnvoyeurOVH, transport_sdk
-    numero_court = os.environ.get("RELAIS_SMS_NUMERO_COURT") == "1"
-    libelle = "OVH — ENVOI RÉEL" + (" par NUMÉRO COURT (URL bloquées : les SMS de "
-                                    "reproposition échoueront)" if numero_court else "")
-    return EnvoyeurOVH(transport_sdk(), compte, numero_court=numero_court), libelle
+# Le choix du fournisseur vit dans `relais_proto.envoi` : le serveur en a besoin lui aussi
+# (codes de connexion), et deux façons de le choisir finiraient par diverger.
 
 
 def run() -> int:
@@ -101,7 +89,7 @@ def run() -> int:
         return 0
 
     try:
-        envoyeur, mode = _choisir_envoyeur()
+        envoyeur, mode = choisir_envoyeur()
     except Exception as exc:      # configuration incomplète : message net, pas une trace
         print(f"  {exc}")
         depot.fermer()

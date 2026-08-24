@@ -128,6 +128,13 @@ TEMPLATES = {
     # Aucune URL : ce SMS part donc en numéro court, sans attendre le Sender ID.
     "confirmation_client": (
         "Bonjour, c'est {nom_entreprise}. C'est confirmé : {prenom} passe {creneau}."),
+    # Le code de connexion. Volontairement bref et sans lien : c'est ce qui lui permet de
+    # partir par numéro court dès aujourd'hui. La mention « ne le communiquez à personne »
+    # tient en quelques caractères et vaut mieux qu'un rappel de sécurité par ailleurs :
+    # c'est au moment où il lit le code que l'artisan peut se faire manipuler.
+    "code_connexion_artisan": (
+        "Relais : votre code de connexion est {code}. Valable {minutes} minutes. "
+        "Ne le communiquez à personne."),
     "confirmation_artisan": (
         "Relais : {client} a validé le créneau {creneau}. C'est dans votre agenda."),
     "expiration_artisan": (
@@ -151,6 +158,33 @@ def _texte(cle: str, cfg: dict, *, rdv_valide: bool = False, **variables: str) -
     if violations:
         raise MessageInterdit(f"template {cle} : {violations}")
     return texte
+
+
+def code_connexion_artisan(artisan_id: str, telephone: str, code: str, cfg: dict,
+                           minutes: int, empreinte_code: str) -> Brouillon:
+    """Le code SMS qui ouvre une session artisan.
+
+    **La clé d'idempotence dérive de l'EMPREINTE DU CODE**, et c'est le seul choix juste :
+
+      * dériver du seul `artisan_id` refuserait tout second code — un artisan qui n'a pas
+        reçu son SMS ne pourrait plus jamais se connecter ;
+      * dériver de l'horodatage à la seconde paraît marcher et ne marche pas : deux
+        demandes dans la même seconde rendent le PREMIER message, donc l'ANCIEN code,
+        alors que la base porte déjà l'empreinte du nouveau. L'artisan reçoit un code
+        que le système refusera. Trouvé par R24 le 25/08, en rejouant deux connexions
+        rapprochées.
+
+    Avec l'empreinte : un code donné a un message et un seul (donc un réessai d'envoi ne
+    double pas le SMS), et un code neuf a toujours le sien.
+
+    Destinataire ARTISAN : la plage de silence ne s'applique donc pas. C'est voulu — il
+    vient de demander à se connecter, à 3 h du matin comme à midi.
+    """
+    return Brouillon(
+        cle_idempotence=f"code_connexion:{artisan_id}:{empreinte_code[:16]}",
+        artisan_id=artisan_id,
+        destinataire=Destinataire.ARTISAN, canal=Canal.SMS, cible=telephone,
+        texte=_texte("code_connexion_artisan", cfg, code=code, minutes=str(minutes)))
 
 
 def confirmation_client(rdv, lead_donnees: dict, cfg: dict) -> Brouillon:

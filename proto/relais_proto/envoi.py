@@ -58,6 +58,32 @@ class Envoyeur(Protocol):
     def envoyer(self, message: MessageSortant, cfg: dict) -> Envoi: ...
 
 
+def choisir_envoyeur() -> tuple[Envoyeur, str]:
+    """Le fournisseur d'envoi d'après l'environnement. Rend `(envoyeur, libellé)`.
+
+    **Partagé par le worker ET le serveur**, comme `resoudre_connexion` l'est pour la base,
+    et pour la même raison apprise le 24/08 : une logique de composition qui ne vit que
+    dans un point d'entrée laisse l'autre diverger en silence. Depuis que l'API envoie
+    elle-même les codes de connexion, les deux ont besoin d'un envoyeur — il ne doit pas y
+    avoir deux façons de le choisir.
+
+    Défaut volontairement inoffensif : sans `RELAIS_SMS=ovh`, rien ne part. Un cron ou un
+    serveur mal configuré ne doit pas se mettre à écrire à de vrais clients.
+    """
+    import os
+    mode = (os.environ.get("RELAIS_SMS") or "journal").strip().lower()
+    if mode != "ovh":
+        return EnvoyeurJournal(), "journal (rien ne part)"
+    compte = os.environ.get("OVH_SMS_COMPTE")
+    if not compte:
+        raise RuntimeError("RELAIS_SMS=ovh exige OVH_SMS_COMPTE (voir .env.example)")
+    from .envoi_ovh import EnvoyeurOVH, transport_sdk
+    numero_court = os.environ.get("RELAIS_SMS_NUMERO_COURT") == "1"
+    libelle = "OVH — ENVOI RÉEL" + (" par NUMÉRO COURT (URL bloquées : les SMS de "
+                                    "reproposition échoueront)" if numero_court else "")
+    return EnvoyeurOVH(transport_sdk(), compte, numero_court=numero_court), libelle
+
+
 class EnvoyeurJournal:
     """Double de test et mode dév : n'envoie rien, garde tout. Volontairement dans le code
     de production : c'est le mode par défaut tant qu'aucun fournisseur n'est choisi, et il
@@ -162,9 +188,19 @@ class Expediteur:
         self.envoyeur = envoyeur
         self.config_pour = config_pour
 
-    def passer(self, maintenant: dt.datetime) -> RapportEnvoi:
+    def passer(self, maintenant: dt.datetime,
+               seulement: set[str] | None = None) -> RapportEnvoi:
+        """Un passage de la file. `seulement` restreint aux identifiants donnés.
+
+        Ce filtre existe pour le code de connexion : l'API doit pouvoir expédier CE
+        message tout de suite, sans vider la file entière depuis une requête web — un
+        artisan qui se connecte déclencherait sinon l'envoi de tous les SMS clients en
+        attente, hors du cron et hors de tout contrôle de débit.
+        """
         rapport = RapportEnvoi()
         for message in self.depot.messages(StatutMessage.A_ENVOYER):
+            if seulement is not None and message.id not in seulement:
+                continue
             rapport.examines += 1
             cfg = self.config_pour(message.artisan_id) if message.artisan_id else None
             if cfg is None:

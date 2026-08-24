@@ -9,6 +9,7 @@ from __future__ import annotations
 import datetime as dt
 import json
 import pathlib
+import re
 import sys
 from zoneinfo import ZoneInfo
 
@@ -339,6 +340,30 @@ def heure_fr_le(jour: dt.date, heure: dt.time) -> dt.datetime:
 
 
 LUNDI_9H = heure_fr(2026, 8, 24, 9, 0)  # horloge de référence des tests RDV (heure locale)
+
+
+def code_du_sms(depot, artisan_id: str | None = None) -> str | None:
+    """Le code de connexion, lu UNIQUEMENT dans le SMS mis en file — comme l'artisan le lit
+    sur son téléphone. Aucun test ne doit aller le chercher en base : le code en clair n'y
+    est pas, et c'est précisément la propriété qu'on veut préserver."""
+    envois = [m for m in depot.messages()
+              if m.cle_idempotence.startswith("code_connexion:")
+              and (artisan_id is None or m.artisan_id == artisan_id)]
+    if not envois:
+        return None
+    trouve = re.search(r"\b(\d{6})\b", envois[-1].texte)
+    return trouve.group(1) if trouve else None
+
+
+def connecter_par_sms(client, depot, telephone: str) -> bool:
+    """Ouvre une session artisan comme le ferait un humain : demande de code, lecture du
+    SMS reçu, saisie. Rend True si la session est ouverte."""
+    client.post("/connexion", data={"telephone": telephone})
+    code = code_du_sms(depot)
+    if code is None:
+        return False
+    return client.post("/connexion/code", data={"code": code},
+                       follow_redirects=False).status_code == 303
 
 
 def cfg_pour(artisan_id: str):
@@ -1556,7 +1581,12 @@ def check_cout_sms() -> bool:
     #  · un seul segment pour les seuls gabarits réellement envoyés PAR SMS, c'est-à-dire
     #    ceux destinés au client. Un push n'a pas de limite de longueur : lui imposer 160
     #    caractères serait une contrainte inventée.
-    # Convention de nommage : un gabarit « *_client » part en SMS.
+    # Quels gabarits partent réellement par SMS. C'était une convention de nommage
+    # (« *_client »), remplacée par une LISTE EXPLICITE le 25/08 : le code de connexion est
+    # un SMS envoyé à l'ARTISAN, donc la règle déduite du nom laissait passer sans contrôle
+    # de coût le seul message que tout artisan reçoit à chaque connexion.
+    PAR_SMS = {"expiration_client", "reproposition_client", "confirmation_client",
+               "code_connexion_artisan"}
     MARGE_MIN = 5    # petit tampon : le libellé de créneau varie de quelques caractères
     # Valeurs de rendu volontairement plus longues que la config de référence : un artisan
     # au nom à rallonge ne doit pas doubler la facture.
@@ -1572,6 +1602,8 @@ def check_cout_sms() -> bool:
         # base publique + jeton de 16 octets (22 car.). Un domaine long coûte des crédits :
         # c'est une raison concrète de choisir une racine courte.
         "lien": "https://relais.app/c/" + "x" * 22,
+        "code": "000000",                                # 6 chiffres, zéros compris
+        "minutes": "10",
     }
 
     ok = True
@@ -1586,7 +1618,7 @@ def check_cout_sms() -> bool:
                   f"de 160. Remplacer ces caractères (é è ù ì ò à sont légaux, pas ê ô À).")
             ok = False
             continue
-        if not cle.endswith("_client"):
+        if cle not in PAR_SMS:
             continue          # push : pas de facturation au segment
         if segments != 1:
             print(f"   {cle} : {len(rendu)} caractères = {segments} segments, donc "
@@ -1619,20 +1651,26 @@ def check_app_artisan() -> bool:
         print("   fastapi/httpx absents : pip install -r requirements.txt")
         return False
 
-    from relais_proto.api import creer_app
+    from relais_proto.api import COOKIE_CONNEXION, creer_app
     from relais_proto.registre import Artisan, Registre, empreinte as emp_token
     from relais_proto.session import NOM_COOKIE
 
+    from relais_proto.envoi import EnvoyeurJournal
+
     TOK_A, TOK_B = "tok-dupont", "tok-martin"
-    registre = Registre([Artisan("art-dupont", "+33189701234", emp_token(TOK_A), CFG),
-                         Artisan("art-martin", "+33189705678", emp_token(TOK_B), CFG)],
+    TEL_A, TEL_B = "+33612345678", "+33698765432"
+    registre = Registre([Artisan("art-dupont", "+33189701234", emp_token(TOK_A), CFG,
+                                 telephone=TEL_A),
+                         Artisan("art-martin", "+33189705678", emp_token(TOK_B), CFG,
+                                 telephone=TEL_B)],
                         emp_token("secret-voix"))
     depot = DepotMemoire()
     pendule = [LUNDI_9H]
     # cookie_secure=False : les tests parlent en HTTP, un cookie Secure ne serait pas
     # renvoyé. En production il reste à True.
     app = creer_app(depot, registre, MockLLM, lambda: pendule[0],
-                    base_url="https://relais.test", cookie_secure=False)
+                    base_url="https://relais.test", cookie_secure=False,
+                    envoyeur=EnvoyeurJournal())
 
     lead, rdv = _appel_avec_rdv(depot, "T01_urgence_fuite", LUNDI_9H)
     rdv.notifier(LUNDI_9H)
@@ -1658,15 +1696,17 @@ def check_app_artisan() -> bool:
             print(f"   cookie inconnu : mauvais diagnostic, {r.text[:110]!r}")
             return False
         anonyme.cookies.clear()
-        if anonyme.post("/connexion", data={"jeton": "mauvais"}).status_code != 401:
-            print("   un jeton refusé n'est pas rejeté")
+        # saisir un code sans en avoir demandé un : refusé, et sans rien apprendre
+        if anonyme.post("/connexion/code",
+                        data={"code": "123456"}).status_code != 401:
+            print("   un code présenté sans demande préalable n'est pas rejeté")
             return False
 
     # (b) connexion, puis le cookie porte tout le reste — sans en-tête Authorization
     with TestClient(app) as julien:
-        r = julien.post("/connexion", data={"jeton": TOK_A}, follow_redirects=False)
-        if r.status_code != 303 or r.headers.get("location") != "/app":
-            print(f"   connexion : {r.status_code} → {r.headers.get('location')!r}")
+        # connexion par code SMS, comme un humain : demande, lecture du SMS, saisie
+        if not connecter_par_sms(julien, depot, "06 12 34 56 78"):
+            print("   connexion par code SMS impossible")
             return False
         biscuit = julien.cookies.get(NOM_COOKIE)
         if not biscuit or len(biscuit) < 40:
@@ -1749,7 +1789,12 @@ def check_app_artisan() -> bool:
 
     # (g) étanchéité : la session de Dupont ne donne rien chez Martin
     with TestClient(app) as martin:
-        martin.post("/connexion", data={"jeton": TOK_B})
+        # l'horloge avance : sinon le frein au renvoi confondrait cette demande avec
+        # celle de Julien et Martin n'aurait pas de code
+        pendule[0] = pendule[0] + dt.timedelta(minutes=5)
+        if not connecter_par_sms(martin, depot, TEL_B):
+            print("   Martin ne peut pas se connecter avec son propre mobile")
+            return False
         page = martin.get("/app").text
         from html import escape as _esc2
         if _esc2(rdv2.creneau["label"]) in page or "Aucun rendez-vous" not in page:
@@ -1761,7 +1806,9 @@ def check_app_artisan() -> bool:
     # PAGE. Constaté en usage réel le 24/08 : un tap donnait 409 en JSON brut sur le
     # téléphone, sur un RDV que la page proposait pourtant de valider.
     with TestClient(app) as julien2:
-        julien2.post("/connexion", data={"jeton": TOK_A})
+        if not connecter_par_sms(julien2, depot, TEL_A):
+            print("   reconnexion de Julien impossible")
+            return False
         pendule[0] = rdv2.expire_a + dt.timedelta(hours=1)   # l'échéance est passée
         page = julien2.get("/app").text
         if "Délai dépassé" not in page:
@@ -1793,22 +1840,37 @@ def check_app_artisan() -> bool:
     # lui passe sur PC pendant que le téléphone jette le cookie en HTTP et boucle sur le
     # formulaire de connexion. C'est exactement le bug du 24/08 — `serveur.py` ne
     # raccordait pas `cookie_secure`, et rien ne le voyait.
+    # LES DEUX cookies sont contrôlés : celui de la connexion en cours (posé par
+    # /connexion) et celui de la session (posé par /connexion/code). Le premier est aussi
+    # exposé au même piège — un Secure oublié ou de trop, et la connexion boucle.
     for secure_voulu in (True, False):
+        # l'horloge avance à chaque tour, sinon le frein au renvoi refuserait le second
+        # code et il n'y aurait pas d'en-tête à examiner
+        pendule[0] = pendule[0] + dt.timedelta(minutes=5)
         app_s = creer_app(depot, registre, MockLLM, lambda: pendule[0],
-                          cookie_secure=secure_voulu)
+                          cookie_secure=secure_voulu, envoyeur=EnvoyeurJournal())
         with TestClient(app_s) as c:
-            entete = c.post("/connexion", data={"jeton": TOK_A},
+            entete_demande = c.post("/connexion", data={"telephone": TEL_A}) \
+                .headers.get("set-cookie", "").lower()
+            # Le cookie de connexion est REPOSÉ à la main avant la seconde étape : en
+            # mode Secure, `httpx` refuse de le renvoyer sur du HTTP — exactement ce que
+            # fait un vrai navigateur, et exactement le bug du 24/08. On veut ici lire
+            # l'en-tête émis, pas éprouver le transport ; le forcer nous place dans la
+            # situation d'un navigateur en HTTPS.
+            c.cookies.set(COOKIE_CONNEXION, "art-dupont")
+            entete = c.post("/connexion/code", data={"code": code_du_sms(depot)},
                             follow_redirects=False).headers.get("set-cookie", "").lower()
-        if ("secure" in entete) is not secure_voulu:
-            print(f"   cookie_secure={secure_voulu} : attribut Secure "
-                  f"{'absent' if secure_voulu else 'présent'} dans {entete!r}")
-            return False
-        # ces deux-là ne dépendent d'aucun mode : jamais lisible par un script, et
-        # non envoyé sur une requête inter-sites
-        for obligatoire in ("httponly", "samesite=lax"):
-            if obligatoire not in entete:
-                print(f"   cookie sans {obligatoire} : {entete!r}")
+        for quoi, brut in (("session", entete), ("connexion en cours", entete_demande)):
+            if ("secure" in brut) is not secure_voulu:
+                print(f"   cookie {quoi} · cookie_secure={secure_voulu} : attribut Secure "
+                      f"{'absent' if secure_voulu else 'présent'} dans {brut!r}")
                 return False
+            # ces deux-là ne dépendent d'aucun mode : jamais lisible par un script, et
+            # non envoyé sur une requête inter-sites
+            for obligatoire in ("httponly", "samesite=lax"):
+                if obligatoire not in brut:
+                    print(f"   cookie {quoi} sans {obligatoire} : {brut!r}")
+                    return False
     return True
 
 
@@ -2216,6 +2278,195 @@ def check_promesse_tenue() -> bool:
     return True
 
 
+def check_connexion_sms() -> bool:
+    """R28 : la connexion de l'artisan par code SMS à 6 chiffres.
+
+    R24 se sert de cette connexion ; ce test-ci l'éprouve. Six chiffres, c'est un million
+    de possibilités : c'est confortable pour un humain et dérisoire pour une machine. La
+    sûreté ne vient donc PAS de la longueur du code mais de trois propriétés, et chacune
+    est vérifiée ici :
+
+      * **le code meurt vite** (10 minutes) ;
+      * **les essais sont comptés**, et le code meurt avec eux (3) ;
+      * **un seul code vivant par artisan** : en demander un nouveau invalide le
+        précédent, sinon en demander mille donnerait mille chances au lieu de trois.
+
+    S'y ajoutent deux propriétés qui ne protègent pas l'artisan mais nos clients :
+    **la page ne dit jamais si un numéro est connu**, et **le code n'existe en clair que
+    dans le SMS**.
+    """
+    from fastapi.testclient import TestClient
+    from relais_proto.api import COOKIE_CONNEXION, creer_app
+    from relais_proto.envoi import EnvoyeurJournal
+    from relais_proto.registre import Artisan, Registre, empreinte as emp_token
+    from relais_proto.session import NOM_COOKIE
+    from relais_proto import connexion as cnx
+
+    TEL = "+33612345678"
+    registre = Registre([Artisan("art-dupont", "+33189701234", emp_token("tok"), CFG,
+                                 telephone=TEL)], emp_token("secret"))
+
+    def neuf():
+        """Un dépôt, une horloge et une app neufs — chaque cas part d'une base propre."""
+        depot = DepotMemoire()
+        pendule = [LUNDI_9H]
+        journal = EnvoyeurJournal()
+        app = creer_app(depot, registre, MockLLM, lambda: pendule[0],
+                        cookie_secure=False, envoyeur=journal)
+        return depot, pendule, journal, app
+
+    # (a) le chemin nominal, et le code part VRAIMENT par SMS — pas seulement en file.
+    # C'est ce qui justifie l'envoyeur injecté : un code qui attend le prochain passage
+    # du cron n'est pas un code de connexion.
+    depot, pendule, journal, app = neuf()
+    with TestClient(app) as c:
+        r = c.post("/connexion", data={"telephone": "06 12 34 56 78"})
+        if r.status_code != 200 or "Code" not in r.text:
+            print(f"   demande de code : {r.status_code}")
+            return False
+        if len(journal.envoyes) != 1 or journal.envoyes[0].cible != TEL:
+            print(f"   le code n'est pas parti tout de suite : {journal.envoyes}")
+            return False
+        code = code_du_sms(depot)
+        if code is None or len(code) != 6 or not code.isdigit():
+            print(f"   code mal formé : {code!r}")
+            return False
+        # le clair ne vit QUE dans le SMS : la base n'en porte que l'empreinte
+        pose = depot.code_connexion("art-dupont")
+        if pose is None or code in pose.empreinte or pose.empreinte == code:
+            print("   le code est stocké en clair")
+            return False
+        if pose.empreinte != cnx.empreinte(code):
+            print("   l'empreinte stockée ne correspond pas au code envoyé")
+            return False
+        r = c.post("/connexion/code", data={"code": code}, follow_redirects=False)
+        if r.status_code != 303 or not c.cookies.get(NOM_COOKIE):
+            print(f"   saisie du bon code : {r.status_code}")
+            return False
+        # usage unique : le code disparaît, même dans sa fenêtre de validité
+        if depot.code_connexion("art-dupont") is not None:
+            print("   le code survit à son usage")
+            return False
+        if c.get("/app").status_code != 200:
+            print("   la session ouverte ne donne pas accès à la boîte")
+            return False
+
+    # (b) ESSAIS COMPTÉS : trois codes faux, et le code meurt. Sans ça, six chiffres se
+    # devinent tranquillement — c'est la propriété qui rend la brièveté acceptable.
+    depot, pendule, journal, app = neuf()
+    with TestClient(app) as c:
+        c.post("/connexion", data={"telephone": TEL})
+        vrai = code_du_sms(depot)
+        faux = "000000" if vrai != "000000" else "111111"
+        for essai in range(cnx.ESSAIS_MAX):
+            if c.post("/connexion/code", data={"code": faux}).status_code != 401:
+                print(f"   un code faux accepté à l'essai {essai + 1}")
+                return False
+        if depot.code_connexion("art-dupont") is not None:
+            print(f"   le code survit à {cnx.ESSAIS_MAX} essais ratés")
+            return False
+        # et le VRAI code ne marche plus : les essais sont épuisés, pas seulement comptés
+        if c.post("/connexion/code", data={"code": vrai},
+                  follow_redirects=False).status_code != 401:
+            print("   le vrai code marche encore après les essais épuisés")
+            return False
+
+    # (c) EXPIRATION : passé le délai, le code ne vaut plus rien, même juste.
+    depot, pendule, journal, app = neuf()
+    with TestClient(app) as c:
+        c.post("/connexion", data={"telephone": TEL})
+        vrai = code_du_sms(depot)
+        pendule[0] = pendule[0] + dt.timedelta(minutes=cnx.DUREE_MINUTES, seconds=1)
+        if c.post("/connexion/code", data={"code": vrai},
+                  follow_redirects=False).status_code != 401:
+            print("   un code périmé est encore accepté")
+            return False
+
+    # (d) UN SEUL CODE VIVANT : demander un nouveau code tue le précédent. Sinon chaque
+    # demande ajouterait une cible, et en demander mille donnerait mille chances.
+    depot, pendule, journal, app = neuf()
+    with TestClient(app) as c:
+        c.post("/connexion", data={"telephone": TEL})
+        premier = code_du_sms(depot)
+        pendule[0] = pendule[0] + dt.timedelta(
+            seconds=cnx.DELAI_RENVOI_SECONDES + 1)      # au-delà du frein au renvoi
+        c.post("/connexion", data={"telephone": TEL})
+        second = code_du_sms(depot)
+        if premier == second:
+            print("   le second code est identique au premier")
+            return False
+        if c.post("/connexion/code", data={"code": premier}).status_code != 401:
+            print("   l'ancien code marche encore après en avoir demandé un nouveau")
+            return False
+        if c.post("/connexion/code", data={"code": second},
+                  follow_redirects=False).status_code != 303:
+            print("   le second code ne fonctionne pas")
+            return False
+
+    # (e) FREIN AU RENVOI : chaque code est un SMS facturé et une notification chez
+    # quelqu'un. Sans frein, un tiers fait sonner le téléphone d'un artisan en boucle à
+    # nos frais. Le code déjà émis reste valable — l'artisan qui insiste ne perd rien.
+    depot, pendule, journal, app = neuf()
+    with TestClient(app) as c:
+        c.post("/connexion", data={"telephone": TEL})
+        premier = code_du_sms(depot)
+        for _ in range(5):
+            c.post("/connexion", data={"telephone": TEL})
+        if len(journal.envoyes) != 1:
+            print(f"   {len(journal.envoyes)} SMS pour 6 demandes rapprochées : "
+                  f"le frein au renvoi ne joue pas")
+            return False
+        if c.post("/connexion/code", data={"code": premier},
+                  follow_redirects=False).status_code != 303:
+            print("   le code initial a été invalidé par des demandes freinées")
+            return False
+
+    # (f) AUCUNE ÉNUMÉRATION : un numéro inconnu doit donner EXACTEMENT la même réponse
+    # qu'un numéro connu. Sinon cette page dit à quiconque la sollicite si tel numéro est
+    # celui d'un de nos artisans — une information sur nos clients, pas sur nous.
+    depot, pendule, journal, app = neuf()
+    with TestClient(app) as c:
+        connu = c.post("/connexion", data={"telephone": TEL})
+        inconnu = c.post("/connexion", data={"telephone": "06 99 99 99 99"})
+        if connu.status_code != inconnu.status_code:
+            print(f"   statuts différents : {connu.status_code} vs "
+                  f"{inconnu.status_code}")
+            return False
+        if len(journal.envoyes) != 1:
+            print("   un SMS est parti pour un numéro inconnu")
+            return False
+        # les pages ne diffèrent que par le numéro masqué qu'elles réaffichent
+        if "Code" not in inconnu.text or "<form" not in inconnu.text:
+            print("   la page d'un numéro inconnu n'est pas celle d'un numéro connu")
+            return False
+        # et le numéro n'est jamais réaffiché en entier : quelqu'un qui pose un cookie au
+        # hasard ne doit pas repartir avec le mobile d'un artisan
+        if TEL in connu.text or "612345678" in connu.text:
+            print("   le numéro complet est réaffiché dans la page")
+            return False
+
+    # (g) le cookie de connexion en cours ne DONNE aucun accès par lui-même : il ne porte
+    # qu'un identifiant, la preuve reste le code.
+    depot, pendule, journal, app = neuf()
+    with TestClient(app) as c:
+        c.post("/connexion", data={"telephone": TEL})
+        c.cookies.set(COOKIE_CONNEXION, "art-dupont")
+        if c.get("/app").status_code != 401:
+            print("   le cookie de connexion en cours ouvre l'app sans code")
+            return False
+
+    # (h) normalisation du numéro : l'artisan tape ce qu'il a l'habitude d'écrire. Lui
+    # répondre « numéro inconnu » avec le bon numéro sous les yeux serait le pire message
+    # d'erreur possible.
+    for saisi in ("0612345678", "06 12 34 56 78", "+33 6 12 34 56 78", "06.12.34.56.78",
+                  "+33612345678"):
+        if cnx.normaliser_telephone(saisi) != TEL:
+            print(f"   {saisi!r} normalisé en "
+                  f"{cnx.normaliser_telephone(saisi)!r}, attendu {TEL!r}")
+            return False
+    return True
+
+
 def check_guard_prix() -> bool:
     """T05 (garde-fou prix) : on injecte une réplique fautive et on vérifie l'interception."""
     from relais_proto.guards import check_output
@@ -2389,6 +2640,15 @@ def run() -> int:
         print("   → la promesse orale « vous recevrez un SMS de confirmation » est "
               "tenue : validation ET refus produisent un SMS au client, sans URL "
               "(donc envoyable en numéro court), en 1 segment GSM-7 : ✅ PASS")
+    else:
+        print("   → ❌ FAIL")
+        echecs += 1
+
+    print(f"\n──── R28_connexion_sms ────")
+    if check_connexion_sms():
+        print("   → code à 6 chiffres envoyé tout de suite et stocké en empreinte, "
+              "essais comptés puis code tué, expiration, un seul code vivant, frein "
+              "au renvoi, aucune énumération de numéro : ✅ PASS")
     else:
         print("   → ❌ FAIL")
         echecs += 1

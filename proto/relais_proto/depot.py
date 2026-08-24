@@ -63,6 +63,17 @@ class LigneArtisan:
 
 
 @dataclass
+class CodeConnexion:
+    """Un code SMS en attente. **Un seul vivant par artisan** — voir migration 009."""
+    artisan_id: str
+    empreinte: str
+    cree_a: dt.datetime
+    expire_a: dt.datetime
+    essais: int = 0
+    telephone: str | None = None
+
+
+@dataclass
 class Lead:
     id: str
     appel_id: str
@@ -78,6 +89,16 @@ class Depot(Protocol):
     def artisans(self) -> list[LigneArtisan]: ...
 
     def enregistrer_artisan(self, ligne: LigneArtisan) -> None: ...
+
+    def poser_code_connexion(self, artisan_id: str, empreinte: str,
+                             expire_a: dt.datetime, maintenant: dt.datetime,
+                             telephone: str | None = None) -> None: ...
+
+    def code_connexion(self, artisan_id: str) -> CodeConnexion | None: ...
+
+    def consommer_essai_code(self, artisan_id: str) -> int: ...
+
+    def supprimer_code_connexion(self, artisan_id: str) -> None: ...
 
     def ouvrir_appel(self, artisan_id: str, maintenant: dt.datetime) -> Appel: ...
 
@@ -142,6 +163,7 @@ class DepotMemoire:
         self._par_cle: dict[str, str] = {}   # clé d'idempotence -> id message
         self._sessions: dict[str, dict] = {}  # empreinte -> session
         self._artisans_registre: dict[str, LigneArtisan] = {}
+        self._codes: dict[str, CodeConnexion] = {}   # artisan_id -> code SMS en attente
         self._compteurs: dict[str, int] = {}
 
     # ---- registre des artisans ----
@@ -152,6 +174,36 @@ class DepotMemoire:
         """Créer ou mettre à jour. La synchronisation depuis le registre fichier rejoue
         cet appel à chaque démarrage : il doit être idempotent."""
         self._artisans_registre[ligne.id] = replace(ligne)
+
+    # ---- codes de connexion ----
+    def poser_code_connexion(self, artisan_id: str, empreinte: str,
+                             expire_a: dt.datetime, maintenant: dt.datetime,
+                             telephone: str | None = None) -> None:
+        """ÉCRASE le code précédent : un seul vivant par artisan (cf. migration 009)."""
+        self._codes[artisan_id] = CodeConnexion(
+            artisan_id=artisan_id, empreinte=empreinte, cree_a=maintenant,
+            expire_a=expire_a, essais=0, telephone=telephone)
+
+    def code_connexion(self, artisan_id: str) -> CodeConnexion | None:
+        code = self._codes.get(artisan_id)
+        return replace(code) if code else None
+
+    def consommer_essai_code(self, artisan_id: str) -> int:
+        """Incrémente le compteur d'essais et rend sa nouvelle valeur.
+
+        Écriture même quand le code présenté est FAUX — c'est tout l'intérêt : sans elle,
+        6 chiffres se devinent tranquillement. Séparée de la vérification pour la même
+        raison que dans la file sortante : c'est le dépôt qui compte, pas l'appelant, et
+        deux tentatives concurrentes ne doivent pas se marcher dessus.
+        """
+        code = self._codes.get(artisan_id)
+        if code is None:
+            return 0
+        code.essais += 1
+        return code.essais
+
+    def supprimer_code_connexion(self, artisan_id: str) -> None:
+        self._codes.pop(artisan_id, None)     # idempotent
 
     def _id(self, prefixe: str) -> str:
         self._compteurs[prefixe] = self._compteurs.get(prefixe, 0) + 1

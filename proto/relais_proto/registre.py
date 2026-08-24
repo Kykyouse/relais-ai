@@ -61,6 +61,11 @@ class Registre:
         # normalisé DES DEUX CÔTÉS : le registre peut être écrit en +33..., la plateforme
         # vocale annoncer 01... — sans ça la recherche échoue silencieusement
         self._par_numero = {_normaliser(a.numero_relais): a for a in artisans}
+        # index du MOBILE du patron, pour la connexion par code SMS. Normalisé des deux
+        # côtés comme le numéro Relais, et pour la même raison : l'artisan tape « 06 12 34
+        # 56 78 » là où le registre dit « +33612345678 ».
+        self._par_telephone = {_normaliser(a.telephone): a
+                               for a in artisans if a.telephone}
         self._secret_webhook_sha256 = secret_webhook_sha256
 
     @classmethod
@@ -152,6 +157,10 @@ class Registre:
 
     def par_numero_relais(self, numero: str) -> Artisan | None:
         return self._par_numero.get(_normaliser(numero))
+
+    def par_telephone(self, numero: str) -> Artisan | None:
+        """L'artisan dont c'est le mobile — la porte d'entrée de la connexion par SMS."""
+        return self._par_telephone.get(_normaliser(numero)) if numero else None
 
     def par_token(self, token: str) -> Artisan | None:
         """Comparaison à temps constant, et sur TOUS les artisans : ni la validité du

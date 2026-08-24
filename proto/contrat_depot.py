@@ -353,4 +353,47 @@ def verifier(fabrique, cfg: dict) -> list[str]:
     exiger(repris is not None and not repris.utilisable(),
            "un artisan sans numéro Relais ni config doit être marqué inutilisable")
 
+    # ---- codes de connexion (migration 009) ----
+    exiger(depot.code_connexion("art-dupont") is None,
+           "code_connexion() devrait être vide avant toute demande")
+    fin_code = LUNDI_9H + dt.timedelta(minutes=10)
+    depot.poser_code_connexion("art-dupont", "e" * 64, fin_code, LUNDI_9H,
+                               telephone="+33612345678")
+    pose = depot.code_connexion("art-dupont")
+    exiger(pose is not None, "poser_code_connexion : le code n'est pas relu")
+    if pose is not None:
+        exiger((pose.empreinte, pose.essais, pose.telephone)
+               == ("e" * 64, 0, "+33612345678"),
+               f"code_connexion : aller-retour incomplet ({pose})")
+        exiger(pose.cree_a == LUNDI_9H and pose.expire_a == fin_code,
+               "code_connexion : les instants ne font pas l'aller-retour")
+
+    # le compteur d'essais est tenu PAR LE DÉPÔT et rend sa nouvelle valeur : c'est ce qui
+    # permet de refuser un code au bon moment sans que deux tentatives concurrentes
+    # consomment un seul essai à elles deux
+    exiger(depot.consommer_essai_code("art-dupont") == 1,
+           "consommer_essai_code : premier essai devrait rendre 1")
+    exiger(depot.consommer_essai_code("art-dupont") == 2,
+           "consommer_essai_code : second essai devrait rendre 2")
+    relu_code = depot.code_connexion("art-dupont")
+    exiger(relu_code is not None and relu_code.essais == 2,
+           "les essais consommés ne sont pas persistés")
+
+    # UN SEUL CODE VIVANT : reposer écrase le précédent ET remet le compteur à zéro.
+    # Sans la remise à zéro, un artisan ayant raté trois codes ne pourrait plus jamais se
+    # connecter, même avec un code neuf.
+    depot.poser_code_connexion("art-dupont", "f" * 64, fin_code, LUNDI_9H)
+    remplace = depot.code_connexion("art-dupont")
+    exiger(remplace is not None and remplace.empreinte == "f" * 64,
+           "poser_code_connexion : le code précédent n'est pas écrasé")
+    exiger(remplace is not None and remplace.essais == 0,
+           "poser_code_connexion : les essais ne sont pas remis à zéro")
+
+    depot.supprimer_code_connexion("art-dupont")
+    exiger(depot.code_connexion("art-dupont") is None,
+           "supprimer_code_connexion ne supprime pas")
+    depot.supprimer_code_connexion("art-dupont")     # deux fois : sans effet, sans erreur
+    exiger(depot.consommer_essai_code("art-dupont") == 0,
+           "consommer_essai_code sur un code absent devrait rendre 0, pas lever")
+
     return ecarts

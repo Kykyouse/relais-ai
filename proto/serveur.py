@@ -27,6 +27,7 @@ from dotenv import load_dotenv
 
 from relais_proto.api import creer_app
 from relais_proto.depot_pg import DepotPostgres, candidats_env, resoudre_connexion
+from relais_proto.envoi import choisir_envoyeur
 from relais_proto.llm import make_llm
 from relais_proto.registre import Registre
 
@@ -82,8 +83,13 @@ def construire():
     if not secure:
         print("⚠️  cookie émis SANS Secure : acceptable en test HTTP local, "
               "JAMAIS en production.")
+    # L'API a besoin d'un envoyeur pour LE code de connexion, et pour lui seul : un code
+    # qui arriverait au prochain passage du cron ne serait pas un code de connexion. Même
+    # sélection que le worker (`RELAIS_SMS`), donc même défaut inoffensif.
+    envoyeur, mode_sms = choisir_envoyeur()
+    print(f"envoi des codes de connexion : {mode_sms}")
     return creer_app(depot, registre, make_llm, base_url=_exige("RELAIS_BASE_URL"),
-                     cookie_secure=secure)
+                     cookie_secure=secure, envoyeur=envoyeur)
 
 
 app = construire()

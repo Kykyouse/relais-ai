@@ -211,21 +211,43 @@ def action_impossible(raison: str) -> str:
 
 
 def connexion(erreur: str = "") -> str:
-    """Écran de connexion **PROVISOIRE** : il accepte le jeton d'artisan du registre
-    fichier.
+    """Premier écran : l'artisan donne son numéro de mobile.
 
-    À remplacer par un code reçu par SMS — le numéro de mobile EST l'identité
-    professionnelle de l'artisan, et le canal existe déjà. Ce formulaire ne doit pas
-    survivre à la mise en service : faire saisir un secret de longue durée dans un champ
-    est acceptable pour deux artisans de test, pas pour des clients payants.
+    `type="tel"` fait sortir le pavé numérique du téléphone, et `autocomplete="tel"`
+    laisse le navigateur proposer le numéro déjà connu — sur un chantier, une main libre
+    et un écran sale, chaque frappe évitée compte.
     """
     alerte = f'<p class="raisons">{escape(erreur)}</p>' if erreur else ""
     return _page_app(
         "Connexion",
         "<h1>Connexion</h1>"
-        '<p class="raisons">Provisoire : un code reçu par SMS remplacera ce champ.</p>'
+        '<p class="raisons">Entrez votre numéro de mobile : vous recevrez un code '
+        "par SMS.</p>"
         + alerte
         + '<form method="post" action="/connexion">'
-          "<label>Jeton d'accès</label>"
-          '<input type="password" name="jeton" autocomplete="off" required>'
-          '<label></label><button type="submit">Entrer</button></form>')
+          "<label>Mobile</label>"
+          '<input type="tel" name="telephone" autocomplete="tel" '
+          'inputmode="numeric" placeholder="06 12 34 56 78" required>'
+          '<label></label><button type="submit">Recevoir un code</button></form>')
+
+
+def saisie_code(telephone: str, erreur: str = "") -> str:
+    """Second écran : la saisie du code à 6 chiffres.
+
+    `inputmode="numeric"` et `autocomplete="one-time-code"` : sur iOS comme sur Android,
+    le clavier propose alors le code reçu par SMS d'un seul appui. Le numéro est réaffiché
+    parce qu'un artisan qui s'est trompé de chiffre doit le voir sans revenir en arrière.
+    """
+    alerte = f'<p class="raisons">{escape(erreur)}</p>' if erreur else ""
+    return _page_app(
+        "Code reçu par SMS",
+        "<h1>Votre code</h1>"
+        f'<p class="raisons">Envoyé au {escape(telephone)}, valable quelques minutes.</p>'
+        + alerte
+        + '<form method="post" action="/connexion/code">'
+          "<label>Code</label>"
+          '<input type="text" name="code" inputmode="numeric" '
+          'autocomplete="one-time-code" pattern="[0-9]*" maxlength="6" '
+          'autofocus required>'
+          '<label></label><button type="submit">Entrer</button></form>'
+          '<p class="apres"><a href="/connexion">Recommencer avec un autre numéro</a></p>')

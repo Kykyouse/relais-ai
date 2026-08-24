@@ -22,7 +22,7 @@ from __future__ import annotations
 import datetime as dt
 import uuid
 
-from .depot import Appel, Introuvable, Lead, LigneArtisan
+from .depot import Appel, CodeConnexion, Introuvable, Lead, LigneArtisan
 from .messages import Brouillon, MessageSortant, StatutMessage
 from .rdv import Rdv, StatutRdv, TERMINAUX
 
@@ -155,6 +155,38 @@ class DepotPostgres:
             "etat_abonnement = excluded.etat_abonnement",
             (ligne.id, ligne.nom_affiche, ligne.numero_relais, ligne.telephone,
              ligne.config_fichier, ligne.token_sha256, ligne.etat_abonnement))
+
+    # ---- codes de connexion ----
+    def poser_code_connexion(self, artisan_id: str, empreinte: str,
+                             expire_a: dt.datetime, maintenant: dt.datetime,
+                             telephone: str | None = None) -> None:
+        """UPSERT sur `artisan_id` : demander un nouveau code ÉCRASE le précédent, et
+        remet le compteur d'essais à zéro. Avec 6 chiffres, laisser vivre plusieurs codes
+        donnerait autant de chances supplémentaires à qui devine."""
+        self._executer(
+            "insert into code_connexion (artisan_id, empreinte, cree_a, expire_a, "
+            "essais, telephone) values (%s,%s,%s,%s,0,%s) "
+            "on conflict (artisan_id) do update set empreinte = excluded.empreinte, "
+            "cree_a = excluded.cree_a, expire_a = excluded.expire_a, essais = 0, "
+            "telephone = excluded.telephone",
+            (artisan_id, empreinte, maintenant, expire_a, telephone))
+
+    def code_connexion(self, artisan_id: str) -> CodeConnexion | None:
+        lignes = self._plusieurs(
+            "select artisan_id, empreinte, cree_a, expire_a, essais, telephone "
+            "from code_connexion where artisan_id = %s", (artisan_id,))
+        return CodeConnexion(*lignes[0]) if lignes else None
+
+    def consommer_essai_code(self, artisan_id: str) -> int:
+        """`essais + 1` EN SQL et non depuis la valeur lue : deux tentatives concurrentes
+        ne doivent pas consommer un seul essai à elles deux."""
+        lignes = self._plusieurs(
+            "update code_connexion set essais = essais + 1 where artisan_id = %s "
+            "returning essais", (artisan_id,))
+        return lignes[0][0] if lignes else 0
+
+    def supprimer_code_connexion(self, artisan_id: str) -> None:
+        self._executer("delete from code_connexion where artisan_id = %s", (artisan_id,))
 
     # ---- appels ----
     def ouvrir_appel(self, artisan_id: str, maintenant: dt.datetime) -> Appel:
