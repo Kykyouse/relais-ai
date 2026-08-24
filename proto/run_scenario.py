@@ -998,6 +998,12 @@ def check_expedition() -> bool:
     if len(envoye) != 1 or not envoye[0].reference:
         print("   le message envoyé n'a pas d'accusé fournisseur")
         return False
+    # le coût est PERSISTÉ par message : c'est ce qui permettra de chiffrer la dépense SMS
+    # par artisan et par mois. La donnée ne repasse jamais.
+    if envoye[0].cout != 1 or rapport.cout_total != 1:
+        print(f"   coût non persisté : message={envoye[0].cout!r}, "
+              f"passage={rapport.cout_total!r}")
+        return False
     # deuxième passage : rien à renvoyer (le statut sort le message de la file)
     if expediteur.passer(midi + dt.timedelta(minutes=1)) or len(journal.envoyes) != 1:
         print("   un message déjà envoyé est renvoyé au passage suivant")
@@ -1297,7 +1303,7 @@ def check_adaptateur_ovh() -> bool:
                 "invalidReceivers": [], "totalCreditsRemoved": 1, "creditsLeft": 99,
                 "tag": "vtbnzoi6prvylh12"}
 
-    ref = EnvoyeurOVH(transport_ok, "sms-ab12345-1").envoyer(msg, CFG)
+    envoi = EnvoyeurOVH(transport_ok, "sms-ab12345-1").envoyer(msg, CFG)
     chemin, corps = vus[0]
     if chemin != "/sms/sms-ab12345-1/jobs":
         print(f"   chemin appelé : {chemin}")
@@ -1312,8 +1318,13 @@ def check_adaptateur_ovh() -> bool:
         print("   noStopClause absent : la clause STOP mangerait 20 caractères utiles "
               "sur un SMS transactionnel qui n'en a pas besoin")
         return False
-    if corps["message"] != msg.texte or ref != "ovh:802084252":
-        print(f"   message ou référence : {corps['message']!r} / {ref!r}")
+    if corps["message"] != msg.texte or envoi.reference != "ovh:802084252":
+        print(f"   message ou référence : {corps['message']!r} / {envoi.reference!r}")
+        return False
+    # `totalCreditsRemoved` était jeté : c'est le coût de CET envoi, la seule donnée qui
+    # permettra de chiffrer la dépense SMS par artisan (elle ne repasse jamais).
+    if envoi.cout != 1:
+        print(f"   coût de l'envoi non remonté : {envoi.cout!r}, attendu 1")
         return False
 
     cfg_sans_expediteur = {**CFG, "sms": {k: v for k, v in CFG["sms"].items()
@@ -1329,7 +1340,7 @@ def check_adaptateur_ovh() -> bool:
     # mutuellement exclusifs côté OVH. Permet de tester sans attendre la déclaration d'un
     # Sender ID (~72 h, avec risque de refus).
     vus.clear()
-    ref = EnvoyeurOVH(transport_ok, "sms-ab12345-1", numero_court=True).envoyer(msg, CFG)
+    EnvoyeurOVH(transport_ok, "sms-ab12345-1", numero_court=True).envoyer(msg, CFG)
     _, corps = vus[0]
     if corps.get("senderForResponse") is not True:
         print(f"   numéro court : senderForResponse absent ({corps.get('senderForResponse')!r})")
@@ -1339,8 +1350,8 @@ def check_adaptateur_ovh() -> bool:
               f"OVH refuse les deux ensemble")
         return False
     # le mode fonctionne même sans expéditeur configuré : c'est tout son intérêt
-    if EnvoyeurOVH(transport_ok, "sms-ab12345-1",
-                   numero_court=True).envoyer(msg, cfg_sans_expediteur) != "ovh:802084252":
+    if EnvoyeurOVH(transport_ok, "sms-ab12345-1", numero_court=True).envoyer(
+            msg, cfg_sans_expediteur).reference != "ovh:802084252":
         print("   numéro court : bloqué par l'absence d'expéditeur, alors qu'il s'en passe")
         return False
 

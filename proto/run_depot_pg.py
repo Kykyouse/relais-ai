@@ -58,41 +58,20 @@ def _charger_env() -> None:
         pass
 
 
-def _candidats() -> list[tuple[str, str]]:
-    """(libellé, dsn) dans l'ordre d'essai : directe d'abord, pooler en repli."""
-    paires = [("directe", os.environ.get("DATABASE_URL")),
-              ("session pooler", os.environ.get("DATABASE_URL_POOLER"))]
-    return [(nom, dsn) for nom, dsn in paires if dsn]
-
-
-def _options(dsn: str) -> dict:
-    """Le pooler en mode TRANSACTION (port 6543) casse les prepared statements que
-    psycopg active tout seul après quelques exécutions. On les désactive dans ce cas."""
-    if ":6543/" in dsn or dsn.rstrip("/").endswith(":6543"):
-        print("   ⚠️  pooler en mode transaction détecté (6543) : "
-              "prepared statements désactivés")
-        return {"prepare_threshold": None}
-    return {}
-
-
 def _connecter():
-    """Essaie la directe puis le pooler. Rend (connexion, dsn, libellé, options)."""
+    """Rend (connexion, dsn, libellé, options). Le repli directe → pooler est mutualisé
+    dans `depot_pg.resoudre_connexion` : il doit servir aussi au worker et au serveur, pas
+    seulement ici (défaut constaté le 24/08)."""
     import psycopg
-    echecs = []
-    for nom, dsn in _candidats():
-        opts = _options(dsn)
-        try:
-            cx = psycopg.connect(dsn, autocommit=True, connect_timeout=DELAI_CONNEXION,
-                                 **opts)
-        except Exception as exc:  # noqa: BLE001 — on veut le message tel quel
-            print(f"   {nom} : ✗ {type(exc).__name__}: {str(exc).strip()[:120]}")
-            echecs.append(nom)
-            continue
-        print(f"   {nom} : ✓ connectée")
-        if echecs:
-            print(f"   → repli sur « {nom} » après échec de : {', '.join(echecs)}")
-        return cx, dsn, nom, opts
-    return None, None, None, None
+
+    from relais_proto.depot_pg import candidats_env, resoudre_connexion
+    try:
+        dsn, opts, libelle = resoudre_connexion(candidats_env(), DELAI_CONNEXION)
+    except Exception as exc:  # noqa: BLE001
+        print(f"   {exc}")
+        return None, None, None, None
+    print(f"   {libelle} : ✓ connectée")
+    return psycopg.connect(dsn, autocommit=True, **opts), dsn, libelle, opts
 
 
 def _marqueur_present(cx) -> bool:
@@ -125,7 +104,8 @@ def _vider(cx) -> None:
 
 def run() -> int:
     _charger_env()
-    if not _candidats():
+    from relais_proto.depot_pg import candidats_env
+    if not any(d for _, d in candidats_env()):
         print(MODE_EMPLOI)
         return 2
     try:

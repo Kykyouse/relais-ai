@@ -37,11 +37,24 @@ class EchecDefinitif(EchecEnvoi):
     messages de la file pour rien."""
 
 
-class Envoyeur(Protocol):
-    """Ce qu'un fournisseur doit savoir faire. Rend une référence d'envoi ; lève
-    `EchecEnvoi` sinon."""
+@dataclass(frozen=True)
+class Envoi:
+    """Ce qu'un fournisseur rend quand l'envoi a réussi.
 
-    def envoyer(self, message: MessageSortant, cfg: dict) -> str: ...
+    Le **coût** fait partie de l'envoi, pas de l'état du fournisseur : c'est pourquoi il
+    remonte par la valeur de retour et non par un attribut lu après coup. Il est persisté
+    par message, ce qui permet de calculer le coût SMS réel par artisan et par mois — la
+    donnée qui dira un jour si changer de fournisseur se rentabilise. Elle ne repasse
+    jamais : ne pas la stocker maintenant, c'est ne jamais pouvoir la reconstituer.
+    """
+    reference: str
+    cout: int | None = None     # crédits consommés, si le fournisseur les indique
+
+
+class Envoyeur(Protocol):
+    """Ce qu'un fournisseur doit savoir faire. Rend un `Envoi` ; lève `EchecEnvoi` sinon."""
+
+    def envoyer(self, message: MessageSortant, cfg: dict) -> Envoi: ...
 
 
 class EnvoyeurJournal:
@@ -52,9 +65,12 @@ class EnvoyeurJournal:
     def __init__(self) -> None:
         self.envoyes: list[MessageSortant] = []
 
-    def envoyer(self, message: MessageSortant, cfg: dict) -> str:
+    def envoyer(self, message: MessageSortant, cfg: dict) -> Envoi:
         self.envoyes.append(message)
-        return f"journal:{message.id}"
+        # coût simulé d'après la vraie règle de facturation : le mode dév doit donner un
+        # ordre de grandeur juste, sinon les chiffres de coût seraient faux en test
+        return Envoi(reference=f"journal:{message.id}",
+                     cout=segments_sms(message.texte)[0])
 
 
 # ------------------------------------------------------------- coût d'un SMS
@@ -124,6 +140,7 @@ class RapportEnvoi:
     differes: list[str] = field(default_factory=list)   # plage de silence
     reessais: list[str] = field(default_factory=list)
     echecs: list[str] = field(default_factory=list)     # essais_max atteint
+    cout_total: int = 0                                 # crédits consommés sur ce passage
 
     def __bool__(self) -> bool:
         return bool(self.envoyes or self.differes or self.reessais or self.echecs)
@@ -163,7 +180,7 @@ class Expediteur:
                 rapport.differes.append(message.id)
                 continue
             try:
-                reference = self.envoyeur.envoyer(message, cfg)
+                envoi = self.envoyeur.envoyer(message, cfg)
             except Exception as exc:  # noqa: BLE001 — tout échec fournisseur est un échec
                 essais = message.essais + 1
                 # un échec définitif sort de la file immédiatement, sans consommer le quota
@@ -173,6 +190,9 @@ class Expediteur:
                     definitif=definitif)
                 (rapport.echecs if definitif else rapport.reessais).append(message.id)
                 continue
-            self.depot.marquer_message_envoye(message.id, maintenant, reference=reference)
+            self.depot.marquer_message_envoye(message.id, maintenant,
+                                              reference=envoi.reference, cout=envoi.cout)
             rapport.envoyes.append(message.id)
+            if envoi.cout:
+                rapport.cout_total += envoi.cout
         return rapport

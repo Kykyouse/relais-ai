@@ -256,10 +256,13 @@ def verifier(fabrique, cfg: dict) -> list[str]:
            "un échec définitif doit sortir le message de la file")
 
     m4, _ = depot.enfiler_message(_brouillon("contrat:4"), LUNDI_9H)
-    depot.marquer_message_envoye(m4.id, LUNDI_9H, reference="ref-fournisseur-42")
+    depot.marquer_message_envoye(m4.id, LUNDI_9H, reference="ref-fournisseur-42", cout=2)
     relu4 = next(m for m in depot.messages() if m.id == m4.id)
     exiger(relu4.reference == "ref-fournisseur-42",
            f"l'accusé du fournisseur n'est pas conservé ({relu4.reference})")
+    # le coût par message est la donnée qui dira si changer de fournisseur se rentabilise.
+    # Elle ne repasse jamais : si l'aller-retour la perd, elle est perdue pour toujours.
+    exiger(relu4.cout == 2, f"le coût du message n'est pas conservé ({relu4.cout!r})")
 
     for nom, action in (("marquer_message_echec",
                          lambda: depot.marquer_message_echec(ID_ABSENT, "x", LUNDI_9H)),

@@ -8,10 +8,18 @@ Deux passages enchaînés, dans cet ordre :
   1. `WorkerExpiration` — les RDV échus : créneau libéré, lead en alerte, messages en file.
   2. `Expediteur` — la file sortante : plage de silence, réessais, échec définitif.
 
-⚠️ AUCUN FOURNISSEUR SMS N'EST CÂBLÉ. L'expéditeur utilise `EnvoyeurJournal` : les messages
-sont marqués envoyés et journalisés, **rien ne part réellement**. C'est volontaire tant que
-le fournisseur n'est pas choisi — mieux vaut un envoi journalisé qu'un envoi vers un
-fournisseur mal configuré. Le mode `--a-vide` n'envoie ni ne marque rien.
+L'ENVOI RÉEL EST OPT-IN, par `RELAIS_SMS` :
+
+    RELAIS_SMS=journal   (défaut)  rien ne part, tout est journalisé
+    RELAIS_SMS=ovh                 envoi RÉEL via OVH (exige OVH_* et OVH_SMS_COMPTE)
+
+Le défaut est volontairement inoffensif : un cron mal configuré ne doit pas se mettre à
+écrire à de vrais clients. `--a-vide` n'envoie ni ne marque rien, quel que soit le mode.
+
+`RELAIS_SMS_NUMERO_COURT=1` envoie via un numéro court (aucune déclaration d'expéditeur
+requise). ⚠️ Les URL y sont **bloquées** : les SMS de reproposition, qui portent le lien de
+validation, échoueront alors définitivement — visiblement, dans le rapport. C'est un mode de
+transition, pas un mode de production.
 
 Multi-artisans depuis la migration 004 : chaque message et chaque RDV porte son
 `artisan_id`, et les deux workers résolvent la config correspondante. Un artisan absent du
@@ -37,20 +45,39 @@ RACINE = pathlib.Path(__file__).parent
 load_dotenv(RACINE.parent / ".env")
 
 
+def _choisir_envoyeur():
+    """Rend (envoyeur, libellé). Défaut inoffensif : un cron mal configuré ne doit pas se
+    mettre à écrire à de vrais clients. L'envoi réel se demande explicitement."""
+    mode = (os.environ.get("RELAIS_SMS") or "journal").strip().lower()
+    if mode != "ovh":
+        return EnvoyeurJournal(), "journal (rien ne part)"
+    compte = os.environ.get("OVH_SMS_COMPTE")
+    if not compte:
+        raise RuntimeError("RELAIS_SMS=ovh exige OVH_SMS_COMPTE (voir .env.example)")
+    from relais_proto.envoi_ovh import EnvoyeurOVH, transport_sdk
+    numero_court = os.environ.get("RELAIS_SMS_NUMERO_COURT") == "1"
+    libelle = "OVH — ENVOI RÉEL" + (" par NUMÉRO COURT (URL bloquées : les SMS de "
+                                    "reproposition échoueront)" if numero_court else "")
+    return EnvoyeurOVH(transport_sdk(), compte, numero_court=numero_court), libelle
+
+
 def run() -> int:
     import datetime as dt
 
-    dsn = os.environ.get("DATABASE_URL")
-    if not dsn:
-        print("DATABASE_URL manquant (voir .env.example).")
+    from relais_proto.depot_pg import candidats_env, resoudre_connexion
+    try:
+        dsn, opts, libelle = resoudre_connexion(candidats_env())
+    except Exception as exc:
+        print(exc)
         return 2
+    print(f"  base : {libelle}")
     registre = Registre.depuis_fichier(RACINE / "config" / "artisans.json",
                                        os.environ.get("RELAIS_WEBHOOK_SECRET", "inutile"))
     def config_pour(artisan_id):
         artisan = registre.artisan(artisan_id)
         return artisan.config if artisan else None
 
-    depot = DepotPostgres(dsn)
+    depot = DepotPostgres(dsn, **opts)
     maintenant = dt.datetime.now()
     print(f"passage du {maintenant.isoformat(timespec='seconds')}")
 
@@ -66,12 +93,20 @@ def run() -> int:
         depot.fermer()
         return 0
 
-    envoyeur = EnvoyeurJournal()
+    try:
+        envoyeur, mode = _choisir_envoyeur()
+    except Exception as exc:      # configuration incomplète : message net, pas une trace
+        print(f"  {exc}")
+        depot.fermer()
+        return 2
+    print(f"  mode d'envoi : {mode}")
     envoi = Expediteur(depot, envoyeur, config_pour).passer(maintenant)
-    print(f"  expédition : {envoi.examines} examiné(s), {len(envoi.envoyes)} journalisé(s), "
+    print(f"  expédition : {envoi.examines} examiné(s), {len(envoi.envoyes)} envoyé(s), "
           f"{len(envoi.differes)} différé(s), {len(envoi.reessais)} à réessayer, "
-          f"{len(envoi.echecs)} en échec")
-    if envoi.envoyes:
+          f"{len(envoi.echecs)} en échec | coût {envoi.cout_total} crédit(s)")
+    for e in envoi.echecs:
+        print(f"    ! {e}")
+    if envoi.envoyes and isinstance(envoyeur, EnvoyeurJournal):
         print("    (EnvoyeurJournal : rien n'est réellement parti)")
     # Réserve de crédits : une réserve à zéro arrête tous les SMS clients sans provoquer
     # d'erreur applicative. Elle doit être VISIBLE à chaque passage, pas découverte par un

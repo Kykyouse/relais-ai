@@ -4,7 +4,8 @@
     uvicorn serveur:app --host 0.0.0.0 --port 8000
 
 Variables requises (fichier `.env` à la racine) :
-    DATABASE_URL             Postgres (Supabase, région UE)
+    DATABASE_URL             Postgres (Supabase, région UE) — connexion directe
+    DATABASE_URL_POOLER      repli si la directe ne répond pas (IPv6)
     RELAIS_WEBHOOK_SECRET    secret partagé avec la plateforme vocale
     RELAIS_BASE_URL          racine publique des liens de validation client (SMS)
 
@@ -20,7 +21,7 @@ import pathlib
 from dotenv import load_dotenv
 
 from relais_proto.api import creer_app
-from relais_proto.depot_pg import DepotPostgres
+from relais_proto.depot_pg import DepotPostgres, candidats_env, resoudre_connexion
 from relais_proto.llm import make_llm
 from relais_proto.registre import Registre
 
@@ -38,7 +39,11 @@ def _exige(nom: str) -> str:
 
 
 def construire():
-    depot = DepotPostgres(_exige("DATABASE_URL"))
+    # même repli que le worker et le lanceur de tests : l'hôte direct de Supabase est en
+    # IPv6 et peut être injoignable selon le réseau. Le pooler prend alors le relais.
+    dsn, opts, libelle = resoudre_connexion(candidats_env())
+    print(f"base Postgres : {libelle}")
+    depot = DepotPostgres(dsn, **opts)
     registre = Registre.depuis_fichier(RACINE / "config" / "artisans.json",
                                        _exige("RELAIS_WEBHOOK_SECRET"))
     # un client LLM neuf par tour : make_llm() rend le mode réel si la clé est là,

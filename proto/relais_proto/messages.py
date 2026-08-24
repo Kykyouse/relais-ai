@@ -70,6 +70,7 @@ class MessageSortant:
     derniere_erreur: str | None = None
     envoyer_apres: dt.datetime | None = None   # différé par la plage de silence
     reference: str | None = None           # accusé du fournisseur
+    cout: int | None = None                # crédits consommés (1 par segment SMS)
 
     HORODATAGES = ("cree_a", "envoye_a", "envoyer_apres")
 
@@ -78,7 +79,8 @@ class MessageSortant:
              "destinataire": self.destinataire.value, "canal": self.canal.value,
              "cible": self.cible, "texte": self.texte, "statut": self.statut.value,
              "essais": self.essais, "derniere_erreur": self.derniere_erreur,
-             "reference": self.reference, "artisan_id": self.artisan_id}
+             "reference": self.reference, "artisan_id": self.artisan_id,
+             "cout": self.cout}
         for c in self.HORODATAGES:
             h = getattr(self, c)
             d[c] = h.isoformat() if h else None
@@ -93,7 +95,7 @@ class MessageSortant:
                    cible=d["cible"], texte=d["texte"], statut=StatutMessage(d["statut"]),
                    essais=d.get("essais", 0), derniere_erreur=d.get("derniere_erreur"),
                    reference=d.get("reference"), artisan_id=d.get("artisan_id") or "",
-                   **horodatages)
+                   cout=d.get("cout"), **horodatages)
 
 
 # --------------------------------------------------------------- catalogue fermé

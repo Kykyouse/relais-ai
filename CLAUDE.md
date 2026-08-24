@@ -23,7 +23,8 @@ python chat.py [--mock]             # conversation interactive (tu joues l'appel
 python explore.py                   # banc d'essai libre (cas A–F)
 uvicorn serveur:app --port 8000     # API HTTP (DATABASE_URL, RELAIS_WEBHOOK_SECRET,
                                     #           RELAIS_BASE_URL)
-python worker.py [--a-vide]         # un passage : expiration puis expédition (cron)
+python worker.py [--a-vide]         # un passage : expiration puis expédition (cron).
+                                    # RELAIS_SMS=journal (défaut, rien ne part) | ovh
 python envoyer_un_sms.py <num> [--envoyer]   # premier envoi REEL, a la main
                                     # (blanc par defaut : n'envoie rien)
 python run_depot_pg.py [--migrer] [--autoriser-truncate]   # contrat du port Depot

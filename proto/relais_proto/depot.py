@@ -82,7 +82,8 @@ class Depot(Protocol):
     def messages(self, statut: StatutMessage | None = None) -> list[MessageSortant]: ...
 
     def marquer_message_envoye(self, message_id: str, maintenant: dt.datetime,
-                               reference: str | None = None) -> None: ...
+                               reference: str | None = None,
+                               cout: int | None = None) -> None: ...
 
     def marquer_message_echec(self, message_id: str, erreur: str,
                               maintenant: dt.datetime,
@@ -214,11 +215,13 @@ class DepotMemoire:
         return [m for m in tous if statut is None or m.statut is statut]
 
     def marquer_message_envoye(self, message_id: str, maintenant: dt.datetime,
-                               reference: str | None = None) -> None:
+                               reference: str | None = None,
+                               cout: int | None = None) -> None:
         brut = self._exige(self._messages, message_id)
         brut["statut"] = StatutMessage.ENVOYE.value
         brut["envoye_a"] = maintenant.isoformat()
         brut["reference"] = reference
+        brut["cout"] = cout
 
     def marquer_message_echec(self, message_id: str, erreur: str,
                               maintenant: dt.datetime,

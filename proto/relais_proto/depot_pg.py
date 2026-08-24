@@ -35,6 +35,47 @@ def _json(valeur):
     return Jsonb(valeur)
 
 
+def options_dsn(dsn: str) -> dict:
+    """Options de connexion déduites du DSN. Un pooler en mode TRANSACTION (port 6543) ne
+    survit pas aux prepared statements que psycopg active de lui-même."""
+    return {"prepare_threshold": None} if ":6543/" in dsn or dsn.rstrip("/").endswith(":6543") else {}
+
+
+def resoudre_connexion(candidats: list[tuple[str, str]], timeout: int = 8):
+    """Essaie chaque `(libellé, dsn)` dans l'ordre et rend le premier qui répond, sous la
+    forme `(dsn, options, libellé)`.
+
+    **Partagé par TOUS les points d'entrée**, et c'est le point : ce repli n'existait
+    d'abord que dans `run_depot_pg.py`. Le 24/08, l'hôte direct de Supabase a cessé de
+    résoudre sur la machine de dév (il est en IPv6) — le lanceur de tests basculait
+    tranquillement sur le pooler pendant que `worker.py` et `serveur.py` tombaient. Une
+    logique de résilience qui ne vit que dans le harnais de test ne protège personne.
+    """
+    import psycopg
+    echecs = []
+    for nom, dsn in [(n, d) for n, d in candidats if d]:
+        opts = options_dsn(dsn)
+        try:
+            psycopg.connect(dsn, connect_timeout=timeout, **opts).close()
+        except Exception as exc:  # noqa: BLE001 — on veut le message tel quel
+            echecs.append(f"{nom} ({type(exc).__name__})")
+            continue
+        return dsn, opts, (f"{nom} (après échec de {', '.join(echecs)})" if echecs else nom)
+    raise RuntimeError(
+        "aucune connexion Postgres ne répond. Essayés : "
+        + (", ".join(echecs) or "aucun DSN fourni")
+        + ". Renseigne DATABASE_URL et DATABASE_URL_POOLER (voir .env.example) — l'hôte "
+          "direct de Supabase est en IPv6 et peut être injoignable selon le réseau.")
+
+
+def candidats_env() -> list[tuple[str, str]]:
+    """Les deux DSN attendus, dans l'ordre de préférence. Centralisé ici pour que les
+    points d'entrée ne divergent pas sur les noms de variables."""
+    import os
+    return [("directe", os.environ.get("DATABASE_URL", "")),
+            ("session pooler", os.environ.get("DATABASE_URL_POOLER", ""))]
+
+
 class DepotPostgres:
     """Une connexion, autocommit. Suffisant pour le worker et pour les tests ;
     un pool viendra avec l'API, qui sert plusieurs requêtes en parallèle."""
@@ -205,7 +246,7 @@ class DepotPostgres:
     # ---- file sortante ----
     _COLS_MSG = ("id, cle_idempotence, destinataire, canal, cible, texte, statut, "
                  "cree_a, envoye_a, essais, derniere_erreur, envoyer_apres, reference, "
-                 "artisan_id")
+                 "artisan_id, cout")
 
     @staticmethod
     def _msg_de_ligne(l: tuple) -> MessageSortant:
@@ -215,7 +256,7 @@ class DepotPostgres:
             "cree_a": l[7].isoformat(), "envoye_a": l[8].isoformat() if l[8] else None,
             "essais": l[9], "derniere_erreur": l[10],
             "envoyer_apres": l[11].isoformat() if l[11] else None, "reference": l[12],
-            "artisan_id": l[13]})
+            "artisan_id": l[13], "cout": l[14]})
 
     def enfiler_message(self, brouillon: Brouillon,
                         maintenant: dt.datetime) -> tuple[MessageSortant, bool]:
@@ -224,12 +265,12 @@ class DepotPostgres:
         nouvel_id = self._id()
         cree = self._executer(
             f"insert into message_sortant ({self._COLS_MSG}) "
-            "values (%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s) "
+            "values (%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s) "
             "on conflict (cle_idempotence) do nothing",
             (nouvel_id, brouillon.cle_idempotence, brouillon.destinataire.value,
              brouillon.canal.value, brouillon.cible, brouillon.texte,
              StatutMessage.A_ENVOYER.value, maintenant, None, 0, None, None, None,
-             brouillon.artisan_id))
+             brouillon.artisan_id, None))
         ligne = self._un(
             f"select {self._COLS_MSG} from message_sortant where cle_idempotence = %s",
             (brouillon.cle_idempotence,), brouillon.cle_idempotence)
@@ -244,12 +285,13 @@ class DepotPostgres:
             "order by cree_a, id", (statut.value,))]
 
     def marquer_message_envoye(self, message_id: str, maintenant: dt.datetime,
-                               reference: str | None = None) -> None:
+                               reference: str | None = None,
+                               cout: int | None = None) -> None:
         message_id = self._uuid(message_id, message_id)
         if not self._executer(
-                "update message_sortant set statut = %s, envoye_a = %s, reference = %s "
-                "where id = %s",
-                (StatutMessage.ENVOYE.value, maintenant, reference, message_id)):
+                "update message_sortant set statut = %s, envoye_a = %s, reference = %s, "
+                "cout = %s where id = %s",
+                (StatutMessage.ENVOYE.value, maintenant, reference, cout, message_id)):
             raise Introuvable(message_id)
 
     def marquer_message_echec(self, message_id: str, erreur: str,

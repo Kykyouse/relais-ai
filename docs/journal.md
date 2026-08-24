@@ -1066,3 +1066,36 @@ Suite : **27 PASS**.
 
 **Décision toujours ouverte** : expéditeur unique « Relais » (recommandé) vs Sender ID par
 artisan. Rien dans le code ne la préempte — `sms.expediteur` reste par artisan.
+
+### 24/08 — coût par message persisté, envoi réel opt-in, et un défaut de résilience trouvé
+
+**1. Le coût de chaque envoi est désormais stocké.** `totalCreditsRemoved` était jeté.
+Modélisation : `Envoyeur.envoyer()` rend maintenant un **`Envoi(reference, cout)`** au lieu
+d'une chaîne. Le coût est une propriété de l'ENVOI, il remonte donc par la valeur de retour ;
+`creditsLeft`, qui est l'état du COMPTE, reste un attribut de l'adaptateur. Migration 005,
+colonne `cout`, aller-retour vérifié par le contrat sur Postgres. `EnvoyeurJournal` simule un
+coût d'après la vraie règle de facturation, pour que les chiffres de dév soient justes.
+Objectif : chiffrer la dépense SMS par artisan et par mois — la donnée qui dira si changer de
+fournisseur se rentabilise (spec §10). **Elle ne repasse jamais** : ne pas la stocker, c'est
+ne jamais pouvoir la reconstituer.
+
+**2. Envoi réel opt-in dans `worker.py`.** `RELAIS_SMS=journal` par défaut (rien ne part),
+`ovh` pour l'envoi réel. Le défaut est volontairement inoffensif : **un cron mal configuré ne
+doit pas se mettre à écrire à de vrais clients.** Le mode est annoncé à chaque passage, le
+coût du passage est affiché, et `RELAIS_SMS_NUMERO_COURT=1` existe comme mode de transition —
+avec la conséquence assumée que les SMS de reproposition y échoueront définitivement, puisque
+les URL sont bloquées.
+
+**3. Défaut de résilience trouvé en vérifiant.** `worker.py` est tombé alors que
+`run_depot_pg.py` passait : l'hôte direct de Supabase **a cessé de résoudre sur cette
+machine** (il est en IPv6 — le piège annoncé s'est matérialisé), et le repli sur le pooler
+n'existait **que dans le lanceur de tests**. Une logique de résilience qui ne vit que dans le
+harnais de test ne protège personne. `resoudre_connexion()` est maintenant dans `depot_pg.py`
+et partagée par les trois points d'entrée. Vérifié : le worker annonce désormais
+« session pooler (après échec de directe) » et travaille normalement.
+
+À retenir : c'est la troisième fois aujourd'hui qu'une vérification d'apparence routinière
+révèle un vrai défaut — le gabarit `.env` trompeur, le motif de diagnostic masqué, et ce
+repli manquant. Aucun n'aurait été trouvé en relisant le code.
+
+Suite : **27 PASS**, Postgres vert (via le pooler).

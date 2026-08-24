@@ -27,7 +27,7 @@ from __future__ import annotations
 
 import re
 
-from .envoi import EchecDefinitif, EchecEnvoi
+from .envoi import EchecDefinitif, EchecEnvoi, Envoi
 from .messages import MessageSortant
 
 
@@ -79,7 +79,7 @@ class EnvoyeurOVH:
         # remonte, l'attribut reste optionnel pour ne pas alourdir le port.
         self.credits_restants: int | None = None
 
-    def envoyer(self, message: MessageSortant, cfg: dict) -> str:
+    def envoyer(self, message: MessageSortant, cfg: dict) -> Envoi:
         destinataire = en_e164(message.cible)
         corps = {
             "message": message.texte,
@@ -117,10 +117,14 @@ class EnvoyeurOVH:
         ids = (reponse or {}).get("ids") or []
         if not ids:
             raise EchecEnvoi(f"OVH n'a rendu aucun identifiant d'envoi : {reponse!r}")
+        # `creditsLeft` est l'état du COMPTE : il reste un attribut du fournisseur.
+        # `totalCreditsRemoved` est le coût de CET envoi : il remonte par la valeur.
         restants = (reponse or {}).get("creditsLeft")
         if isinstance(restants, int):
             self.credits_restants = restants
-        return f"ovh:{ids[0]}"
+        cout = (reponse or {}).get("totalCreditsRemoved")
+        return Envoi(reference=f"ovh:{ids[0]}",
+                     cout=cout if isinstance(cout, int) else None)
 
 
 # ------------------------------------------------------- diagnostic des erreurs
