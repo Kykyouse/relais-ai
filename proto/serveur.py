@@ -71,9 +71,14 @@ def construire():
     # base_url EXIGÉE, sans valeur par défaut : elle part dans un SMS. Un lien pointant
     # sur un domaine d'exemple serait mort chez le client, sans erreur côté serveur.
     secure = _cookie_secure()
+    # Annoncé À CHAQUE démarRAGE, pas seulement quand il est faible : le 24/08, c'est
+    # l'ABSENCE de cet avertissement qui a fait perdre un tour de diagnostic. Un état qu'on
+    # ne voit que lorsqu'il est anormal ne se distingue pas d'un réglage non pris en compte.
+    brut = os.environ.get("RELAIS_COOKIE_SECURE")
+    print(f"cookie de session : Secure={secure} (RELAIS_COOKIE_SECURE={brut!r})")
     if not secure:
-        print("⚠️  RELAIS_COOKIE_SECURE=false : cookie de session émis SANS Secure. "
-              "Acceptable en test HTTP local, JAMAIS en production.")
+        print("⚠️  cookie émis SANS Secure : acceptable en test HTTP local, "
+              "JAMAIS en production.")
     return creer_app(depot, registre, make_llm, base_url=_exige("RELAIS_BASE_URL"),
                      cookie_secure=secure)
 

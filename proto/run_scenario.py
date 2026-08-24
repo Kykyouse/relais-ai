@@ -1620,6 +1620,19 @@ def check_app_artisan() -> bool:
         if r.status_code != 401 or "<form" not in r.text or "Connexion" not in r.text:
             print(f"   /app sans session : {r.status_code}, page = {r.text[:90]!r}")
             return False
+        # Le diagnostic doit être DANS la page : sans cookie reçu, la cause la plus
+        # probable est l'attribut Secure en HTTP. Deux tours de débogage ont été perdus
+        # là-dessus le 24/08 — l'indice est donc verrouillé par ce test.
+        if "RELAIS_COOKIE_SECURE" not in r.text or "aucun cookie" not in r.text:
+            print("   /app sans cookie ne dit pas quoi vérifier")
+            return False
+        # avec un cookie inconnu, le diagnostic doit être DIFFÉRENT : session expirée
+        anonyme.cookies.set(NOM_COOKIE, "jeton-qui-ne-correspond-a-rien")
+        r = anonyme.get("/app")
+        if "expirée" not in r.text or "RELAIS_COOKIE_SECURE" in r.text:
+            print(f"   cookie inconnu : mauvais diagnostic, {r.text[:110]!r}")
+            return False
+        anonyme.cookies.clear()
         if anonyme.post("/connexion", data={"jeton": "mauvais"}).status_code != 401:
             print("   un jeton refusé n'est pas rejeté")
             return False
@@ -1711,6 +1724,12 @@ def check_app_artisan() -> bool:
         from html import escape as _esc2
         if _esc2(rdv2.creneau["label"]) in page or "Aucun rendez-vous" not in page:
             print("   Martin voit les rendez-vous de Dupont")
+            return False
+
+    # /sante expose le réglage : le vérifier depuis le téléphone doit prendre dix secondes
+    with TestClient(app) as sonde:
+        if sonde.get("/sante").json().get("cookie_secure") is not False:
+            print("   /sante n'expose pas le réglage cookie_secure")
             return False
 
     # (h) les attributs du cookie, lus dans l'EN-TÊTE Set-Cookie et non déduits du

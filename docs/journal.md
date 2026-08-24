@@ -1211,3 +1211,31 @@ applique. Ici, la propriété à vérifier n'était pas « la session marche » 
 porte les bons attributs » — et seule la seconde formulation attrape le bug.
 
 Suite : **28 PASS**.
+
+### 24/08 — le même bug une seconde fois : je devinais au lieu de rendre visible
+
+**La cause était triviale** : `RELAIS_COOKIE_SECURE` était absent du `.env` racine. Je
+l'avais documenté dans `.env.example` **sans le dire explicitement**, et sans rien pour
+rendre l'état observable. Deux tours de diagnostic perdus sur une ligne manquante.
+
+**Ce qui était vraiment en cause : rien ne montrait l'état.** L'avertissement ne s'affichait
+que lorsque l'attribut était désactivé — donc son absence pouvait signifier « configuration
+sûre » **ou** « réglage non pris en compte ». Un état qu'on ne voit que lorsqu'il est anormal
+ne se distingue pas d'un réglage ignoré.
+
+**Corrigé, sur trois plans.**
+- Le serveur annonce le réglage **à chaque démarrage**, valeur brute comprise :
+  `cookie de session : Secure=False (RELAIS_COOKIE_SECURE='false')`.
+- `/sante` l'expose : vérifiable depuis le téléphone en dix secondes, sans aller-retour.
+- La page de connexion **diagnostique** selon la cause : « aucun cookie reçu » renvoie vers
+  l'attribut Secure et `RELAIS_COOKIE_SECURE` ; « cookie inconnu » dit session expirée. Les
+  confondre coûtait un tour.
+- R24 verrouille les deux messages **et** l'exposition dans `/sante` : un diagnostic non
+  testé pourrit.
+
+**Leçon, la troisième du même genre aujourd'hui.** Après le repli de connexion qui ne vivait
+que dans le harnais de test, et l'attribut `Secure` que `TestClient` n'applique pas : quand
+un réglage décide qu'une chose marche ou non, **le rendre observable vaut mieux que le
+documenter**. J'ai passé deux tours à supposer au lieu d'une minute à instrumenter.
+
+Suite : **28 PASS**.

@@ -135,7 +135,11 @@ def creer_app(depot, registre: Registre, fabrique_llm, horloge=None,
     # ---- santé ----
     @app.get("/sante")
     def sante() -> dict:
-        return {"statut": "ok", "contrat_lead": CONTRAT_LEAD_VERSION}
+        # `cookie_secure` y figure volontairement : ce n'est pas un secret, et c'est LE
+        # réglage qui décide si une connexion par navigateur peut aboutir en HTTP. Le
+        # vérifier depuis le téléphone doit prendre dix secondes, pas un aller-retour.
+        return {"statut": "ok", "contrat_lead": CONTRAT_LEAD_VERSION,
+                "cookie_secure": cookie_secure}
 
     # ---- porte téléphonie ----
     @app.post("/webhooks/appel", response_model=TourOut,
@@ -366,7 +370,18 @@ def creer_app(depot, registre: Registre, fabrique_llm, horloge=None,
         artisan = (registre.par_token(authorization.removeprefix("Bearer ").strip())
                    or _artisan_de_session(relais_session))
         if artisan is None:
-            return HTMLResponse(pages.connexion(), status_code=401)
+            # Distinguer les deux causes change tout pour qui débogue : « aucun cookie
+            # reçu » désigne le navigateur ou l'attribut Secure ; « cookie inconnu »
+            # désigne une session expirée ou révoquée. Les confondre coûte un tour.
+            if not relais_session:
+                indice = ("Le navigateur n'a envoyé aucun cookie de session. En HTTP "
+                          "non chiffré, un cookie Secure est refusé — sauf sur localhost, "
+                          "pas sur une IP de réseau local. Vérifie /sante : si "
+                          "cookie_secure vaut true, mets RELAIS_COOKIE_SECURE=false pour "
+                          "tester en local.")
+            else:
+                indice = "Session expirée ou révoquée. Reconnecte-toi."
+            return HTMLResponse(pages.connexion(indice), status_code=401)
         cartes = []
         for r in depot.rdvs_en_attente(artisan.id):
             donnees = depot.lead(r.lead_id).donnees
