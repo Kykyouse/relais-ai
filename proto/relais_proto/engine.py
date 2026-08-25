@@ -86,10 +86,40 @@ class Conversation:
     # slots corrigeables tant que le RDV n'est pas réservé (leçon des bugs "numéro" et "commune")
     OVERWRITABLE = {"code_postal", "commune", "disponibilites"}
 
+    @staticmethod
+    def _numero_fr(valeur) -> str | None:
+        """Un numéro FR à dix chiffres, ou rien. Aucune tolérance, aucune troncature.
+
+        Le contrôle vit ICI, dans le contrôleur, et non dans l'extracteur : le LLM extrait,
+        il ne décide pas (règle n°1). Corriger la seule expression régulière du mock
+        n'aurait protégé que les tests — le modèle réel peut parfaitement rendre dix
+        chiffres sur douze entendus, et c'est exactement ce qui est arrivé au téléphone le
+        26/08 : douze chiffres dictés, dix répétés, « oui c'est bien ça », et un RDV dont
+        le seul moyen de rappel est faux.
+
+        Un numéro à peu près juste est pire qu'un numéro absent : sans numéro, l'invariant
+        arrête la réservation et l'artisan rappelle ; avec un numéro faux, le RDV a
+        l'apparence de la normalité.
+        """
+        chiffres = "".join(c for c in str(valeur or "") if c.isdigit())
+        if len(chiffres) != 10 or not chiffres.startswith("0"):
+            return None
+        # tout ce qui n'est ni chiffre ni séparateur d'écriture usuel trahit autre chose
+        # qu'un numéro (« 06 12 chez ma mère 34 56 78 »)
+        if any(c.isalpha() for c in str(valeur or "")):
+            return None
+        return chiffres
+
     def _merge(self, extracted: dict) -> None:
         for k, v in extracted.items():
             if k not in self.slots or v in (None, ""):
                 continue
+            # Le numéro de rappel est le SEUL slot revérifié en entrée : c'est le seul
+            # dont une valeur approximative produit un RDV en apparence normal.
+            if k == "telephone_rappel":
+                v = self._numero_fr(v)
+                if v is None:
+                    continue
             # `commune` ne s'écrit JAMAIS seule : elle forme une paire avec `code_postal`,
             # et un nom sans code postal produisait un lead qui se contredisait
             # (« Nogent-sur-Marne / 94000 », soit Créteil — trouvé le 25/08 sur T10).
@@ -525,10 +555,19 @@ class Conversation:
             if ex.get("code_postal"):
                 texte = texte.replace(ex["code_postal"], "")
             digits = _re.sub(r"\D", "", texte)
-            if 5 <= len(digits) <= 9:
+            # Des chiffres, mais pas un numéro exploitable. Deux cas, deux phrases : trop
+            # PEU (l'appelant s'est arrêté) et trop (il en a dit un de plus, ou le STT en
+            # a inventé). Le second manquait, et c'est celui du 26/08 : douze chiffres
+            # tombaient dans la branche « il me faut un numéro », qui réclame à l'appelant
+            # quelque chose qu'il venait de donner — de quoi le braquer, et surtout de
+            # quoi masquer que c'est la DICTÉE qui n'allait pas.
+            if len(digits) >= 5:
                 self.flags["tel_incomplets"] = self.flags.get("tel_incomplets", 0) + 1
                 if self.flags["tel_incomplets"] >= 3:
                     return self._sans_rdv()
+                if len(digits) > 10:
+                    return self._say("Je n'ai pas bien noté votre numéro — pouvez-vous "
+                                     "me le redonner, chiffre par chiffre ?")
                 return self._say("Ce numéro me semble incomplet — pouvez-vous me le "
                                  "redonner en entier, avec les dix chiffres ?")
             self.flags["tentatives_tel"] += 1
@@ -538,7 +577,7 @@ class Conversation:
                              "sans ça je ne peux pas réserver. Quel est votre numéro ?")
         if not self.slots["tel_confirme"]:
             # correction : un NOUVEAU numéro donné pendant la confirmation remplace l'ancien
-            nouveau = ex.get("telephone_rappel")
+            nouveau = self._numero_fr(ex.get("telephone_rappel"))
             if nouveau and nouveau != self.slots["telephone_rappel"]:
                 self.slots["telephone_rappel"] = nouveau
                 return self._say(f"Je répète votre numéro : {self._tel_espace()}. "

@@ -23,7 +23,10 @@ Réponds UNIQUEMENT un objet JSON avec les clés présentes dans la phrase (omet
 - urgence_reelle: true/false si l'appelant exprime (ou nie) un dégât/besoin immédiat
 - statut_occupant: proprietaire|locataire|syndic|autre si déductible
 - nom: nom de famille si donné
-- telephone_rappel: numéro FR si donné (format 0XXXXXXXXX)
+- telephone_rappel: numéro FR si donné (format 0XXXXXXXXX, EXACTEMENT dix chiffres).
+  Si tu entends plus ou moins de dix chiffres, ne renvoie PAS ce champ — ne tronque
+  jamais, ne complète jamais. Un numéro à peu près juste est pire qu'un numéro absent :
+  c'est le seul moyen de rappeler le client.
 - disponibilites: contraintes de dispo si exprimées
 - danger_gaz: true si odeur/fuite de gaz évoquée
 - confirme: true/false si la phrase est une confirmation/refus de ce que l'agent vient de proposer
@@ -147,7 +150,12 @@ class MockLLM:
             out["probleme"] = utterance.strip()[:80]
         if m := re.search(r"\b(\d{5})\b", u):
             out["code_postal"] = m.group(1)
-        if m := re.search(r"\b(0\d(?:[\s.\-]?\d{2}){4})\b", utterance):
+        # `(?![\s.\-]?\d)` : un chiffre de plus INVALIDE la capture au lieu de la
+        # tronquer. Sans lui, « 06 10 15 47 68 79 » (douze chiffres dictés) rendait
+        # « 0610154768 » : le `\b` tenait, un espace suivant. Trouvé au premier appel
+        # vocal réel du 26/08 — l'agent répétait dix chiffres, l'appelant confirmait sans
+        # rien remarquer, et le RDV partait sur un numéro que personne n'avait donné.
+        if m := re.search(r"\b(0\d(?:[\s.\-]?\d{2}){4})(?![\s.\-]?\d)", utterance):
             out["telephone_rappel"] = re.sub(r"[\s.\-]", "", m.group(1))
         # le seul extracteur qui lit le CONTEXTE : « Garcia, 06 12 34 56 78 » n'est un nom
         # que parce que l'agent vient de demander « à quel nom ? »

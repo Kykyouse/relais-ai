@@ -3551,6 +3551,175 @@ def check_creneaux_verbatim() -> bool:
     return True
 
 
+def check_numero_jamais_tronque() -> bool:
+    """R42 : un numéro qui n'est pas exactement un numéro FR à dix chiffres n'est JAMAIS
+    retenu — et surtout jamais tronqué en silence.
+
+    Trouvé le 26/08 au **premier appel vocal réel**, sur le chemin nominal complet.
+    Geoffrey dicte douze chiffres (« 06 10 15 47 68 79 » — une erreur de sa part, mais un
+    appelant réel la fera). L'agent en répète DIX (« 06 10. 15 47 68 »), sans rien
+    signaler. Geoffrey confirme « oui, c'est bien ça » sans remarquer la troncature, et le
+    RDV part sur un numéro **que le client ne croit pas avoir donné**.
+
+    L'invariant « pas de RDV sans téléphone confirmé » était syntaxiquement respecté et
+    trahi en substance : ce qui a été confirmé n'est pas ce qui a été dicté. C'est le
+    défaut le plus grave trouvé jusqu'ici, parce qu'il produit un RDV d'apparence normale
+    dont le seul moyen de rappel est faux.
+
+    Deux causes, deux correctifs à des étages différents :
+
+    1. La regex de l'extracteur, `0\\d(?:[\\s.\\-]?\\d{2}){4}\\b`, s'arrête après quatre
+       paires : sur douze chiffres, le `\\b` tient (un espace suit) et la capture est
+       tronquée sans erreur. Il lui manquait de refuser un chiffre de plus.
+    2. Et surtout : **le contrôleur faisait confiance à l'extracteur.** Un slot venu du
+       LLM était écrit tel quel. Corriger la seule regex ne protégerait que le mock — le
+       modèle réel, lui, peut très bien rendre dix chiffres sur douze entendus. La
+       validation appartient donc au CONTRÔLEUR (règle n°1 : le LLM extrait, il ne décide
+       pas), et c'est la partie qui vaut d'être verrouillée.
+    """
+    from relais_proto.engine import Conversation
+
+    # (a) l'extracteur ne tronque plus
+    ex = MockLLM().extract("06 10 15 47 68 79", {})
+    if ex.get("telephone_rappel"):
+        print(f"   douze chiffres acceptés comme numéro : "
+              f"{ex['telephone_rappel']!r} (tronqué en silence)")
+        return False
+    # ...et un numéro NORMAL reste extrait, sous toutes ses écritures usuelles
+    for dictee, attendu in (("06 12 34 56 78", "0612345678"),
+                            ("06.12.34.56.78", "0612345678"),
+                            ("Mon numéro c'est le 0612345678.", "0612345678"),
+                            ("07-88-11-22-33", "0788112233")):
+        vu = MockLLM().extract(dictee, {}).get("telephone_rappel")
+        if vu != attendu:
+            print(f"   {dictee!r} : {vu!r} au lieu de {attendu!r}")
+            return False
+
+    # (b) LE VERROU : même si l'extracteur rend n'importe quoi, le contrôleur refuse.
+    # C'est ce qui protège du modèle réel, que la regex ne couvre pas.
+    class ExtracteurMenteur:  # noqa: E306
+        """Double : un extracteur qui rend un numéro invalide, comme le modèle réel
+        pourrait le faire en tronquant douze chiffres entendus à dix."""
+        def __init__(self, valeur):
+            self.valeur = valeur
+
+        def extract(self, utterance, context):
+            return {"telephone_rappel": self.valeur}
+
+        def reply(self, instruction, context):
+            return instruction
+
+    for mauvais in ("061015476879",            # douze chiffres : le cas du 26/08
+                    "06101547",                # trop court
+                    "0",
+                    "1234567890",              # dix chiffres, mais pas un mobile FR
+                    "06 12 chez ma mère 34 56 78",   # dix chiffres ET des mots
+                    "06 10 15 47 68 79"):
+        convo = Conversation(CFG, ExtracteurMenteur(mauvais),
+                             CalendarStub(CFG, now=LUNDI_9H))
+        convo.open()
+        convo.slots["telephone_rappel"] = None
+        convo.process("06 10 15 47 68 79")
+        if convo.slots["telephone_rappel"] is not None:
+            print(f"   le contrôleur a gobé un numéro invalide de l'extracteur : "
+                  f"{mauvais!r} → {convo.slots['telephone_rappel']!r}")
+            return False
+
+    # (b-bis) La CORRECTION pendant la confirmation passe par le même verrou. C'est un
+    # SECOND chemin d'écriture du slot, et il l'écrit sans repasser par `_merge` : le
+    # protéger une fois ne le protège pas deux fois (mutation survivante au 1ᵉʳ passage).
+    convo = Conversation(CFG, MockLLM(), CalendarStub(CFG, now=LUNDI_9H))
+    convo.open()
+    for ligne in ("J'ai une fuite d'eau dans la salle de bain", "Nogent-sur-Marne 94130",
+                  "Geoffrey", "06 12 34 56 78"):
+        convo.process(ligne)
+    if convo.slots["telephone_rappel"] != "0612345678":
+        print(f"   préparation : numéro non retenu "
+              f"({convo.slots['telephone_rappel']!r})")
+        return False
+    convo.llm = ExtracteurMenteur("061015476879")
+    convo.process("non, plutôt le 06 10 15 47 68 79")
+    if convo.slots["telephone_rappel"] != "0612345678":
+        print(f"   une CORRECTION invalide a écrasé le numéro confirmé : "
+              f"{convo.slots['telephone_rappel']!r}")
+        return False
+
+    # (c) DE BOUT EN BOUT, la dictée verbatim de l'appel du 26/08. L'agent doit demander
+    # de répéter, et surtout ne jamais répéter dix chiffres comme s'ils étaient le numéro.
+    convo = Conversation(CFG, MockLLM(), CalendarStub(CFG, now=LUNDI_9H))
+    convo.open()
+    for ligne in ("J'ai une fuite d'eau dans la salle de bain", "Nogent-sur-Marne 94130",
+                  "Geoffrey"):
+        convo.process(ligne)
+    reponse = convo.process("06 10 15 47 68 79")
+    if convo.slots["telephone_rappel"] is not None:
+        print(f"   numéro retenu malgré douze chiffres : "
+              f"{convo.slots['telephone_rappel']!r}")
+        return False
+    if "06 10 15 47 68" in reponse:
+        print(f"   l'agent répète un numéro TRONQUÉ : « {reponse} »")
+        return False
+    # La réplique doit dire qu'on n'a pas bien NOTÉ. Réclamer « les dix chiffres » à un
+    # appelant qui vient d'en dire douze est incompréhensible, et lui cache que c'est sa
+    # dictée qui n'a pas été comprise.
+    if "pas bien noté" not in reponse.lower():
+        print(f"   l'agent ne dit pas qu'il a mal noté : « {reponse} »")
+        return False
+    if "dix chiffres" in reponse.lower():
+        print(f"   l'agent réclame « les dix chiffres » à quelqu'un qui en a dit "
+              f"douze : « {reponse} »")
+        return False
+    if not any(m in reponse.lower() for m in ("redonner", "redonnez", "répéter")):
+        print(f"   l'agent ne demande pas de répéter : « {reponse} »")
+        return False
+
+    # ...et le trop-PEU garde sa phrase à lui, qui est la bonne dans ce sens-là
+    convo_court = Conversation(CFG, MockLLM(), CalendarStub(CFG, now=LUNDI_9H))
+    convo_court.open()
+    for ligne in ("J'ai une fuite d'eau dans la salle de bain", "Nogent-sur-Marne 94130",
+                  "Geoffrey"):
+        convo_court.process(ligne)
+    court = convo_court.process("06 10 15")
+    if "dix chiffres" not in court.lower():
+        print(f"   un numéro trop court ne reçoit plus sa phrase propre : « {court} »")
+        return False
+
+    # (d) et le chemin normal n'est pas cassé : dix chiffres passent, sont répétés
+    # VERBATIM, et la confirmation réserve.
+    convo2 = Conversation(CFG, MockLLM(), CalendarStub(CFG, now=LUNDI_9H))
+    convo2.open()
+    for ligne in ("J'ai une fuite d'eau dans la salle de bain", "Nogent-sur-Marne 94130",
+                  "Geoffrey"):
+        convo2.process(ligne)
+    dit = convo2.process("06 10 15 47 68")
+    if convo2.slots["telephone_rappel"] != "0610154768":
+        print(f"   un numéro valide n'est plus retenu : "
+              f"{convo2.slots['telephone_rappel']!r}")
+        return False
+    if "06 10 15 47 68" not in dit:
+        print(f"   le numéro n'est pas répété verbatim : « {dit} »")
+        return False
+
+    # (e) la boucle reste BORNÉE : un appelant qui dicte mal trois fois n'y reste pas
+    convo3 = Conversation(CFG, MockLLM(), CalendarStub(CFG, now=LUNDI_9H))
+    convo3.open()
+    for ligne in ("J'ai une fuite d'eau dans la salle de bain", "Nogent-sur-Marne 94130",
+                  "Geoffrey"):
+        convo3.process(ligne)
+    for _ in range(5):
+        if convo3.state.value in ("S11", "FIN"):
+            break
+        convo3.process("06 10 15 47 68 79")
+    if convo3.state.value not in ("S11", "FIN"):
+        print(f"   dictées invalides à répétition : l'agent reste en "
+              f"{convo3.state.value}, la boucle n'est pas bornée")
+        return False
+    if convo3.slots["telephone_rappel"] is not None:
+        print("   un numéro invalide a fini par être retenu")
+        return False
+    return True
+
+
 def check_adaptateur_vapi() -> bool:
     """R41 : l'adaptateur de la plateforme vocale. Un tour d'appel, traduit — rien décidé.
 
@@ -4439,6 +4608,15 @@ def run() -> int:
         print("   → un tour d'appel vocal traduit sans rien décider : identifiant "
               "de la plateforme comme clé, historique et prompt système ignorés, "
               "rejeu sans effet, annonce IA de notre moteur : ✅ PASS")
+    else:
+        print("   → ❌ FAIL")
+        echecs += 1
+
+    print(f"\n──── R42_numero_jamais_tronque ────")
+    if check_numero_jamais_tronque():
+        print("   → un numéro qui ne fait pas exactement dix chiffres est refusé "
+              "par le CONTRÔLEUR, jamais tronqué en silence, et la boucle reste "
+              "bornée : ✅ PASS")
     else:
         print("   → ❌ FAIL")
         echecs += 1
