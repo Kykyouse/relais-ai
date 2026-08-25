@@ -345,7 +345,12 @@ def main() -> int:
             tag = "✅ PASS" if r["pass"] else "❌ FAIL " + "; ".join(r["problemes"])
             if r["warns"]:
                 tag += "  ⚠ " + "; ".join(r["warns"])
-            print(f"{nom} [{i + 1}/{args.n}] ({r['tours']} tours) : {tag}")
+            # `flush` : sans lui, Python tamponne sa sortie dès qu'elle ne va pas dans un
+            # terminal — un passage redirigé vers un fichier reste donc VIDE pendant ses
+            # trente-cinq minutes, puis se remplit d'un coup à la fin. Impossible de
+            # savoir où on en est, ni de voir ce qui a déjà échoué. Une conversation
+            # dure une minute : c'est le bon grain pour rendre la main.
+            print(f"{nom} [{i + 1}/{args.n}] ({r['tours']} tours) : {tag}", flush=True)
             if not r["pass"]:
                 echecs += 1
 
