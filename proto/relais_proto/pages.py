@@ -32,6 +32,8 @@ button { width: 100%; min-height: 52px; font-size: 1.05rem; font-weight: 600;
 button:active { background: #14512e; }
 .apres { font-size: .92rem; color: #5b6472; margin: 20px 0 0; }
 .ok { font-size: 2.4rem; line-height: 1; margin: 0 0 10px; }
+.marque { margin: 26px 0 0; text-align: center; font-size: .8rem; color: #9aa4b2;
+  letter-spacing: .08em; text-transform: uppercase; }
 @media (prefers-color-scheme: dark) {
   body { background: #14181f; color: #e8eaed; }
   main { background: #1d232c; box-shadow: none; }
@@ -40,19 +42,27 @@ button:active { background: #14512e; }
 """
 
 
-def _page(titre: str, corps: str) -> str:
+def _page(produit: str, titre: str, corps: str) -> str:
+    """Le nom du produit est un PARAMÈTRE, jamais une constante.
+
+    Il apparaît dans le `<title>` (l'onglet, et ce que le téléphone affiche en aperçu de
+    lien) et en signature de bas de page. Le client, lui, ne connaît que son artisan :
+    la signature dit qui organise, elle ne prend pas sa place.
+    """
     return (
         "<!DOCTYPE html>\n"
         '<html lang="fr"><head><meta charset="utf-8">'
         '<meta name="viewport" content="width=device-width, initial-scale=1">'
         # une page de confirmation n'a rien à faire dans un index de moteur de recherche
         '<meta name="robots" content="noindex, nofollow">'
-        f"<title>{escape(titre)}</title><style>{_STYLE}</style></head>"
-        f"<body><main>{corps}</main></body></html>"
+        f"<title>{escape(titre)} · {escape(produit)}</title>"
+        f"<style>{_STYLE}</style></head>"
+        f'<body><main>{corps}<p class="marque">{escape(produit)}</p></main></body></html>'
     )
 
 
-def proposition(entreprise: str, prenom: str, creneau_label: str, action: str) -> str:
+def proposition(produit: str, entreprise: str, prenom: str, creneau_label: str,
+                action: str) -> str:
     """Page vue par le client au bout du lien SMS : un créneau, un bouton.
 
     Volontairement pauvre en informations : ni son nom, ni son téléphone, ni le motif de
@@ -60,6 +70,7 @@ def proposition(entreprise: str, prenom: str, creneau_label: str, action: str) -
     la personne. Le formulaire poste sur la MÊME URL : pas de JS, donc ça marche partout.
     """
     return _page(
+        produit,
         f"Valider votre rendez-vous — {entreprise}",
         f"<h1>Votre rendez-vous</h1>"
         f'<p class="entreprise">{escape(entreprise)}</p>'
@@ -70,8 +81,9 @@ def proposition(entreprise: str, prenom: str, creneau_label: str, action: str) -
         f'<p class="apres">En validant, {escape(prenom)} est prévenu immédiatement.</p>')
 
 
-def confirmee(entreprise: str, prenom: str, creneau_label: str) -> str:
+def confirmee(produit: str, entreprise: str, prenom: str, creneau_label: str) -> str:
     return _page(
+        produit,
         f"Rendez-vous confirmé — {entreprise}",
         f'<p class="ok">✅</p><h1>C\'est confirmé</h1>'
         f'<p class="entreprise">{escape(entreprise)}</p>'
@@ -80,7 +92,7 @@ def confirmee(entreprise: str, prenom: str, creneau_label: str) -> str:
         f"faire.</p>")
 
 
-def lien_invalide() -> str:
+def lien_invalide(produit: str) -> str:
     """404 ET 410 : le même texte pour un lien inconnu, déjà utilisé ou périmé.
 
     Ne pas distinguer les cas est délibéré côté sécurité — mais surtout, ce message doit
@@ -88,6 +100,7 @@ def lien_invalide() -> str:
     validation a échoué.
     """
     return _page(
+        produit,
         "Lien expiré",
         "<h1>Ce lien n'est plus valide</h1>"
         '<p class="apres">Il a peut-être déjà été utilisé, ou le créneau n\'est plus '
@@ -96,8 +109,9 @@ def lien_invalide() -> str:
         "horaire.</p>")
 
 
-def creneau_perime(prenom: str) -> str:
+def creneau_perime(produit: str, prenom: str) -> str:
     return _page(
+        produit,
         "Créneau expiré",
         "<h1>Ce créneau n'est plus disponible</h1>"
         f'<p class="apres">Le délai de validation est passé. {escape(prenom)} vous '
@@ -132,17 +146,18 @@ a { color: #1a6b3c; }
 """
 
 
-def _page_app(titre: str, corps: str) -> str:
+def _page_app(produit: str, titre: str, corps: str) -> str:
     return (
         "<!DOCTYPE html>\n"
         '<html lang="fr"><head><meta charset="utf-8">'
         '<meta name="viewport" content="width=device-width, initial-scale=1">'
         '<meta name="robots" content="noindex, nofollow">'
-        f"<title>{escape(titre)}</title><style>{_STYLE_APP}</style></head>"
-        f"<body><main>{corps}</main></body></html>")
+        f"<title>{escape(titre)} · {escape(produit)}</title>"
+        f"<style>{_STYLE_APP}</style></head>"
+        f'<body><main>{corps}<p class="marque">{escape(produit)}</p></main></body></html>')
 
 
-def boite_validation(prenom: str, rdvs: list[dict]) -> str:
+def boite_validation(produit: str, prenom: str, rdvs: list[dict]) -> str:
     """LA fonction produit : les rendez-vous à valider, et rien d'autre à l'écran.
 
     Sans JavaScript : chaque action est un formulaire qui poste puis redirige. Les champs
@@ -151,6 +166,7 @@ def boite_validation(prenom: str, rdvs: list[dict]) -> str:
     """
     if not rdvs:
         return _page_app(
+            produit,
             "Rien à valider",
             f"<h1>Bonjour {escape(prenom)}</h1>"
             '<p class="vide">Aucun rendez-vous en attente. Tout est à jour.</p>')
@@ -193,10 +209,10 @@ def boite_validation(prenom: str, rdvs: list[dict]) -> str:
             f"{actions}</div>")
     a_decider = sum(1 for r in rdvs if not r["echu"])
     titre = f"{a_decider} à valider" if a_decider else "Rien à valider"
-    return _page_app(titre, f"<h1>Bonjour {escape(prenom)}</h1>" + "".join(blocs))
+    return _page_app(produit, titre, f"<h1>Bonjour {escape(prenom)}</h1>" + "".join(blocs))
 
 
-def action_impossible(raison: str) -> str:
+def action_impossible(produit: str, raison: str) -> str:
     """Une action refusée par le domaine doit rendre une PAGE, pas du JSON.
 
     Après un tap sur un téléphone, `{"detail":"RDV ... échu depuis ..."}` est illisible.
@@ -204,13 +220,14 @@ def action_impossible(raison: str) -> str:
     l'habiller et proposer le retour.
     """
     return _page_app(
+        produit,
         "Action impossible",
         "<h1>Action impossible</h1>"
         f'<p class="raisons">{escape(raison)}</p>'
         '<p class="apres"><a href="/app">Revenir à mes rendez-vous</a></p>')
 
 
-def connexion(erreur: str = "") -> str:
+def connexion(produit: str, erreur: str = "") -> str:
     """Premier écran : l'artisan donne son numéro de mobile.
 
     `type="tel"` fait sortir le pavé numérique du téléphone, et `autocomplete="tel"`
@@ -219,6 +236,7 @@ def connexion(erreur: str = "") -> str:
     """
     alerte = f'<p class="raisons">{escape(erreur)}</p>' if erreur else ""
     return _page_app(
+        produit,
         "Connexion",
         "<h1>Connexion</h1>"
         '<p class="raisons">Entrez votre numéro de mobile : vous recevrez un code '
@@ -231,7 +249,7 @@ def connexion(erreur: str = "") -> str:
           '<label></label><button type="submit">Recevoir un code</button></form>')
 
 
-def saisie_code(telephone: str, erreur: str = "") -> str:
+def saisie_code(produit: str, telephone: str, erreur: str = "") -> str:
     """Second écran : la saisie du code à 6 chiffres.
 
     `inputmode="numeric"` et `autocomplete="one-time-code"` : sur iOS comme sur Android,
@@ -240,6 +258,7 @@ def saisie_code(telephone: str, erreur: str = "") -> str:
     """
     alerte = f'<p class="raisons">{escape(erreur)}</p>' if erreur else ""
     return _page_app(
+        produit,
         "Code reçu par SMS",
         "<h1>Votre code</h1>"
         f'<p class="raisons">Envoyé au {escape(telephone)}, valable quelques minutes.</p>'

@@ -159,7 +159,14 @@ class MockLLM:
             out["creneau_choisi"] = 1
         if "deuxième" in u or "second" in u or "le 2" in u:
             out["creneau_choisi"] = 2
-        if any(w in u for w in ["un humain", "quelqu'un", "le patron", "parler à julien"]):
+        # « quelqu'un » TOUT SEUL ne veut pas dire « je veux parler à un humain » : dans ce
+        # métier, « il faudrait que quelqu'un vienne » est la façon la plus banale de
+        # demander une intervention. Le mot ne compte que dans un contexte de PAROLE.
+        # (trouvé le 25/08 par l'éval réelle, sur la même phrase que l'homonyme « vienne »)
+        if any(w in u for w in ["un humain", "une vraie personne", "le patron",
+                                "parler à quelqu'un", "parler a quelqu'un",
+                                "parler à julien", "parler a julien",
+                                "quelqu'un au téléphone"]):
             out["veut_humain"] = True
         if any(w in u for w in ["plus tôt", "rien avant", "pas avant"]):
             out["veut_plus_tot"] = True

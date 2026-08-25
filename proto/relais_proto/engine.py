@@ -224,6 +224,7 @@ class Conversation:
         self.state = State.S2_LOCALISER
         if self.slots["code_postal"]:
             return self._s2({})
+        self.flags["commune_demandee"] = True
         return self._say("Vous êtes sur quelle commune ?")
 
     @staticmethod
@@ -238,15 +239,63 @@ class Conversation:
 
     _COMMUNES_IDF: dict | None = None  # table France Île-de-France (base officielle Etalab)
 
+    # Alias d'un seul mot qui sont AUSSI des mots français courants. La table porte, pour
+    # chaque commune composée, un alias court bien utile — « Issy », « Sucy », « Ivry »
+    # sont ce que les gens disent vraiment. Mais quelques-uns sont des homonymes qui
+    # apparaissent naturellement dans un appel de plomberie, et les garder coûte des leads.
+    #
+    # Trouvé par l'éval LLM du 25/08 : « il faudrait que quelqu'un VIENNE assez vite » a
+    # résolu Vienne-en-Arthies (95510), classé l'appel hors zone et raccroché au premier
+    # tour. Sur une fuite d'eau en cours.
+    #
+    # L'exclusion vit ICI et non dans le fichier de données : celui-ci est régénéré depuis
+    # la base officielle, et une régénération réintroduirait les homonymes en silence. Le
+    # nom COMPLET reste résoluble dans tous les cas (« Vienne-en-Arthies », « Bois-le-Roi »).
+    ALIAS_AMBIGUS = frozenset({
+        "vienne",   # « qu'il vienne », « que quelqu'un vienne » — subjonctif de venir
+        "bois",     # « je bois », « le bois », « sous le bois »
+        "champs",   # « les champs »
+        "bourg",    # « le bourg »
+    })
+
     @classmethod
     def _communes_idf(cls) -> dict:
         if cls._COMMUNES_IDF is None:
             import json
             import pathlib
             chemin = pathlib.Path(__file__).parent / "data" / "communes_idf.json"
-            cls._COMMUNES_IDF = json.loads(chemin.read_text(encoding="utf-8")) \
+            brut = json.loads(chemin.read_text(encoding="utf-8")) \
                 if chemin.exists() else {}
+            cls._COMMUNES_IDF = {n: cp for n, cp in brut.items()
+                                 if n not in cls.ALIAS_AMBIGUS}
         return cls._COMMUNES_IDF
+
+    def _phrase_prix(self) -> str:
+        """LA réponse tarifaire autorisée, tirée de la liste blanche de la config.
+
+        Factorisée le 25/08 : elle vivait en ligne dans S4, et S5 n'avait donc rien à dire
+        quand on lui posait la question — l'agent refusait de répondre alors qu'il avait
+        un prix à annoncer, et perdait le client.
+        """
+        dep = next((t["phrase"] for t in self.cfg["tarifs"]["communicables"]
+                    if t["libelle"] == "deplacement_diagnostic"), None)
+        if dep:
+            return (dep + " Pour le reste, ça dépendra de ce que "
+                    f"{self._prenom} constatera sur place.")
+        return (f"Ça dépend de ce que {self._prenom} constatera sur place — "
+                "je ne veux pas vous annoncer un chiffre faux.")
+
+    def _prix_a_repondre(self, ex: dict) -> bool:
+        """Vrai s'il faut répondre à une question de prix maintenant.
+
+        La patience est BORNÉE et partagée entre les états : au-delà de deux questions,
+        on avance au lieu de resservir la même phrase indéfiniment — l'appelant qui
+        insiste encore cherche autre chose qu'un tarif.
+        """
+        if not ex.get("question_prix"):
+            return False
+        self.flags["questions_prix"] = self.flags.get("questions_prix", 0) + 1
+        return self.flags["questions_prix"] <= 2
 
     def _resoudre_commune(self, texte: str) -> None:
         """Reconnaît une commune citée dans la phrase et en déduit le CP — l'appelant
@@ -272,13 +321,20 @@ class Conversation:
         if not trouve:
             return
         nom, cps = trouve
+        # D'OÙ vient cette commune : d'une réponse à notre question, ou glanée au passage
+        # dans une phrase qui parlait d'autre chose ? La seconde n'a été ni demandée ni
+        # confirmée — elle ne pourra donc pas clore l'appel toute seule (cf. `_s2`).
+        self.flags["commune_incidente"] = not self.flags.get("commune_demandee")
         zone = self.cfg["zone"]
         # commune multi-CP (ex. Saint-Maur : 94100/94210/94340) : préférer un CP
         # couvert, puis limitrophe, sinon le premier (=> classement hors_zone)
         cp = next((c for c in cps if c in zone["codes_postaux"]),
                   next((c for c in cps if c in zone["codes_postaux_limitrophes"]),
                        cps[0]))
-        self.slots["commune"] = nom
+        # Capitalisée avant d'être stockée : c'est une clé de table, mais elle finit dans
+        # une phrase dite à l'appelant (« n'intervient pas sur sucy ») et dans le SMS de
+        # relance à l'artisan. Le nom d'une ville s'écrit avec des majuscules.
+        self.slots["commune"] = " ".join(m.capitalize() for m in nom.split())
         self.slots["code_postal"] = cp
 
     JOURS_SEMAINE = {"lundi": 0, "mardi": 1, "mercredi": 2, "jeudi": 3,
@@ -301,12 +357,43 @@ class Conversation:
         return "hors_zone"
 
     def _s2(self, ex: dict) -> str:
+        # Une confirmation de commune est en attente (cf. plus bas). Les slots ont été
+        # VIDÉS en posant la question, pour que la réponse soit relue sans entrave : si
+        # l'appelant corrige, `_resoudre_commune` a déjà fait son travail avant d'arriver
+        # ici, et le candidat n'a plus qu'à être oublié.
+        candidat = self.flags.get("commune_a_confirmer")
+        if candidat:
+            if self.slots["code_postal"] is not None:      # il a nommé une autre commune
+                self.flags["commune_a_confirmer"] = None
+            elif ex.get("confirme") is True:
+                self.flags["commune_a_confirmer"] = None
+                self.slots["commune"], self.slots["code_postal"] = candidat
+                self.flags["zone"] = self._zone_de(candidat[1])
+                return self._hors_zone()
+            else:                                          # « non », ou rien d'exploitable
+                self.flags["commune_a_confirmer"] = None
+                self.flags["commune_demandee"] = True
+                return self._say("Vous êtes sur quelle commune ?")
+
         cp = self.slots["code_postal"]
         if cp is None:
+            self.flags["commune_demandee"] = True
             return self._say("J'ai besoin de votre commune ou code postal pour vérifier "
                              "qu'on intervient chez vous — vous êtes où ?")
         self.flags["zone"] = self._zone_de(cp)
         if self.flags["zone"] == "hors_zone":
+            # NE PAS raccrocher sur une commune glanée au passage. C'est la même règle que
+            # « pas de RDV sans téléphone confirmé » : une décision terminale et coûteuse
+            # ne se prend pas sur une donnée que personne n'a vérifiée. Le 25/08, « il
+            # faudrait que quelqu'un vienne » a coûté un lead de fuite en cours.
+            # Une commune DEMANDÉE, elle, tranche immédiatement — pas de question de trop.
+            if self.flags.get("commune_incidente"):
+                self.flags["commune_a_confirmer"] = (self.slots["commune"], cp)
+                self.flags["commune_incidente"] = False
+                nom = self.slots["commune"]
+                self.slots["commune"] = self.slots["code_postal"] = None
+                self.flags["zone"] = None
+                return self._say(f"Juste pour être sûr — vous êtes bien à {nom} ?")
             return self._hors_zone()
         self.state = State.S3_QUALIFIER
         return self._s3({})
@@ -330,17 +417,9 @@ class Conversation:
             # une QUESTION (prix...) n'est pas un REFUS : on y répond avec la liste
             # blanche et on redemande, sans consommer le quota (bug T05-LLM : Katz
             # posait des questions de prix et perdait son RDV)
-            if ex.get("question_prix"):
-                self.flags["questions_prix"] = self.flags.get("questions_prix", 0) + 1
-                if self.flags["questions_prix"] <= 2:
-                    dep = next((t["phrase"] for t in self.cfg["tarifs"]["communicables"]
-                                if t["libelle"] == "deplacement_diagnostic"), None)
-                    prix = (dep + " Pour le reste, ça dépendra de ce que "
-                            f"{self._prenom} constatera sur place.") if dep else (
-                        f"Ça dépend de ce que {self._prenom} constatera sur place — "
-                        "je ne veux pas vous annoncer un chiffre faux.")
-                    return self._say(prix + " Et pour organiser son passage, "
-                                     "quel est votre numéro ?")
+            if self._prix_a_repondre(ex):
+                return self._say(self._phrase_prix() + " Et pour organiser son passage, "
+                                 "quel est votre numéro ?")
             # numéro incomplet ? (des chiffres, mais pas un numéro FR valide)
             # — en excluant un code postal donné dans la même phrase (bug B : "94000")
             import re as _re
@@ -382,10 +461,29 @@ class Conversation:
         # choix d'un créneau proposé ?
         if self._proposes:
             choix = ex.get("creneau_choisi")
-            if choix is None and ex.get("confirme") is True:
+            # « Oui, MAIS ça coûte combien ? » n'est pas le choix d'un créneau. Un `oui`
+            # accompagné d'une question ne vaut acceptation de rien : réserver dessus
+            # donnerait un rendez-vous que l'appelant n'a pas accepté — la faute que tout
+            # le produit est construit pour éviter. Un choix EXPLICITE (« le premier »)
+            # reste prioritaire, lui.
+            if choix is None and ex.get("confirme") is True \
+                    and not ex.get("question_prix"):
                 choix = 1
             if choix and choix <= len(self._proposes):
                 return self._reserver(self._proposes[choix - 1])
+        # Une QUESTION de prix n'est pas un refus de créneau. Elle tombait pourtant dans
+        # le quota de l'invariant n°6 : l'agent reproposait des créneaux, le compteur
+        # avançait, et DEUX questions suffisaient à faire perdre le RDV — à un client qui
+        # était toujours partant (Katz, éval réelle du 25/08). S4 avait appris la leçon
+        # dès le 22/08 sans qu'elle soit généralisée à l'état suivant.
+        # On répond avec la liste blanche et on RAPPELLE les créneaux déjà proposés :
+        # les remplacer ferait changer la liste sous les pieds de l'appelant, qui ne
+        # pourrait plus répondre « le premier ».
+        if self._proposes and self._prix_a_repondre(ex):
+            rappel = (self._proposes[0]["label"] if len(self._proposes) == 1
+                      else f"{self._proposes[0]['label']}, ou {self._proposes[1]['label']}")
+            return self._say(f"{self._phrase_prix()} Pour le rendez-vous, je peux vous "
+                             f"proposer {rappel}. Lequel vous arrange ?")
         # "rien de plus tôt ?" n'est PAS un rejet : on re-propose le PREMIER créneau,
         # on n'avance pas dans le calendrier (bug T01/R09-LLM : la cliente voulait
         # plus tôt, on lui proposait plus tard et lundi disparaissait)

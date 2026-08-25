@@ -1608,41 +1608,53 @@ def check_cout_sms() -> bool:
         "client": "Van Der Berghe",
         "commune": "Saint-Maur-des-Fossés",
         "telephone": "0612345678",
-        # base publique + jeton de 16 octets (22 car.). Un domaine long coûte des crédits :
-        # c'est une raison concrète de choisir une racine courte.
-        "lien": "https://relais.app/c/" + "x" * 22,
         "code": "000000",                                # 6 chiffres, zéros compris
         "minutes": "10",
-        # Le nom du produit est INCONNU (décision du cousin) et ne sera pas « Relais ».
-        # On éprouve donc le pire cas plausible : 11 caractères, la limite que la Charte
-        # AF2M impose au Sender ID — le nom affiché et l'expéditeur désigneront la même
-        # marque, il n'y a pas de raison que l'un dépasse l'autre.
-        "produit": "Chantierpro",                        # 11 car. (Relais : 6)
     }
 
+    # DEUX BORNES, jouées l'une après l'autre. Le cas réel seul ne prouve rien : le nom du
+    # produit et le domaine ne sont pas figés (le domaine n'est même pas acheté), et un
+    # gabarit qui tient aujourd'hui peut basculer à 2 segments au premier changement.
+    #
+    # `lien` = base publique + jeton de 16 octets (22 car.). Un domaine long coûte des
+    # crédits à CHAQUE reproposition : c'est une raison concrète, chiffrée, de choisir une
+    # racine courte le jour de l'achat.
+    BORNES = [
+        ("réel — Nelyo + nelyo-ia.fr",
+         {"produit": "Nelyo",                            # 5 car., décision du 25/08
+          "lien": "https://nelyo-ia.fr/c/" + "x" * 22}),
+        ("bornes — 11 car. (limite AF2M) + racine de 16 car.",
+         {"produit": "Chantierpro",                      # la limite du Sender ID
+          "lien": "https://nelyo-rendez.com/c/" + "x" * 22}),
+    ]
+
     ok = True
-    for cle, gabarit in TEMPLATES.items():
-        rendu = gabarit.format(**{k: v for k, v in LONG.items() if "{" + k + "}" in gabarit})
-        segments, encodage = segments_sms(rendu)
-        limite = 70 if encodage == "UCS-2" else 160
-        marge = limite - len(rendu)
-        if encodage != "GSM-7":
-            hors = sorted({c for c in rendu if segments_sms(c)[1] == "UCS-2"})
-            print(f"   {cle} : encodage {encodage} à cause de {hors} → limite 70 au lieu "
-                  f"de 160. Remplacer ces caractères (é è ù ì ò à sont légaux, pas ê ô À).")
-            ok = False
-            continue
-        if cle not in PAR_SMS:
-            continue          # push : pas de facturation au segment
-        if segments != 1:
-            print(f"   {cle} : {len(rendu)} caractères = {segments} segments, donc "
-                  f"{segments} crédits par envoi")
-            ok = False
-        elif marge < MARGE_MIN:
-            print(f"   {cle} : tient en 1 segment mais marge de {marge} caractères "
-                  f"seulement (minimum {MARGE_MIN}) — un artisan au nom plus long "
-                  f"doublerait le coût sans alerte")
-            ok = False
+    for libelle_borne, variables in BORNES:
+        valeurs = {**LONG, **variables}
+        for cle, gabarit in TEMPLATES.items():
+            rendu = gabarit.format(**{k: v for k, v in valeurs.items()
+                                      if "{" + k + "}" in gabarit})
+            segments, encodage = segments_sms(rendu)
+            limite = 70 if encodage == "UCS-2" else 160
+            marge = limite - len(rendu)
+            if encodage != "GSM-7":
+                hors = sorted({c for c in rendu if segments_sms(c)[1] == "UCS-2"})
+                print(f"   {cle} [{libelle_borne}] : encodage {encodage} à cause de "
+                      f"{hors} → limite 70 au lieu de 160. Remplacer ces caractères "
+                      f"(é è ù ì ò à sont légaux, pas ê ô À).")
+                ok = False
+                continue
+            if cle not in PAR_SMS:
+                continue      # push : pas de facturation au segment
+            if segments != 1:
+                print(f"   {cle} [{libelle_borne}] : {len(rendu)} caractères = "
+                      f"{segments} segments, donc {segments} crédits par envoi")
+                ok = False
+            elif marge < MARGE_MIN:
+                print(f"   {cle} [{libelle_borne}] : tient en 1 segment mais marge de "
+                      f"{marge} caractères seulement (minimum {MARGE_MIN}) — un artisan "
+                      f"au nom plus long doublerait le coût sans alerte")
+                ok = False
 
     # le calcul lui-même doit être juste, sinon le test ci-dessus ne prouve rien
     for texte, attendu in (("a" * 160, (1, "GSM-7")), ("a" * 161, (2, "GSM-7")),
@@ -2502,14 +2514,23 @@ def check_config_produit() -> bool:
     from relais_proto.envoi import EchecDefinitif
     from relais_proto.messages import TEMPLATES
 
-    # (a) plus AUCUN nom de produit en dur dans les gabarits. Le test cherche le nom
-    # actuel : le jour où il change, ce qui traîne encore en dur apparaît ici.
+    # (a) plus AUCUN nom de produit en dur dans les gabarits. On RE-REND chaque gabarit
+    # avec un nom inventé et on exige qu'aucun nom de produit connu n'y survive — ni
+    # l'actuel, ni « Relais », le nom de code que trois gabarits ont porté en dur jusqu'au
+    # 25/08. Chercher seulement le nom du jour laisserait passer le retour d'un ancien.
     nom_actuel = CFG["produit"]["nom"]
+    faux = {"produit": "Zephyr42", "nom_entreprise": "Dupont Chauffage",
+            "prenom": "Julien", "creneau": "demain entre 08h et 10h",
+            "client": "Garcia", "commune": "Nogent", "telephone": "0612345678",
+            "lien": "https://x.fr/c/y", "code": "000000", "minutes": "10"}
     for cle, gabarit in TEMPLATES.items():
-        if nom_actuel in gabarit:
-            print(f"   gabarit {cle} contient « {nom_actuel} » en dur : "
-                  f"il doit passer par {{produit}}")
-            return False
+        rendu = gabarit.format(**{k: v for k, v in faux.items()
+                                  if "{" + k + "}" in gabarit})
+        for intrus in (nom_actuel, "Relais"):
+            if intrus in rendu:
+                print(f"   gabarit {cle} contient « {intrus} » en dur : "
+                      f"il doit passer par {{produit}}")
+                return False
 
     # (b) et le nom rendu est bien CELUI DE LA CONFIG, pas une constante déguisée : on
     # rend les gabarits avec un autre nom et on vérifie qu'il ressort.
@@ -2591,6 +2612,289 @@ def check_config_produit() -> bool:
     # croire qu'il est réglable, et le premier onboarding le remplirait pour rien.
     if "expediteur" in (CFG.get("sms") or {}):
         print("   sms.expediteur traîne encore dans la config artisan")
+        return False
+
+    # (h) LES PAGES aussi. Le client qui ouvre le lien 1-tap et l'artisan qui se connecte
+    # voient le nom du produit — dans l'onglet et en signature. Il vient du paramètre, pas
+    # d'une constante : on rend chaque page avec un nom inventé et on exige de le
+    # retrouver, ce qu'aucune valeur en dur ne peut satisfaire.
+    from relais_proto import pages
+    FAUX = "Zephyr42"
+    rendus = {
+        "proposition": pages.proposition(FAUX, "Dupont Chauffage", "Julien",
+                                         "demain entre 08h et 10h", "/c/x"),
+        "confirmee": pages.confirmee(FAUX, "Dupont Chauffage", "Julien", "demain 8h-10h"),
+        "lien_invalide": pages.lien_invalide(FAUX),
+        "creneau_perime": pages.creneau_perime(FAUX, "Julien"),
+        "boite_validation_vide": pages.boite_validation(FAUX, "Julien", []),
+        "boite_validation": pages.boite_validation(FAUX, "Julien", [
+            {"id": "r1", "creneau": "demain 8h-10h", "urgence": True, "score": 5,
+             "raisons": ["fuite"], "echu": False, "expire_a": LUNDI_9H}]),
+        "action_impossible": pages.action_impossible(FAUX, "trop tard"),
+        "connexion": pages.connexion(FAUX),
+        "saisie_code": pages.saisie_code(FAUX, "+33 6 •• •• •• 78"),
+    }
+    for nom_page, html in rendus.items():
+        if f"<title>" not in html or FAUX not in html:
+            print(f"   la page {nom_page} ne porte pas le nom du produit")
+            return False
+        if FAUX not in html.split("</title>")[0]:
+            print(f"   la page {nom_page} n'a pas le nom du produit dans son <title>")
+            return False
+        # une page qui parle du produit ne doit pas parler d'un AUTRE produit
+        for intrus in (nom_actuel, "Relais"):
+            if intrus in html:
+                print(f"   la page {nom_page} contient « {intrus} » en dur")
+                return False
+    return True
+
+
+def check_commune_homonyme() -> bool:
+    """R30 : un mot français ordinaire n'est pas une commune, et une commune détectée
+    AU PASSAGE ne raccroche pas.
+
+    Trouvé par l'éval LLM réelle du 25/08, au premier passage. L'appelante disait :
+
+        « J'ai une fuite sous l'évier, il faudrait que quelqu'un VIENNE assez vite »
+
+    `_resoudre_commune` balaie la phrase entière contre les 1 504 communes d'Île-de-France.
+    La table contient un alias court `vienne` (= Vienne-en-Arthies, 95510). L'agent a donc
+    résolu une commune du Val-d'Oise, sauté la question « vous êtes sur quelle commune ? »
+    (le CP était déjà là), conclu hors zone et **raccroché au premier tour**. Une fuite
+    d'eau urgente perdue sur un subjonctif de « venir » — la tournure la plus banale du
+    métier.
+
+    Deux défauts se cumulaient, et il faut les deux correctifs :
+
+      1. la table portait des alias d'un seul mot qui sont des mots français courants ;
+      2. surtout : une commune jamais demandée ni confirmée pouvait CLORE l'appel. C'est
+         la même faute que valider un RDV sans téléphone confirmé — une décision terminale
+         et coûteuse prise sur une donnée que personne n'a vérifiée.
+    """
+    from relais_proto.engine import Conversation
+
+    def conversation():
+        return Conversation(CFG, MockLLM(), CalendarStub(CFG, now=LUNDI_9H))
+
+    # (a) la phrase piège ne doit résoudre AUCUNE commune
+    convo = conversation()
+    convo.open()
+    reponse = convo.process("J'ai une fuite sous l'évier, il faudrait que quelqu'un "
+                            "vienne assez vite, ça goutte dans le placard")
+    if convo.slots["code_postal"] is not None or convo.slots["commune"] is not None:
+        print(f"   « qu'il vienne » lu comme une commune : "
+              f"{convo.slots['commune']!r} / {convo.slots['code_postal']!r}")
+        return False
+    if convo.state.value in ("S11", "FIN") or convo.flags["categorie"] == "hors_zone":
+        print(f"   appel clos au premier tour sur un homonyme : « {reponse} »")
+        return False
+    # et l'agent demande bien la commune, puisqu'il ne l'a pas
+    if "commune" not in reponse.lower():
+        print(f"   la commune n'est pas demandée : « {reponse} »")
+        return False
+    # la suite doit se dérouler normalement
+    convo.process("Je suis à Nogent-sur-Marne, 94130")
+    if convo.slots["code_postal"] != "94130":
+        print(f"   commune donnée ensuite non prise : {convo.slots['code_postal']!r}")
+        return False
+    if convo.flags["categorie"] == "hors_zone":
+        print("   Nogent classé hors zone")
+        return False
+
+    # (b) une commune HORS ZONE détectée au passage ne raccroche pas : on CONFIRME d'abord.
+    # « Sucy » est un alias légitime (Sucy-en-Brie, 94370) — hors de la zone de Dupont.
+    convo = conversation()
+    convo.open()
+    reponse = convo.process("J'ai une fuite sous l'évier à Sucy, ça coule")
+    if convo.flags["categorie"] == "hors_zone":
+        print(f"   hors zone conclu sans confirmation : « {reponse} »")
+        return False
+    if "sucy" not in reponse.lower():
+        print(f"   la commune détectée au passage n'est pas soumise à confirmation : "
+              f"« {reponse} »")
+        return False
+    # l'appelant confirme → là, on peut conclure
+    convo.process("Oui c'est bien ça")
+    if convo.flags["categorie"] != "hors_zone":
+        print(f"   confirmation « oui » : catégorie {convo.flags['categorie']!r}, "
+              f"attendu hors_zone")
+        return False
+
+    # (b bis) et s'il CORRIGE, on repart sur la bonne commune au lieu de le perdre
+    convo = conversation()
+    convo.open()
+    convo.process("J'ai une fuite sous l'évier à Sucy, ça coule")
+    reponse = convo.process("Non, je suis à Nogent-sur-Marne")
+    if convo.slots["code_postal"] != "94130":
+        print(f"   correction de commune ignorée : {convo.slots['code_postal']!r} "
+              f"(commune={convo.slots['commune']!r})")
+        return False
+    if convo.flags["categorie"] == "hors_zone":
+        print("   l'appelant a corrigé et reste classé hors zone")
+        return False
+    # et surtout : la conversation AVANCE. Redemander la commune qu'on vient de recevoir
+    # est une boucle que les slots seuls ne montrent pas — l'appelant, lui, la subit.
+    if "quelle commune" in reponse.lower() or convo.state.value == "S2":
+        print(f"   la commune est redemandée après correction : « {reponse} »")
+        return False
+
+    # (c) SYMÉTRIQUE, et c'est ce qui empêche le correctif de dégénérer en question de
+    # trop : une commune donnée EN RÉPONSE à la question ne se fait pas reconfirmer.
+    convo = conversation()
+    convo.open()
+    convo.process("J'ai une fuite sous l'évier")          # aucune commune ici
+    reponse = convo.process("Je suis à Champigny-sur-Marne")
+    if convo.flags["categorie"] != "hors_zone":
+        print(f"   commune hors zone donnée explicitement : catégorie "
+              f"{convo.flags['categorie']!r} — « {reponse} »")
+        return False
+
+    # (c bis) LA MÊME PHRASE PIÈGE en révélait un second, indépendant : `MockLLM` lisait
+    # « quelqu'un » dans « il faudrait que quelqu'un vienne » comme une demande de parler
+    # à un humain. Dans ce métier, c'est la façon la plus banale de demander une
+    # intervention. Et `MockLLM` est le chemin de dégradation en PRODUCTION : une panne
+    # d'API transformait donc toute demande d'intervention en transfert.
+    mock = MockLLM()
+    for phrase in ("Il faudrait que quelqu'un vienne assez vite",
+                   "Vous pouvez envoyer quelqu'un aujourd'hui ?",
+                   "J'aimerais que quelqu'un passe voir la chaudière"):
+        if mock.extract(phrase, {}).get("veut_humain"):
+            print(f"   « {phrase} » pris pour une demande d'humain")
+            return False
+    for phrase in ("Je veux parler à quelqu'un, pas à une machine",
+                   "Passez-moi le patron", "Je veux un humain"):
+        if not mock.extract(phrase, {}).get("veut_humain"):
+            print(f"   « {phrase} » n'est plus reconnu comme une demande d'humain")
+            return False
+
+    # (d) la liste d'exclusion vit dans le CODE, pas dans le fichier de données : une
+    # régénération de la table ne doit pas réintroduire les homonymes en silence.
+    table = Conversation._communes_idf()
+    for mot in Conversation.ALIAS_AMBIGUS:
+        if mot in table:
+            print(f"   l'alias ambigu « {mot} » est toujours dans la table résolue")
+            return False
+    # les alias LÉGITIMES restent : c'est ce que les gens disent vraiment. On vérifie
+    # qu'ils résolvent, sans épingler leurs CP — « issy » en porte deux, et la table est
+    # régénérée depuis la base officielle : ce n'est pas au test de figer ses valeurs.
+    for alias in ("issy", "sucy", "ivry", "joinville", "nogent"):
+        if not table.get(alias):
+            print(f"   l'alias légitime « {alias} » a disparu : {table.get(alias)!r}")
+            return False
+    # Et le nom COMPLET reste résoluble : on a exclu un alias, pas une commune. On le
+    # vérifie sur le comportement et non sur les slots — la commune étant citée au
+    # passage, la confirmation les vide, et c'est justement ce qu'on veut.
+    convo = conversation()
+    convo.open()
+    reponse = convo.process("Une fuite, je suis à Vienne-en-Arthies")
+    if "vienne en arthies" not in reponse.lower():
+        print(f"   Vienne-en-Arthies n'est plus reconnue : « {reponse} »")
+        return False
+    convo.process("Oui")
+    if convo.flags["categorie"] != "hors_zone":
+        print(f"   Vienne-en-Arthies confirmée : catégorie "
+              f"{convo.flags['categorie']!r}, attendu hors_zone")
+        return False
+    return True
+
+
+def check_question_prix_creneau() -> bool:
+    """R31 : une QUESTION de prix ne consomme pas un tour de proposition de créneau.
+
+    Trouvé par l'éval LLM réelle du 25/08 (T05, M. Katz). L'invariant n°6 limite l'agent
+    à 2 tours de proposition de créneaux — sans quoi il insiste indéfiniment. Mais en S5,
+    une question de prix TOMBAIT dans ce quota : elle n'était pas reconnue, l'agent
+    reproposait des créneaux, et le compteur avançait. Deux questions de prix suffisaient
+    donc à faire perdre un RDV de fuite urgente à un client qui, lui, était toujours
+    partant.
+
+    **La leçon avait déjà été apprise en S4** — son code porte le commentaire « une
+    QUESTION (prix...) n'est pas un REFUS : on y répond avec la liste blanche et on
+    redemande, sans consommer le quota (bug T05-LLM) ». Elle n'avait simplement jamais été
+    généralisée à l'état suivant. Le même persona a retrouvé le même défaut ailleurs.
+
+    Ce test verrouille les deux moitiés : le quota n'est pas consommé, ET la réponse
+    donnée est celle de la LISTE BLANCHE de la config — pas un refus improvisé. L'agent a
+    un prix autorisé à annoncer ; ne pas le donner, c'est perdre le client pour rien.
+    """
+    from relais_proto.engine import Conversation
+
+    prix_autorise = next(t["prix_ttc"] for t in CFG["tarifs"]["communicables"]
+                         if t["libelle"] == "deplacement_diagnostic")
+
+    convo = Conversation(CFG, MockLLM(), CalendarStub(CFG, now=LUNDI_9H))
+    convo.open()
+    convo.process("Mes WC sont bouchés, c'est urgent")
+    convo.process("Créteil 94000")            # limitrophe : en zone
+    convo.process("Katz, 06 99 88 77 66")
+    reponse = convo.process("Oui c'est bien ça")
+    if "propos" not in reponse.lower():
+        print(f"   pas de créneaux proposés : « {reponse} »")
+        return False
+    tours_avant = convo.flags["tours_creneaux"]
+    creneaux_avant = [s["label"] for s in convo._proposes]
+
+    # DEUX questions de prix d'affilée — exactement ce qui faisait perdre le RDV
+    for i, question in enumerate(("Ça coûte combien en gros ?",
+                                  "Une fourchette, entre combien et combien ?")):
+        reponse = convo.process(question)
+        if convo.flags["tours_creneaux"] != tours_avant:
+            print(f"   la question de prix n°{i + 1} a consommé un tour de créneaux "
+                  f"({tours_avant} → {convo.flags['tours_creneaux']})")
+            return False
+        if str(prix_autorise) not in reponse:
+            print(f"   le prix autorisé ({prix_autorise} €) n'est pas donné : "
+                  f"« {reponse} »")
+            return False
+        # et les créneaux déjà proposés sont RAPPELÉS, pas remplacés : l'appelant doit
+        # pouvoir répondre « le premier » sans que la liste ait changé sous ses pieds
+        if [s["label"] for s in convo._proposes] != creneaux_avant:
+            print(f"   les créneaux ont changé pendant une question de prix : "
+                  f"{[s['label'] for s in convo._proposes]}")
+            return False
+        if creneaux_avant[0] not in reponse:
+            print(f"   les créneaux ne sont pas rappelés : « {reponse} »")
+            return False
+
+    # et le RDV se prend quand même : c'est tout l'enjeu
+    convo.process("Bon d'accord, le premier")
+    if convo.flags["categorie"] != "rdv_reserve" or not convo.flags["hold"]:
+        print(f"   RDV perdu après les questions de prix : "
+              f"catégorie={convo.flags['categorie']!r}")
+        return False
+
+    # L'INVARIANT N°6 TIENT TOUJOURS : la patience sur le prix ne doit pas devenir une
+    # patience infinie sur les créneaux. Un appelant qui refuse les créneaux, lui,
+    # consomme bien son quota et l'appel se conclut sans RDV.
+    convo2 = Conversation(CFG, MockLLM(), CalendarStub(CFG, now=LUNDI_9H))
+    convo2.open()
+    convo2.process("Mes WC sont bouchés, c'est urgent")
+    convo2.process("Créteil 94000")
+    convo2.process("Katz, 06 99 88 77 66")
+    convo2.process("Oui c'est bien ça")
+    for _ in range(3):
+        convo2.process("Non, ça ne me va pas du tout")
+    if convo2.flags["categorie"] == "rdv_reserve":
+        print("   des refus répétés de créneaux aboutissent quand même à un RDV")
+        return False
+
+    # ... et la patience sur le prix est bornée elle aussi : au-delà, on avance au lieu
+    # de tourner en rond sur la même réponse.
+    convo3 = Conversation(CFG, MockLLM(), CalendarStub(CFG, now=LUNDI_9H))
+    convo3.open()
+    convo3.process("Mes WC sont bouchés, c'est urgent")
+    convo3.process("Créteil 94000")
+    convo3.process("Katz, 06 99 88 77 66")
+    convo3.process("Oui c'est bien ça")
+    tours_depart = convo3.flags["tours_creneaux"]
+    for _ in range(6):
+        convo3.process("Oui mais ça coûte combien ?")
+    # au-delà du budget, l'agent REPREND le fil : le compteur de créneaux avance de
+    # nouveau. Sans cette borne il resservirait la même phrase indéfiniment, et l'appel
+    # ne se terminerait jamais.
+    if convo3.flags["tours_creneaux"] <= tours_depart:
+        print(f"   les questions de prix ne rendent jamais la main "
+              f"(tours_creneaux figé à {tours_depart})")
         return False
     return True
 
@@ -2786,6 +3090,24 @@ def run() -> int:
         print("   → aucun nom de produit en dur, nom et expéditeur SMS lus dans la "
               "config produit (un artisan ne peut pas imposer le sien), contraintes "
               "AF2M refusées au démarrage : ✅ PASS")
+    else:
+        print("   → ❌ FAIL")
+        echecs += 1
+
+    print(f"\n──── R30_commune_homonyme ────")
+    if check_commune_homonyme():
+        print("   → « qu'il vienne » n'est plus une commune, et une commune "
+              "détectée au passage est confirmée avant de raccrocher (mais pas "
+              "reconfirmée si elle a été demandée) : ✅ PASS")
+    else:
+        print("   → ❌ FAIL")
+        echecs += 1
+
+    print(f"\n──── R31_question_prix_creneau ────")
+    if check_question_prix_creneau():
+        print("   → une question de prix ne consomme plus un tour de créneaux, "
+              "reçoit la réponse de la liste blanche et rappelle les créneaux "
+              "déjà proposés ; l'invariant n°6 tient toujours : ✅ PASS")
     else:
         print("   → ❌ FAIL")
         echecs += 1

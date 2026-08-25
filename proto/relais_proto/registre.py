@@ -43,6 +43,12 @@ class Artisan:
 
 class Registre:
     def __init__(self, artisans: list[Artisan], secret_webhook_sha256: str):
+        # La config PRODUIT, une fois pour toutes. Elle est identique pour tous les
+        # artisans (c'est le sens d'un expéditeur unique), mais elle doit être joignable
+        # SANS artisan : la page « lien invalide » s'affiche avant qu'on sache de qui
+        # relève le jeton, et elle porte quand même le nom du produit.
+        self.produit: dict | None = next(
+            (a.config["produit"] for a in artisans if a.config.get("produit")), None)
         for a in artisans:
             # Le fuseau est vérifié À LA CONSTRUCTION, pas à l'usage : `ZoneInfo` lève sur
             # un identifiant inconnu, et sans ce contrôle une faute de frappe dans une

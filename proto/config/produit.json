@@ -1,8 +1,6 @@
 {
-  "_lecture": "Config PRODUIT (nous), par opposition aux config/*.json qui sont la config ARTISAN (eux). Un artisan ne peut rien régler ici — c'est le sens de la décision du 25/08 : un expéditeur SMS unique, déclaré sous NOTRE société. Le nom final n'est pas encore tranché (décision du cousin) : « Relais » reste le nom de code interne. Le jour où il l'est, ce fichier est le SEUL endroit à changer.",
-
-  "nom": "Relais",
-
-  "_expediteur_sms": "Le Sender ID alphanumérique déclaré chez l'opérateur. Contraintes Charte AF2M 2026, vérifiées par produit.valider_expediteur() : 11 caractères max, alphanumériques latins uniquement (ni espace ni spécial), déclaré en minuscules, termes génériques interdits, et correspondance avec le nom commercial ou une marque dont on a la titularité.",
-  "expediteur_sms": "Relais"
+  "_lecture": "Config PRODUIT (nous), par opposition aux config/*.json qui sont la config ARTISAN (eux). Un artisan ne peut rien regler ici — c'est le sens de la decision du 25/08 : un expediteur SMS unique, declare sous NOTRE societe. « Relais » reste le nom de CODE interne du projet (repo, modules, tables) ; seul le nom VISIBLE vit ici.",
+  "nom": "Nelyo",
+  "_expediteur_sms": "Le Sender ID alphanumerique declare chez l'operateur. Contraintes Charte AF2M 2026, verifiees par produit.valider_expediteur() : 11 caracteres max, alphanumeriques latins uniquement, declare EN MINUSCULES, termes generiques interdits, correspondance avec le nom commercial. « nelyo » : 5 caracteres, distinctif, prononcable a l'oral par le futur agent vocal.",
+  "expediteur_sms": "nelyo"
 }

@@ -116,6 +116,14 @@ def creer_app(depot, registre: Registre, fabrique_llm, horloge=None,
     # l'un des DEUX seuls endroits où l'horloge système entre (l'autre est worker.py) :
     # elle rend un instant UTC, et tout ce qui suit en hérite (cf. temps.py)
     maintenant = horloge or temps.maintenant
+    # Le nom VISIBLE du produit, résolu une fois. Exigé : une page ou un SMS signé de rien
+    # est un défaut de câblage, pas une donnée d'exécution — mieux vaut refuser de
+    # construire l'application. Même esprit que `_exige` dans serveur.py.
+    if not (registre.produit or {}).get("nom"):
+        raise RuntimeError(
+            "config produit absente du registre : le nom visible du produit est "
+            "obligatoire (proto/config/produit.json).")
+    NOM = registre.produit["nom"]
     expediteur = None
     if envoyeur is not None:
         from .envoi import Expediteur
@@ -347,11 +355,12 @@ def creer_app(depot, registre: Registre, fabrique_llm, horloge=None,
         except Introuvable:
             # 404 avec une page lisible, et le MÊME texte qu'un lien déjà utilisé :
             # on ne renseigne pas un curieux, et on rassure celui qui a déjà validé
-            return _html(pages.lien_invalide(), 404)
+            return _html(pages.lien_invalide(NOM), 404)
         entreprise, prenom = _identite(rdv)
         if rdv.est_echu(maintenant()):
-            return _html(pages.creneau_perime(prenom), 410)
-        return _html(pages.proposition(entreprise, prenom, rdv.creneau["label"],
+            return _html(pages.creneau_perime(NOM, prenom), 410)
+        return _html(pages.proposition(NOM, entreprise, prenom,
+                                       rdv.creneau["label"],
                                        action=f"/c/{jeton}"))
 
     @app.post("/c/{jeton}", response_class=HTMLResponse)
@@ -359,14 +368,14 @@ def creer_app(depot, registre: Registre, fabrique_llm, horloge=None,
         try:
             rdv = _rdv_du_jeton(jeton)
         except Introuvable:
-            return _html(pages.lien_invalide(), 404)
+            return _html(pages.lien_invalide(NOM), 404)
         entreprise, prenom = _identite(rdv)
         t = maintenant()
         try:
             rdv.confirmer_par_client(jeton, t)
         except TransitionInterdite:
             # échéance passée, ou RDV déjà décidé : le domaine tranche, la page explique
-            return _html(pages.creneau_perime(prenom), 409)
+            return _html(pages.creneau_perime(NOM, prenom), 409)
         depot.sauver_rdv(rdv)
         # Pas de SMS de confirmation au client ici, à la différence de `_decider` : il
         # vient de taper le lien et lit la page de confirmation à l'instant même. Le lui
@@ -378,7 +387,7 @@ def creer_app(depot, registre: Registre, fabrique_llm, horloge=None,
                                               registre.artisan(rdv.artisan_id).config), t)
         except messages.MessageInterdit:
             pass          # la validation du client compte, la notification est secondaire
-        return _html(pages.confirmee(entreprise, prenom, rdv.creneau["label"]))
+        return _html(pages.confirmee(NOM, entreprise, prenom, rdv.creneau["label"]))
 
     # ---- app artisan : pages HTML, sans JavaScript ----
     # Routes distinctes des routes JSON : celles-ci redirigent après action (303) pour que
@@ -386,7 +395,7 @@ def creer_app(depot, registre: Registre, fabrique_llm, horloge=None,
     # future app mobile.
     @app.get("/connexion", response_class=HTMLResponse)
     def page_connexion() -> HTMLResponse:
-        return HTMLResponse(pages.connexion())
+        return HTMLResponse(pages.connexion(NOM))
 
     def _ouvrir_session(artisan_id: str, t) -> RedirectResponse:
         """Session posée et cookie émis. Le seul endroit qui les crée."""
@@ -410,7 +419,7 @@ def creer_app(depot, registre: Registre, fabrique_llm, horloge=None,
         numero = connexion.normaliser_telephone(telephone)
         artisan = registre.par_telephone(numero)
         t = maintenant()
-        reponse = HTMLResponse(pages.saisie_code(_masquer(numero)))
+        reponse = HTMLResponse(pages.saisie_code(NOM, _masquer(numero)))
         if artisan is None:
             return reponse
 
@@ -459,7 +468,7 @@ def creer_app(depot, registre: Registre, fabrique_llm, horloge=None,
         if pose is None or t >= pose.expire_a:
             if pose is not None:
                 depot.supprimer_code_connexion(pose.artisan_id)
-            return HTMLResponse(pages.saisie_code("", REFUS), status_code=401)
+            return HTMLResponse(pages.saisie_code(NOM, "", REFUS), status_code=401)
 
         # L'essai est consommé AVANT la comparaison : un processus tué au mauvais moment,
         # ou une comparaison qui lève, ne doit pas offrir une tentative gratuite. C'est
@@ -467,18 +476,18 @@ def creer_app(depot, registre: Registre, fabrique_llm, horloge=None,
         essais = depot.consommer_essai_code(pose.artisan_id)
         if essais > connexion.ESSAIS_MAX:
             depot.supprimer_code_connexion(pose.artisan_id)
-            return HTMLResponse(pages.saisie_code("", REFUS), status_code=401)
+            return HTMLResponse(pages.saisie_code(NOM, "", REFUS), status_code=401)
         if not secrets.compare_digest(pose.empreinte,
                                       connexion.empreinte(code)):
             if essais >= connexion.ESSAIS_MAX:
                 depot.supprimer_code_connexion(pose.artisan_id)
-            return HTMLResponse(pages.saisie_code(_masquer(pose.telephone or ""), REFUS),
+            return HTMLResponse(pages.saisie_code(NOM, _masquer(pose.telephone or ""), REFUS),
                                 status_code=401)
 
         artisan = registre.artisan(pose.artisan_id)
         if artisan is None:          # retiré du registre entre la demande et la saisie
             depot.supprimer_code_connexion(pose.artisan_id)
-            return HTMLResponse(pages.connexion(REFUS), status_code=401)
+            return HTMLResponse(pages.connexion(NOM, REFUS), status_code=401)
         # usage unique : le code ne resservira pas, même dans sa fenêtre de validité
         depot.supprimer_code_connexion(pose.artisan_id)
         return _ouvrir_session(artisan.id, t)
@@ -511,7 +520,7 @@ def creer_app(depot, registre: Registre, fabrique_llm, horloge=None,
                           "tester en local.")
             else:
                 indice = "Session expirée ou révoquée. Reconnecte-toi."
-            return HTMLResponse(pages.connexion(indice), status_code=401)
+            return HTMLResponse(pages.connexion(NOM, indice), status_code=401)
         t = maintenant()
         cartes = []
         for r in depot.rdvs_en_attente(artisan.id):
@@ -525,7 +534,7 @@ def creer_app(depot, registre: Registre, fabrique_llm, horloge=None,
                            "raisons": donnees.get("raisons", []),
                            "echu": r.est_echu(t), "expire_a": r.expire_a})
         return HTMLResponse(pages.boite_validation(
-            artisan.config["entreprise"]["prenom_patron"], cartes))
+            NOM, artisan.config["entreprise"]["prenom_patron"], cartes))
 
     @app.post("/app/{rdv_id}/{action}")
     def agir(rdv_id: str, action: str,
@@ -545,7 +554,7 @@ def creer_app(depot, registre: Registre, fabrique_llm, horloge=None,
                 raise
             # Un refus du domaine (échéance passée, RDV déjà décidé) doit rendre une PAGE :
             # après un tap sur un téléphone, `{"detail": "..."}` est illisible.
-            return HTMLResponse(pages.action_impossible(str(exc.detail)),
+            return HTMLResponse(pages.action_impossible(NOM, str(exc.detail)),
                                 status_code=exc.status_code)
         return RedirectResponse("/app", status_code=303)
 

@@ -16,9 +16,11 @@ Cible V1 : plombiers/chauffagistes FR. Solo dev : Geoffrey (binôme Claude) ; ma
 ```bash
 cd proto
 pip install -r requirements.txt     # anthropic, python-dotenv (inutiles en mock)
-python run_scenario.py              # suite de non-régression (mock, sans clé, ~3 s) — 33 tests
+python run_scenario.py              # suite de non-régression (mock, sans clé, ~3 s) — 35 tests
 python run_llm_eval.py --mock       # plomberie de l'éval appelant-simulé (sans clé)
 python run_llm_eval.py [--n 3] [--only T05]   # éval LLM réel → evals/results-*.json
+                                    # RELAIS_MODEL = l'agent, RELAIS_MODEL_APPELANT
+                                    # = l'appelant simulé (à garder FIXE pour comparer)
 python chat.py [--mock]             # conversation interactive (tu joues l'appelant)
 python explore.py                   # banc d'essai libre (cas A–F)
 uvicorn serveur:app --port 8000     # API HTTP (DATABASE_URL, RELAIS_WEBHOOK_SECRET,
@@ -72,8 +74,9 @@ backend de la règle n°1 : elle transporte et persiste, le métier reste dans e
 
 `engine.py` contrôleur déterministe S0–S11 · `llm.py` extracteur+formuleur (Anthropic/Mock/Resilient,
 dégradation gracieuse : jamais muet) · `guards.py` invariants en code · `calendar_stub.py` règles
-agenda · `scoring.py` lead + score 0–5 · `produit.py` config PRODUIT (nom affiché,
-expéditeur SMS unique + contraintes AF2M) par opposition à la config ARTISAN ·
+agenda · `scoring.py` lead + score 0–5 · `produit.py` config PRODUIT — nom visible
+(**Nelyo**) et expéditeur SMS unique (**nelyo**), contraintes AF2M vérifiées au
+démarrage ; « Relais » reste le nom de CODE (repo, modules, tables) ·
 `temps.py` instants UTC vs heures de pendule (règle n°7,
 à lire avant de toucher à une échéance) · `config/dupont.json` persona de test de bout en bout.
 

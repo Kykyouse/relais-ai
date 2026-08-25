@@ -26,12 +26,15 @@ try:
 except ImportError:
     pass
 
+from relais_proto import produit
 from relais_proto.engine import Conversation
 from relais_proto.llm import AnthropicLLM, MockLLM, ResilientLLM, _texte_de
 from relais_proto.scoring import build_lead
 
-CFG = json.loads((pathlib.Path(__file__).parent / "config" / "dupont.json")
-                 .read_text(encoding="utf-8"))
+_DOSSIER_CONFIG = pathlib.Path(__file__).parent / "config"
+CFG = produit.appliquer(
+    json.loads((_DOSSIER_CONFIG / "dupont.json").read_text(encoding="utf-8")),
+    produit.charger(_DOSSIER_CONFIG))
 
 MAX_TOURS = 14  # garde-fou anti-boucle
 
@@ -129,11 +132,17 @@ Règles :
 class CallerLLM:
     """L'appelant simulé (LLM)."""
 
+    # Variable PROPRE à l'appelant, distincte de `RELAIS_MODEL` qui pilote l'agent.
+    # Sans ça, faire varier le modèle de l'agent changeait aussi celui de l'appelant :
+    # deux runs n'étaient pas comparables, puisque l'énoncé bougeait avec la copie.
+    MODELE_DEFAUT = "claude-sonnet-5"
+
     def __init__(self, persona: dict, model: str | None = None):
+        import os
+
         import anthropic
         self.client = anthropic.Anthropic(timeout=30.0, max_retries=2)
-        import os
-        self.model = model or os.environ.get("RELAIS_MODEL", "claude-sonnet-5")
+        self.model = model or os.environ.get("RELAIS_MODEL_APPELANT", self.MODELE_DEFAUT)
         self.system = CALLER_SYSTEM.format(role=persona["role"], cache=persona["cache"])
 
     def next_line(self, transcript: list[tuple[str, str]]) -> str:
@@ -145,8 +154,15 @@ class CallerLLM:
                 messages[-1]["content"] += "\n" + texte
             else:
                 messages.append({"role": role, "content": texte})
-        msg = self.client.messages.create(model=self.model, max_tokens=1000,
-                                          system=self.system, messages=messages)
+        # RÉFLEXION DÉSACTIVÉE, et c'est une question de validité de l'éval, pas de coût.
+        # Sonnet 5 réfléchit par défaut même sans paramètre, et ses tokens de réflexion
+        # sont décomptés de `max_tokens` : à 1000 tokens pour produire UNE réplique, la
+        # réflexion pouvait tout consommer et rendre un texte vide — que `run_one` prend
+        # pour une fin d'appel. On fabriquait des FAIL avec le harnais.
+        # Un appelant qui joue un personnage en une phrase n'a rien à en tirer.
+        msg = self.client.messages.create(
+            model=self.model, max_tokens=1000, system=self.system, messages=messages,
+            thinking={"type": "disabled"})
         return _texte_de(msg)
 
 
@@ -210,7 +226,16 @@ def main() -> int:
     resultats, echecs = [], 0
     for nom, persona in cibles.items():
         for i in range(args.n):
-            r = run_one(nom, persona, args.mock)
+            # UN incident réseau ne doit pas détruire le passage entier. L'agent a sa
+            # dégradation gracieuse (`ResilientLLM`) ; le harnais n'avait rien, et une
+            # coupure a emporté 25 minutes de mesures déjà acquises le 25/08. Une
+            # conversation perdue est un résultat manquant, pas une suite perdue.
+            try:
+                r = run_one(nom, persona, args.mock)
+            except Exception as exc:  # noqa: BLE001 — poursuivre, quoi qu'il arrive
+                r = {"persona": nom, "pass": False, "tours": 0, "lead": None,
+                     "warns": [], "problemes": [f"{type(exc).__name__}: {exc}"],
+                     "erreur_harnais": True}
             resultats.append(r)
             tag = "✅ PASS" if r["pass"] else "❌ FAIL " + "; ".join(r["problemes"])
             if r["warns"]:
@@ -219,14 +244,27 @@ def main() -> int:
             if not r["pass"]:
                 echecs += 1
 
+    # Les résultats sont écrits même si tout n'a pas abouti : un passage partiel se
+    # lit, un passage perdu ne se lit pas.
     outdir = pathlib.Path(__file__).parent.parent / "evals"
     outdir.mkdir(exist_ok=True)
     horodatage = dt.datetime.now().strftime("%Y%m%d-%H%M%S")
     out = outdir / f"results-{horodatage}.json"
+    import os
+    # Les MODÈLES sont consignés : sans eux, deux fichiers de résultats ne se comparent
+    # pas — on ne saurait pas si un écart vient de l'agent ou de l'appelant.
     out.write_text(json.dumps({
         "horodatage": horodatage, "mode": "mock" if args.mock else "llm",
+        "modele_agent": None if args.mock else os.environ.get(
+            "RELAIS_MODEL", "claude-haiku-4-5"),
+        "modele_appelant": None if args.mock else os.environ.get(
+            "RELAIS_MODEL_APPELANT", CallerLLM.MODELE_DEFAUT),
         "total": len(resultats), "echecs": echecs, "runs": resultats,
     }, ensure_ascii=False, indent=2), encoding="utf-8")
+    incidents = sum(1 for r in resultats if r.get("erreur_harnais"))
+    if incidents:
+        print(f"\n⚠️  {incidents} conversation(s) perdue(s) par un incident du HARNAIS "
+              f"(réseau, API) — à ne pas confondre avec un défaut de l'agent.")
     print(f"\n{len(resultats) - echecs}/{len(resultats)} PASS → {out}")
     print("→ dis à Claude de lire ce fichier pour l'analyse.")
     return 1 if echecs else 0

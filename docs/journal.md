@@ -5,23 +5,24 @@
 
 ---
 
-# ÉTAT AU 25/08/2026 — à lire en premier
+# ÉTAT AU 25/08/2026 (soir) — à lire en premier
 
 > **Ce bloc se REMPLACE, il ne s'empile pas.** Les entrées datées plus bas sont le journal
 > chronologique (le pourquoi des décisions) ; ce bloc-ci est le où-on-en-est.
 
 ## En une phrase
 
-Le backend de la phase 1 est fonctionnel et vérifié contre un vrai Postgres, l'artisan
-valide en 1 tap depuis son navigateur, et le parcours écrit tient enfin sa promesse : le
-client est prévenu sur TOUTES les issues. **Il ne manque que la voix** — le point d'entrée
-du produit — et le nom commercial, qui commande le reste.
+Le produit s'appelle **NELYO**. Le backend de la phase 1 est fonctionnel, vérifié contre
+un vrai Postgres, et l'agent conversationnel passe désormais **24/24** en éval LLM réelle
+(19/24 avant les correctifs du 25/08). L'artisan se connecte par code SMS et valide en
+1 tap ; le client est prévenu sur toutes les issues. **Il ne manque que la voix** — le
+point d'entrée du produit. Plus rien d'autre n'est bloqué côté code.
 
 ## Ce qui tourne
 
 ```bash
 cd proto
-python run_scenario.py                              # 33 tests, ~3 s, sans clé ni base
+python run_scenario.py                              # 35 tests, ~3 s, sans clé ni base
 python semer_artisans.py [--ecrire]                 # amorce la table `artisan`
 python run_depot_pg.py [--migrer]                   # contrat du port contre Supabase
 uvicorn serveur:app --port 8000                     # API HTTP
@@ -43,6 +44,10 @@ python run_llm_eval.py [--mock] [--n 3]             # éval appelant-simulé
 | Boîte de validation artisan + session (R24) | ✅ | mock — utilisable dans un navigateur |
 | Instants UTC vs heures de pendule (R25) | ✅ | mock + **migration 007 sur Supabase** |
 | Extraction du nom de l'appelant (R26) | ✅ | mock, mutations 6/6 |
+| Nom de produit et expéditeur en config (R29) | ✅ | mock, mutations 7/7 |
+| Homonymes de communes, commune confirmée (R30) | ✅ | mock, mutations 6/6 |
+| Question de prix ≠ refus de créneau (R31) | ✅ | mock, mutations 4/4 |
+| **Éval LLM réelle, 8 personas × 3** | ✅ **24/24** | agent + appelant Sonnet 5 |
 | SMS de confirmation au client, chemin nominal (R27) | ✅ | mock, mutations 5/5 |
 | Table `artisan` + FK sur 5 tables (migration 008) | ✅ | **Supabase réel**, contrat du port |
 | Connexion artisan par code SMS (R28) | ✅ | mock, mutations 7/8 (1 défense en profondeur) |
@@ -93,13 +98,15 @@ python run_llm_eval.py [--mock] [--n 3]             # éval appelant-simulé
 1. ~~Le chemin nominal est muet~~ — **traité le 25/08** (`confirmation_client`, refus
    couvert aussi, R27). La classe de test qui manquait — confronter la promesse ORALE aux
    messages réellement mis en file — existe désormais.
-2. **Nom commercial** — le goulot unique. Il commande le Sender ID, la structure juridique,
-   le domaine, et la vérification OAuth Google. Décision du cousin. Le nom final ne sera
-   pas « Relais » (nom de code interne).
-   Contraintes AF2M 2026 à respecter : **11 caractères max**, alphanumériques latins
-   uniquement (ni espace ni spécial), déclaré en minuscules, termes génériques interdits
-   (RDV, ALERTE, LIVRAISON, PAIEMENT…), et correspondance avec le nom commercial ou une
-   marque dont on a la titularité.
+2. ~~Nom commercial~~ — **tranché le 25/08 : NELYO.** Affiché « Nelyo », expéditeur
+   déclaré « nelyo » (minuscules), 5 caractères sur les 11 autorisés, distinctif et
+   prononçable à l'oral par le futur agent vocal. « Relais » reste le nom de CODE interne :
+   repo, modules et tables ne sont pas renommés.
+   Homonymes notés, non bloquants : une SAS NELYO (2020, coaching) et une SARL NELYO
+   (2008, portails, apparemment dormante) — c'est la marque qui compte.
+   **Séquence externe restante, aucune ne bloque le code** :
+   INPI/marque → domaine (candidat `nelyo-ia.*`, **pas encore acheté**) → structure &
+   Kbis → dépôt du Sender ID chez OVH (~72 h).
 3. ~~Conséquences code du nom~~ — **traitées le 25/08** (`config/produit.json`, R29).
    Le nom et l'expéditeur sont des réglages, les contraintes AF2M sont vérifiées au
    démarrage, et R23 éprouve déjà 11 caractères. Le jour où le nom arrive : une ligne.
@@ -126,14 +133,17 @@ python run_llm_eval.py [--mock] [--n 3]             # éval appelant-simulé
 
 ## Prochaine étape
 
-Rien n'est plus débloqué à 100 % côté code : ce qui reste attend soit **le nom commercial**
-(Sender ID, OAuth Google, et les trois endroits où « Relais » est en dur), soit une
-**décision** (plateforme vocale, premier calendrier à brancher), soit le terrain.
+Le nom est tranché et le code n'attend plus rien : les démarches externes (INPI, domaine,
+Kbis, Sender ID) courent en parallèle sans bloquer une ligne.
 
-Les candidats sans dépendance externe, par valeur décroissante :
+Candidats sans dépendance externe, par valeur décroissante :
 
-1. **Qualité de l'agent** — faire tourner l'éval contre le vrai modèle, analyser, corriger.
-   C'est le différenciateur du produit et le seul chantier qui ne dépend de personne.
+1. **Élargir les personas d'éval.** 24/24 sur huit personas ne veut pas dire que l'agent
+   est bon — il veut dire que ces huit-là ne trouvent plus rien. Les trois bugs du 25/08
+   ont été révélés par UNE tournure à laquelle personne n'avait pensé ; d'autres attendent
+   dans le français qu'on n'a pas encore écrit. Personas à ajouter : accents régionaux,
+   appelants qui donnent tout d'un coup, qui se corrigent, qui parlent d'un tiers
+   (« c'est pour ma mère »), qui coupent l'agent.
 2. **Un vrai parcours d'onboarding** pour remplacer `semer_artisans.py`.
 3. **Un worker de rattrapage** pour les RDV décidés dont le SMS n'a pas été mis en file
    (l'écriture et la mise en file ne sont pas atomiques — point laissé ouvert le 25/08).
@@ -1805,3 +1815,170 @@ contraintes AF2M retirée séparément.
 R23 passe (il éprouve déjà 11 caractères), déposer le Sender ID. Rien d'autre dans le code.
 
 Suite : **33 PASS**, contrat Postgres vert.
+
+## Session du 25/08/2026 — évals réelles : trois bugs produit, dont un qui perdait des leads
+
+**Fait.** Premier vrai passage d'éval LLM contre l'agent depuis le 22/08 : 24 conversations
+(8 personas × 3). **19/24** au départ. Les échecs ont livré trois défauts distincts, tous
+corrigés et verrouillés — **R30**, **R31** — plus deux réparations du harnais lui-même.
+
+### Le plus coûteux : « il faudrait que quelqu'un VIENNE assez vite »
+
+Une fuite d'eau en cours, à Nogent, appel perdu **au premier tour**. Mécanisme :
+
+1. `_resoudre_commune` balaie la phrase entière contre les 1 504 communes d'Île-de-France ;
+2. la table contient un alias court `vienne` — Vienne-en-Arthies, 95510, Val-d'Oise ;
+3. le CP étant « connu », `_s1` **saute la question** « vous êtes sur quelle commune ? » ;
+4. `_s2` classe hors zone et raccroche.
+
+Un subjonctif de « venir » — la tournure la plus banale du métier — coûtait le lead.
+**Reproductible 3 fois sur 3**, et c'est aussi ce qui a fait tomber R09 [3/3] : quatre des
+cinq échecs étaient ce seul bug.
+
+Deux correctifs, parce qu'il y avait deux fautes :
+
+- **La table** portait des alias d'un seul mot qui sont des mots français courants
+  (`vienne`, `bois`, `champs`, `bourg`). L'exclusion vit dans le CODE (`ALIAS_AMBIGUS`) et
+  non dans le fichier de données : celui-ci est régénéré depuis la base officielle, et une
+  régénération réintroduirait les homonymes en silence. Les alias LÉGITIMES restent —
+  « Issy », « Sucy », « Ivry » sont ce que les gens disent vraiment — et le nom complet
+  reste résoluble.
+- **Surtout** : une commune jamais demandée ni confirmée pouvait CLORE l'appel. C'est la
+  même faute que valider un RDV sans téléphone confirmé — une décision terminale et
+  coûteuse prise sur une donnée que personne n'a vérifiée. Désormais, une commune glanée
+  au passage qui mènerait hors zone déclenche **une** question (« vous êtes bien à X ? »).
+  Une commune DEMANDÉE, elle, tranche immédiatement : pas de question de trop.
+
+L'astuce d'implémentation qui rend le tout simple : en posant la question de confirmation,
+on **vide** les slots et on garde le candidat de côté. La réponse est alors relue sans
+entrave — si l'appelant corrige, la nouvelle commune s'installe normalement ; s'il confirme,
+on restaure le candidat. Aucun ordre subtil à respecter.
+
+### La même phrase en cachait un second
+
+`MockLLM` lisait « **quelqu'un** » dans « il faudrait que quelqu'un vienne » comme une
+demande de parler à un humain. Dans ce métier, c'est la façon la plus banale de demander une
+intervention. Et `MockLLM` est le **chemin de dégradation en production** : une panne d'API
+transformait donc toute demande d'intervention en transfert. Le mot ne compte plus que dans
+un contexte de parole (« parler à quelqu'un »).
+
+### Une leçon apprise en S4 et jamais généralisée à S5
+
+T05 (M. Katz, chasseur de prix) : l'agent propose des créneaux, l'appelant redemande le
+prix, l'agent **repropose d'autres créneaux**, le compteur de l'invariant n°6 avance, et à
+la deuxième question le RDV est perdu — alors que l'appelant était toujours partant.
+
+Le code de S4 porte pourtant, depuis le 22/08, ce commentaire : « une QUESTION (prix...)
+n'est pas un REFUS : on y répond avec la liste blanche et on redemande, **sans consommer le
+quota** (bug T05-LLM : Katz posait des questions de prix et perdait son RDV) ». La leçon
+avait été apprise une fois, dans un état, et jamais propagée au suivant. Le même persona a
+retrouvé le même défaut deux mois plus tard, ailleurs.
+
+Pire : l'agent **avait un prix autorisé à donner** (« le déplacement avec diagnostic est à
+90 € TTC ») et ne l'a jamais donné — il a répondu deux fois « je ne suis pas en mesure de
+vous donner un tarif ». La phrase tarifaire vivait en ligne dans S4 ; elle est maintenant
+factorisée (`_phrase_prix`) et disponible partout.
+
+**Trouvé en écrivant le test, pas en lisant le code** : « Oui MAIS ça coûte combien ? » était
+lu comme l'acceptation d'un créneau, et l'agent réservait. Un « oui » accompagné d'une
+question ne vaut acceptation de rien — réserver dessus donne un rendez-vous que l'appelant
+n'a pas accepté, exactement ce que tout le produit est construit pour éviter.
+
+### Deux réparations du HARNAIS, avant même de mesurer
+
+- **L'appelant simulé tournait en réflexion adaptative sans le savoir.** Sonnet 5 réfléchit
+  par défaut même sans paramètre, et ses tokens de réflexion sont décomptés de `max_tokens` :
+  à 1 000 tokens pour produire UNE réplique, la réflexion pouvait tout consommer et rendre un
+  texte vide — que le harnais prend pour une fin d'appel. On fabriquait des FAIL. Réflexion
+  désactivée : un appelant qui joue un personnage en une phrase n'a rien à en tirer.
+- **`RELAIS_MODEL` pilotait à la fois l'agent et l'appelant.** Impossible de faire varier
+  l'un en gardant l'autre fixe, donc impossible de comparer deux passages : l'énoncé bougeait
+  avec la copie. L'appelant a maintenant sa variable (`RELAIS_MODEL_APPELANT`), et les deux
+  modèles sont consignés dans le fichier de résultats.
+
+Et une troisième, apprise à la dure en cours de session : **une coupure réseau a détruit un
+passage entier** — 25 minutes de mesures déjà acquises, perdues sur une exception. L'agent a
+sa dégradation gracieuse, le harnais n'avait rien. Une conversation perdue est maintenant un
+résultat manquant (`erreur_harnais`), signalé à part pour ne pas être confondu avec un défaut
+de l'agent, et les résultats partiels sont écrits.
+
+### Ce que ça dit de la méthode
+
+Les trois défauts avaient en commun d'être **invisibles aux tests mock** : tous mes scénarios
+scriptés disent « Nogent-sur-Marne 94130 » proprement, jamais « il faudrait que quelqu'un
+vienne ». Ce n'est pas un manque de rigueur dans les tests, c'est leur nature — un jeu d'essai
+écrit par celui qui code ne contient que le français auquel il a pensé.
+
+**Mutation : 6/6 sur R30, 4/4 sur R31.**
+
+**Résultat après correctifs : 24/24** (contre 19/24 avant). T01 passe de « 1 tour » à cinq
+tours et va au bout ; T05 aussi. Les cinq échecs venaient bien de ces trois défauts.
+
+Reste un ⚠ sur T07 [1/3] : le formuleur a tenté un « c'est confirmé » et le garde-fou l'a
+intercepté — comportement voulu, signalé en WARN et non en FAIL, mais à surveiller : c'est
+le formuleur qui dérape, pas le contrôleur.
+
+### 25/08 — le produit s'appelle NELYO
+
+**Décision produit actée.** Le nom commercial est **NELYO**. « Relais » reste le nom de
+**code** interne : on ne renomme ni le repo, ni les modules, ni les tables — du churn git
+pour zéro valeur. Seul le nom **visible** change.
+
+**Ce qui a été vérifié avant de trancher** (côté Geoffrey et son cousin) :
+
+- **Conformité AF2M** : 5 caractères alphanumériques (limite 11), distinctif — absent des
+  génériques proscrits —, et prononçable à l'oral par le futur agent vocal, ce qui n'est
+  pas un détail quand le nom sera dit au téléphone. Déclaration de l'expéditeur **en
+  minuscules** (`nelyo`), affichage libre en casse (`Nelyo`). Les deux vivent séparément
+  dans `config/produit.json`, précisément parce qu'ils ne suivent pas la même règle.
+- **Homonymes** : une SAS NELYO (2020, coaching/conseil) et une SARL NELYO (2008, portails
+  Internet, apparemment dormante). Non bloquant — c'est la marque qui compte. Vérifications
+  INPI (classes logiciels/télécoms) et dépôt : hors code.
+- **Domaine** : candidat probable `nelyo-ia.*`. **Pas encore acheté, pas définitif.** Le
+  tiret est valide dans un domaine mais pas dans un Sender ID — sans objet ici, l'expéditeur
+  étant `nelyo`.
+
+### Ce que ça a changé dans le code
+
+Le gros du travail avait été fait la veille en rendant le nom paramétrable **avant** de le
+connaître : il ne restait qu'à écrire `Nelyo` dans `config/produit.json`. Deux ajouts
+néanmoins :
+
+- **Les pages HTML ne portaient AUCUN nom de produit** — ni « Relais », ni rien. Le client
+  qui ouvre le lien 1-tap ne voyait que son artisan. Ce n'était donc pas un remplacement
+  mais un ajout : le nom apparaît maintenant dans le `<title>` (donc dans l'aperçu de lien
+  que le téléphone affiche) et en signature discrète. Il est passé en **paramètre** à
+  chaque page, jamais lu d'une constante.
+- Le nom devait être joignable **sans artisan** : la page « lien invalide » s'affiche avant
+  qu'on sache de qui relève le jeton. Il est donc porté par le `Registre`, qui charge déjà
+  la config produit, et **exigé à la construction de l'application** — une page signée de
+  rien est un défaut de câblage, pas une donnée d'exécution.
+
+### R23 aux bornes : le test a trouvé un vrai coût
+
+Demande explicite : éprouver le pire cas avec le nom réel ET un nom de 11 caractères, plus
+un domaine pessimiste. Fait — et **le second a échoué** : avec l'enveloppe supportée
+(entreprise 25 car. + prénom 15 car. + créneau 31 car.) et une racine de domaine de
+16 caractères, `reproposition_client` tombait à **162 caractères, soit 2 crédits par
+envoi**. Sur le seul cas réel, il passait : la borne, elle, a mordu.
+
+Correction : ce gabarit perd sa salutation — le seul des quatre. Arbitrage chiffré et non
+oubli : les 9 caractères de « Bonjour, » étaient **les seuls que nous contrôlions**, le nom
+de l'artisan et la longueur du créneau ne se négocient pas. Et ce SMS n'est pas un premier
+contact : le client vient de parler à l'agent. Marges obtenues, aux deux bornes : **11 à 67
+caractères** selon les gabarits.
+
+Au passage, une erreur de ma part corrigée : ma « racine de 16 caractères » en faisait 20.
+Le test la mesure maintenant au lieu de la supposer.
+
+Ce que la borne rend concret : **un domaine long coûte des crédits à chaque reproposition.**
+C'est un argument chiffré pour le jour de l'achat, pas une préférence esthétique.
+
+### La séquence externe, remise à jour
+
+Plus rien de tout cela ne bloque le code :
+
+**INPI / marque → domaine → structure & Kbis → dépôt du Sender ID chez OVH (~72 h)**
+
+Et la boucle nominale n'attend même pas ce dernier maillon : seul `reproposition_client`
+porte une URL, donc seul lui est bloqué par le numéro court.

@@ -120,8 +120,16 @@ TEMPLATES = {
     # qu'un mot à taper, et le SMS reste strictement sortant.
     # « à la place » serait plus juste que « propose » seul, mais coûtait 11 caractères
     # sur une marge déjà mince : le lien pèse ~43 caractères à lui seul.
+    #
+    # LE SEUL GABARIT SANS « Bonjour », et c'est un arbitrage chiffré, pas un oubli. Avec
+    # l'enveloppe supportée (entreprise 25 car. + prénom 15 car. + créneau 31 car.) et un
+    # domaine de 16 caractères de racine, il tombait à 162 caractères — DEUX crédits par
+    # envoi. Trouvé le 25/08 en éprouvant R23 aux bornes plutôt que sur le seul cas réel.
+    # Les 9 caractères de la salutation étaient les seuls que nous contrôlions : le nom de
+    # l'artisan et la longueur du créneau ne se négocient pas. Le client, lui, vient de
+    # parler à l'agent — ce SMS n'est pas un premier contact.
     "reproposition_client": (
-        "Bonjour, c'est {nom_entreprise}. {prenom} propose {creneau}. Validez : {lien}"),
+        "C'est {nom_entreprise}. {prenom} propose {creneau}. Validez : {lien}"),
     # LA promesse du script tenue par écrit. C'est le SEUL texte du produit où « confirmé »
     # est permis — et il ne l'est que parce que l'artisan vient de valider (garde-fou
     # `rdv_valide`). Il nomme l'entreprise ET le patron : depuis la décision d'expéditeur
