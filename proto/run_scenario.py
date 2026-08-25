@@ -3551,6 +3551,165 @@ def check_creneaux_verbatim() -> bool:
     return True
 
 
+def check_sonde_voix() -> bool:
+    """R40 : la sonde de l'étape 0 est ÉTEINTE par défaut, exige le secret webhook, et
+    ne peut pas écrire un secret dans son journal.
+
+    Ce n'est pas un correctif de défaut mais une brique nouvelle, et les trois propriétés
+    ci-dessous sont exactement celles qu'on ne peut pas vérifier en la regardant tourner :
+    une route de diagnostic oubliée en production ne fait aucun bruit, et un secret écrit
+    dans un fichier ne se voit qu'après coup.
+
+    La phrase de la sonde est soumise ICI aux garde-fous, et pas à l'exécution : la sonde
+    n'a pas de config d'artisan (le numéro appelé fait partie de ce qu'elle vient
+    découvrir), donc `check_output` n'aurait rien contre quoi vérifier une liste blanche de
+    prix. Le contrôle a lieu au moment où la phrase peut changer — ici.
+    """
+    try:
+        from fastapi.testclient import TestClient
+    except ImportError:
+        print("   fastapi/httpx absents : pip install -r requirements.txt")
+        return False
+
+    import json
+    import tempfile
+    from pathlib import Path
+
+    from relais_proto.api import creer_app
+    from relais_proto.guards import check_output
+    from relais_proto.registre import Artisan, Registre, empreinte as emp_token
+    from relais_proto.sonde_voix import (PHRASE_SONDE, identifiants_candidats,
+                                         reponse_openai)
+
+    SECRET = "secret-voix"
+    # sentinelles improbables, et non des mots comme « faux » : le message de refus écrit
+    # par la sonde contient lui-même des mots ordinaires, et le test les prendrait pour la
+    # fuite qu'il cherche (constaté au premier passage).
+    MAUVAIS, JETON = "Zq7-secret-sentinelle", "Zq8-jeton-sentinelle"
+    registre = Registre([Artisan("art-dupont", "+33189701234", emp_token("tok"), CFG)],
+                        emp_token(SECRET))
+
+    # (a) la phrase de la sonde passe les garde-fous : elle sera prononcée au téléphone.
+    # L'annonce IA y est (règle n°5), qu'aucun garde-fou ne sait vérifier.
+    violations = check_output(PHRASE_SONDE, CFG)
+    if violations:
+        print(f"   la phrase de la sonde viole les garde-fous : {violations}")
+        return False
+    if "assistant vocal" not in PHRASE_SONDE.lower():
+        print(f"   annonce IA absente de la phrase de la sonde : « {PHRASE_SONDE} »")
+        return False
+
+    # (b) ÉTEINTE par défaut : la route n'existe même pas. C'est la propriété qui compte —
+    # un 401 laisserait une surface exposée, un 404 dit qu'il n'y a rien à atteindre.
+    app_off = creer_app(DepotMemoire(), registre, MockLLM, lambda: LUNDI_9H,
+                        base_url="https://relais.test", cookie_secure=False)
+    with TestClient(app_off) as c:
+        for chemin in ("/voix/sonde", "/voix/sonde/chat/completions"):
+            r = c.post(chemin, json={"messages": []},
+                       headers={"X-Relais-Secret": SECRET})
+            if r.status_code != 404:
+                print(f"   sonde JOIGNABLE sans être demandée : {chemin} → "
+                      f"{r.status_code}")
+                return False
+
+    with tempfile.TemporaryDirectory() as rep:
+        journal = Path(rep) / "sonde.jsonl"
+        app = creer_app(DepotMemoire(), registre, MockLLM, lambda: LUNDI_9H,
+                        base_url="https://relais.test", cookie_secure=False,
+                        sonde_voix=journal)
+        charge = {"model": "gpt-4", "stream": True,
+                  "messages": [{"role": "system", "content": "tu es un assistant"},
+                               {"role": "user", "content": "allo"}],
+                  "call": {"id": "call-abc123",
+                           "customer": {"number": "+33612345678"}}}
+        with TestClient(app) as c:
+            # (c) sans le secret : refus, et le journal ne doit PAS porter la valeur des
+            # en-têtes — seulement leurs noms.
+            # sentinelles improbables, et non des mots comme « faux » : le message de
+            # refus écrit par la sonde contient lui-même des mots ordinaires, et le test
+            # les prendrait pour la fuite qu'il cherche (constaté au premier passage).
+            r = c.post("/voix/sonde", json=charge,
+                       headers={"X-Relais-Secret": MAUVAIS,
+                                "Authorization": f"Bearer {JETON}"})
+            if r.status_code != 401:
+                print(f"   sonde ouverte sans secret valide : {r.status_code}")
+                return False
+            if not journal.exists():
+                print("   un refus n'est pas journalisé : impossible de diagnostiquer "
+                      "une plateforme mal configurée")
+                return False
+            brut = journal.read_text(encoding="utf-8")
+            if "authorization" not in brut or "x-relais-secret" not in brut:
+                print(f"   noms d'en-têtes absents du refus journalisé : {brut[:120]!r}")
+                return False
+
+            # (d) avec le secret : réponse au format OpenAI, d'un seul bloc, portant la
+            # phrase telle quelle.
+            for chemin in ("/voix/sonde", "/voix/sonde/chat/completions"):
+                r = c.post(chemin, json=charge,
+                           headers={"X-Relais-Secret": SECRET})
+                if r.status_code != 200:
+                    print(f"   {chemin} avec le bon secret : {r.status_code}")
+                    return False
+                corps = r.json()
+                if corps.get("object") != "chat.completion":
+                    print(f"   réponse hors format OpenAI : {corps.get('object')!r}")
+                    return False
+                dit = corps["choices"][0]["message"]["content"]
+                if dit != PHRASE_SONDE:
+                    print(f"   la sonde ne dit pas sa phrase : « {dit} »")
+                    return False
+
+        # Aucun secret dans le journal, sur AUCUN des deux chemins. Le vrai secret est
+        # inclus parce que ce sont les requêtes ACCEPTÉES qui le portent : sans lui, une
+        # sonde qui journaliserait ses en-têtes en clair passerait inaperçue (mutation
+        # survivante au premier passage).
+        brut = journal.read_text(encoding="utf-8")
+        for fuite in (MAUVAIS, JETON, SECRET):
+            if fuite in brut:
+                print(f"   VALEUR d'en-tête écrite dans le journal : {fuite!r}")
+                return False
+
+        # (e) ce que la sonde est FAITE pour rapporter : l'identifiant candidat, extrait
+        # et mis en évidence, et le fait que la diffusion en flux ait été demandée.
+        lignes = [json.loads(l) for l in
+                  journal.read_text(encoding="utf-8").splitlines() if l.strip()]
+        acceptes = [l for l in lignes if "refuse" not in l]
+        if len(acceptes) != 2:
+            print(f"   {len(acceptes)} requête(s) acceptée(s) journalisée(s), attendu 2")
+            return False
+        entree = acceptes[0]
+        if entree["identifiants_candidats"].get("call.id") != "call-abc123":
+            print(f"   identifiant d'appel non repéré : "
+                  f"{entree['identifiants_candidats']}")
+            return False
+        if entree.get("stream_demande") is not True:
+            print(f"   demande de diffusion en flux non signalée : {entree!r}")
+            return False
+        if entree.get("charge_utile") != charge:
+            print("   la charge utile brute n'est pas conservée : on ne pourra pas "
+                  "écrire l'adaptateur sans rappeler")
+            return False
+
+    # (f) le repérage descend dans les listes, pas seulement dans les dictionnaires : les
+    # charges utiles réelles imbriquent leurs identifiants n'importe où.
+    trouves = identifiants_candidats({"a": [{"b": {"call_id": "x"}}], "n": 3})
+    if trouves != {"a[0].b.call_id": "x"}:
+        print(f"   repérage incomplet dans les listes : {trouves}")
+        return False
+    # ...et il ne rend PAS les champs sans intérêt, sinon il ne met plus rien en évidence
+    if identifiants_candidats({"content": "bonjour", "role": "user"}):
+        print("   des champs quelconques sont pris pour des identifiants")
+        return False
+
+    # (g) `created` est un vrai instant, repris de l'horloge injectée
+    r = reponse_openai("x", "m", LUNDI_9H)
+    if r["created"] != int(LUNDI_9H.timestamp()):
+        print(f"   horodatage de la réponse non repris de l'horloge : {r['created']}")
+        return False
+    return True
+
+
 def check_contrainte_prime_sur_plus_tot() -> bool:
     """R39 : une CONTRAINTE nouvelle prime sur le raccourci « rien de plus tôt ».
 
@@ -3896,6 +4055,15 @@ def run() -> int:
     if check_contrainte_prime_sur_plus_tot():
         print("   → une contrainte nouvelle prime sur le raccourci « rien de plus "
               "tôt », qui garde son rôle à contrainte constante : ✅ PASS")
+    else:
+        print("   → ❌ FAIL")
+        echecs += 1
+
+    print(f"\n──── R40_sonde_voix ────")
+    if check_sonde_voix():
+        print("   → sonde de l'étape 0 éteinte par défaut, exigeant le secret webhook, "
+              "n'écrivant aucune valeur d'en-tête, et repérant l'identifiant d'appel "
+              "dans la charge utile : ✅ PASS")
     else:
         print("   → ❌ FAIL")
         echecs += 1

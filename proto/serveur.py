@@ -9,10 +9,14 @@ Variables requises (fichier `.env` à la racine) :
     RELAIS_WEBHOOK_SECRET    secret partagé avec la plateforme vocale
     RELAIS_BASE_URL          racine publique des liens de validation client (SMS)
 
-Variable optionnelle :
+Variables optionnelles :
     RELAIS_COOKIE_SECURE     `false` UNIQUEMENT pour tester en HTTP local depuis un
                              téléphone. Défaut `true` : la production ne doit pas pouvoir
                              régresser par oubli.
+    RELAIS_SONDE_VOIX        allume la sonde de l'étape 0 du chantier voix (route
+                             `/voix/sonde`, cf. `sonde_voix.py`). Valeur = chemin du
+                             journal, ou `1` pour `proto/sonde-vapi.jsonl`. Absente par
+                             défaut : la route n'est alors même pas déclarée.
 
 Rien de métier ici : uniquement du câblage. Les collaborateurs sont les mêmes objets que
 ceux des tests, avec les implémentations réelles à la place des doubles — c'est tout
@@ -59,6 +63,22 @@ def _cookie_secure() -> bool:
     return (os.environ.get("RELAIS_COOKIE_SECURE") or "true").strip().lower() != "false"
 
 
+def _sonde_voix() -> pathlib.Path | None:
+    """Chemin du journal de la sonde, ou None — le défaut, qui ne déclare pas la route.
+
+    Éteinte par défaut et non « protégée par le secret » : une sonde est un outil de
+    diagnostic, et la seule garantie qui tienne dans le temps est qu'il n'y ait rien à
+    atteindre. La variable accepte un chemin (pour ranger le journal où l'on veut) ou un
+    simple `1`, parce qu'on l'allume depuis un terminal en cinq secondes, une fois.
+    """
+    valeur = (os.environ.get("RELAIS_SONDE_VOIX") or "").strip()
+    if not valeur or valeur.lower() in ("0", "false", "non"):
+        return None
+    if valeur.lower() in ("1", "true", "oui"):
+        return RACINE / "sonde-vapi.jsonl"
+    return pathlib.Path(valeur)
+
+
 def construire():
     # même repli que le worker et le lanceur de tests : l'hôte direct de Supabase est en
     # IPv6 et peut être injoignable selon le réseau. Le pooler prend alors le relais.
@@ -88,8 +108,15 @@ def construire():
     # sélection que le worker (`RELAIS_SMS`), donc même défaut inoffensif.
     envoyeur, mode_sms = choisir_envoyeur()
     print(f"envoi des codes de connexion : {mode_sms}")
+    sonde = _sonde_voix()
+    # Annoncée au démarrage, comme le réglage du cookie et pour la même raison : un état
+    # qu'on ne voit que lorsqu'il est anormal ne se distingue pas d'un réglage non pris en
+    # compte. Ici l'enjeu est inverse — c'est l'oubli d'ÉTEINDRE qu'on veut voir.
+    if sonde is not None:
+        print(f"⚠️  SONDE VOIX ALLUMÉE : POST /voix/sonde → {sonde} "
+              f"(diagnostic étape 0 ; à éteindre après usage)")
     return creer_app(depot, registre, make_llm, base_url=_exige("RELAIS_BASE_URL"),
-                     cookie_secure=secure, envoyeur=envoyeur)
+                     cookie_secure=secure, envoyeur=envoyeur, sonde_voix=sonde)
 
 
 app = construire()

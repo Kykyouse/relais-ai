@@ -22,7 +22,7 @@ point d'entrée du produit. Plus rien d'autre n'est bloqué côté code.
 
 ```bash
 cd proto
-python run_scenario.py                              # 37 tests, ~3 s, sans clé ni base
+python run_scenario.py                              # 44 tests, ~3 s, sans clé ni base
 python semer_artisans.py [--ecrire]                 # amorce la table `artisan`
 python run_depot_pg.py [--migrer]                   # contrat du port contre Supabase
 uvicorn serveur:app --port 8000                     # API HTTP
@@ -49,11 +49,15 @@ python run_llm_eval.py [--mock] [--n 3]             # éval appelant-simulé
 | Question de prix ≠ refus de créneau (R31) | ✅ | mock, mutations 4/4 |
 | Homonymes, corrections, boucles bornées (R32) | ✅ | mock, mutations 6/6 |
 | Prestation refusée déclinée (R33) | ✅ | mock, mutations 6/6 |
-| **Éval LLM réelle, 14 personas × 3** | ✅ **42/42** | agent + appelant Sonnet 5 |
+| **Éval LLM réelle, 14 personas × 3** | ✅ **42/42** | agent **Haiku 4.5**, appelant Sonnet 5 — 7ᵉ passage, 0 incident de harnais |
 | SMS de confirmation au client, chemin nominal (R27) | ✅ | mock, mutations 5/5 |
 | Table `artisan` + FK sur 5 tables (migration 008) | ✅ | **Supabase réel**, contrat du port |
 | Connexion artisan par code SMS (R28) | ✅ | mock, mutations 7/8 (1 défense en profondeur) |
 | Nom du produit et expéditeur SMS en config (R29) | ✅ | mock, mutations 7/7 |
+| Sortie prononçable : emoji et markdown (R37) | ✅ | mock, mutations 5/5 |
+| Créneaux prononcés verbatim (R38) | ✅ | mock, mutations 2/2 |
+| Contrainte nouvelle > « rien de plus tôt » (R39) | ✅ | mock, mutations 2/2 |
+| **Sonde de l'étape 0, chantier voix (R40)** | ✅ | mock, mutations 13/13 — *jamais appelée pour de vrai* |
 
 ## Ce qui est encore un double (et non un manque caché)
 
@@ -153,10 +157,32 @@ latence se traite par des phrases-tampons pré-approuvées, jamais en contournan
 
 Prérequis Haiku **RENDU le 25/08 : 42/42**, à parité avec Sonnet, après correction de trois
 défauts produit que Sonnet masquait. Latence du tour ramenée de 3,42 s à 1,93 s de médiane.
+**Confirmé au 7ᵉ passage** (`evals/results-20260825-213151.json`) sur l'arbre corrigé, sans
+un seul incident de harnais : le 41/42 du 6ᵉ passage venait bien du défaut que R39 corrige.
 
-Reste avant d'appeler un vrai numéro : le garde-fou emoji, la ligne `RELAIS_MODEL` du `.env`,
-et l'étape 0 du spike (journaliser la charge utile brute de Vapi avant d'écrire l'adaptateur
-— on ne sait pas encore si elle porte un identifiant d'appel).
+Les garde-fous de prononçabilité (R37) travaillent en continu — une quinzaine
+d'interceptions sur ce passage, dont **le numéro d'urgence sécurité gaz mis en gras** sur
+T04. Elles ne font pas échouer les scénarios (le repli sur l'instruction du contrôleur
+fonctionne), mais elles disent que le formuleur produirait sans cesse de l'imprononçable si
+on le laissait faire. C'est un argument de plus pour le verbatim là où le fond compte.
+
+Le garde-fou emoji est fait (R37). La **sonde de l'étape 0 est écrite** (R40) : il ne reste
+qu'à la jouer. Reste aussi la ligne `RELAIS_MODEL` du `.env` de Geoffrey.
+
+**Comment jouer l'étape 0**, dans l'ordre :
+
+```bash
+RELAIS_SONDE_VOIX=1 uvicorn serveur:app --port 8000   # le serveur l'annonce au démarrage
+# un tunnel public (ngrok/cloudflared) vers le port 8000
+# Vapi : custom LLM → URL = https://<tunnel>/voix/sonde
+#        en-tête personnalisé X-Relais-Secret = RELAIS_WEBHOOK_SECRET
+# puis on appelle le numéro et on lit proto/sonde-vapi.jsonl
+```
+
+On y cherche `identifiants_candidats` : si un champ stable y figure, l'adaptateur se réduit
+à une traduction de formats vers `/webhooks/appel/{id}/tour`. Sinon il faut fabriquer la clé
+(dérivée du couple appelant/appelé, ou table de correspondance) — un montage plus lourd, avec
+ses propres modes de panne. **Ne pas écrire l'adaptateur avant d'avoir lu ce fichier.**
 
 Ce qu'il faut retenir pour l'arbitrage : la latence d'un tour du contrôleur est **mesurée**
 à 3,4 s (Sonnet 5) / 1,9 s (Haiku) hors STT et TTS, contre un budget conversationnel de 0,5
@@ -184,6 +210,75 @@ Le spike vocal ne s'ouvre **qu'en session dédiée**.
 
 Le spike vocal ne s'ouvre **qu'en session dédiée**. Le Sender ID et l'OAuth Google attendent
 le nom commercial — c'est-à-dire le cousin, pas nous.
+---
+
+## Session du 25/08/2026 (fin) — sonde de l'étape 0 : demander à la plateforme plutôt que parier
+
+**Fait.** La sonde du chantier voix (`proto/relais_proto/sonde_voix.py`, route
+`POST /voix/sonde` et `/voix/sonde/chat/completions`), couverte par **R40**, mutations
+**13/13**. Suite à **44 PASS**. Écrite pendant qu'un septième passage de l'éval Haiku
+tournait — les deux ne se touchent pas : l'éval instancie `Conversation` directement et ne
+passe jamais par `api.py`.
+
+**Pourquoi une sonde et pas l'adaptateur.** Une seule question commande la forme de
+l'adaptateur : *la charge utile de Vapi porte-t-elle un identifiant d'appel ?* L'API est
+bâtie sur un principe — *un tour = une requête, sans session en mémoire*, l'état relu du
+dépôt à chaque tour — qui suppose une CLÉ stable. Si la plateforme en fournit une,
+l'adaptateur est une traduction de formats. Sinon il faut fabriquer la clé, et c'est un
+autre objet. Les deux sont trop différents pour être écrits sur une hypothèse, et la
+documentation d'un tiers n'est pas une source suffisante pour engager une architecture.
+
+**Ce que la sonde rapporte**, au-delà de la charge utile brute : les `identifiants_candidats`
+(tout scalaire dont la clé ressemble à un identifiant, extrait par chemin, listes comprises)
+— pour trancher d'un coup d'œil au lieu de relire des kilo-octets ; et `stream_demande`,
+parce que la décision d'arbitrage n°4 dit qu'on ne diffusera pas une sortie gardée : savoir
+si la plateforme le demande quand même, et si elle accepte une réponse d'un seul bloc, fait
+partie de ce qu'on vient mesurer.
+
+Elle répond une phrase FIXE, ce qui donne gratuitement un premier aller-retour audible de
+bout en bout — réseau, transcription, notre serveur, synthèse vocale — donc une mesure de
+latence **avant** tout adaptateur. La phrase porte l'annonce IA (règle n°5) : la sonde
+décroche un vrai téléphone, et la mesure doit porter sur quelque chose de représentatif.
+
+**Éteinte par défaut, et pas seulement « protégée ».** Sans `RELAIS_SONDE_VOIX`, la route
+n'est pas déclarée du tout. Un 401 laisserait une surface ; un 404 dit qu'il n'y a rien à
+atteindre. Le serveur l'annonce à chaque démarrage quand elle est allumée — même logique que
+le réglage du cookie, mais dans l'autre sens : ici, c'est l'oubli d'ÉTEINDRE qu'on veut voir.
+
+**Deux chemins pour une seule fonction**, `/voix/sonde` et `/voix/sonde/chat/completions` :
+selon la façon dont l'URL est renseignée côté plateforme, celle-ci appelle la racine telle
+quelle ou lui ajoute le suffixe de la convention OpenAI. Une sonde qui rendrait 404 parce
+qu'on a mal deviné le suffixe ne mesurerait rien — et on ne l'apprendrait qu'après avoir
+monté le tunnel et passé l'appel.
+
+**Le journal n'écrit jamais une valeur d'en-tête, seulement leurs NOMS.** Le secret partagé
+en est une. Les noms suffisent à diagnostiquer une plateforme mal configurée, et c'est
+justement pour ça que l'échec d'authentification est journalisé lui aussi : sans cela, un
+premier appel qui 401 n'apprendrait rien. Le fichier contient une conversation réelle — il
+est dans `.gitignore`.
+
+**Deux défauts de mes propres tests, trouvés par mutation.**
+
+1. Ma vérification de fuite cherchait le mot « faux » — qui figure dans le message de refus
+   écrit par la sonde elle-même. Le test échouait sur son propre texte. Sentinelles
+   improbables depuis.
+2. Plus grave : cette vérification ne lisait que le journal du **refus**. Or ce sont les
+   requêtes **acceptées** qui portent le VRAI secret. Une mutation faisant écrire les
+   en-têtes en clair sur le chemin nominal a survécu. Le contrôle porte désormais sur tout
+   le journal, secret réel compris. Une n-ième illustration de la règle : un test qu'on n'a
+   pas essayé de tuer ne prouve rien.
+
+**Piège de l'outillage, à ne pas redécouvrir** : l'outil Bash mange les antislashs dans un
+heredoc, même délimiteur entre quotes. Un `\\n` destiné à rester littéral est devenu un vrai
+saut de ligne au milieu d'une f-string, et le fichier ne compilait plus. Écrire les scripts
+de correctif avec l'outil d'écriture de fichier, jamais par heredoc.
+
+**Décidé.** Rien de nouveau : la sonde applique l'arbitrage du 25/08, elle ne le modifie pas.
+Elle n'est pas du produit et n'a pas vocation à le devenir.
+
+**Prochaine étape.** Jouer l'étape 0 (mode d'emploi dans le bloc ÉTAT en tête), lire
+`identifiants_candidats`, **puis** écrire l'adaptateur.
+
 ---
 
 ## Sessions du 21–22/08/2026 — fondations + prototype texte

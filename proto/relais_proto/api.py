@@ -12,6 +12,7 @@ derrière un répartiteur sans coller les appels à une instance.
 from __future__ import annotations
 
 import datetime as dt
+import pathlib
 
 from fastapi import Cookie, Depends, FastAPI, Form, Header, HTTPException, Request
 from fastapi.responses import HTMLResponse, JSONResponse, RedirectResponse
@@ -19,7 +20,7 @@ from pydantic import BaseModel, Field
 
 import secrets
 
-from . import connexion, messages, pages, session, temps
+from . import connexion, messages, pages, session, sonde_voix as _sonde, temps
 from .calendar_stub import CalendarStub, libelle_creneau
 from .confirmation import creer_jeton, empreinte, lien
 from .depot import Introuvable
@@ -104,7 +105,8 @@ class ReproposerIn(BaseModel):
 # ------------------------------------------------------------------ fabrique
 def creer_app(depot, registre: Registre, fabrique_llm, horloge=None,
               base_url: str = "https://relais.example",
-              cookie_secure: bool = True, envoyeur=None) -> FastAPI:
+              cookie_secure: bool = True, envoyeur=None,
+              sonde_voix: "pathlib.Path | None" = None) -> FastAPI:
     """Collaborateurs injectés explicitement plutôt que par variables globales : les tests
     passent un dépôt mémoire, un MockLLM et une horloge figée, la prod un dépôt Postgres.
 
@@ -112,6 +114,10 @@ def creer_app(depot, registre: Registre, fabrique_llm, horloge=None,
     de suite : un code qui arrive au prochain passage du cron n'est pas un code. Sans lui,
     tout continue de fonctionner — le message reste en file et le worker l'expédiera, avec
     la latence du cron.
+
+    `sonde_voix` est le chemin du journal de la sonde de l'étape 0 (`sonde_voix.py`).
+    `None` — le défaut — ne déclare même pas la route : un outil de diagnostic ne doit pas
+    pouvoir se retrouver exposé en production par simple oubli de le désactiver.
     """
     # l'un des DEUX seuls endroits où l'horloge système entre (l'autre est worker.py) :
     # elle rend un instant UTC, et tout ce qui suit en hérite (cf. temps.py)
@@ -178,6 +184,43 @@ def creer_app(depot, registre: Registre, fabrique_llm, horloge=None,
         # vérifier depuis le téléphone doit prendre dix secondes, pas un aller-retour.
         return {"statut": "ok", "contrat_lead": CONTRAT_LEAD_VERSION,
                 "cookie_secure": cookie_secure}
+
+    # ---- sonde de l'étape 0 (chantier voix), absente par défaut ----
+    if sonde_voix is not None:
+        chemin_sonde = pathlib.Path(sonde_voix)
+
+        # Deux chemins pour une seule fonction : selon la façon dont l'URL est renseignée
+        # côté plateforme, celle-ci appelle la racine telle quelle ou lui ajoute
+        # `/chat/completions` (la convention OpenAI). Les deux mènent ici — une sonde qui
+        # rendrait 404 parce qu'on a mal deviné le suffixe ne mesurerait rien.
+        @app.post("/voix/sonde")
+        @app.post("/voix/sonde/chat/completions")
+        async def sonde_etape_zero(requete: Request) -> JSONResponse:
+            """Journalise la charge utile de la plateforme vocale et répond une phrase fixe.
+
+            Aucun métier, aucune persistance dans le dépôt, aucune conversation : voir
+            `sonde_voix.py` pour ce qu'on cherche à apprendre.
+            """
+            t = maintenant()
+            entetes = dict(requete.headers)
+            if not registre.secret_webhook_valide(entetes.get("x-relais-secret", "")):
+                # On journalise l'échec, mais seulement les NOMS d'en-têtes (jamais leurs
+                # valeurs : le secret en est une). C'est ce qu'il faut pour voir ce que la
+                # plateforme a réellement envoyé et corriger sa configuration — sans faire
+                # de la sonde un dépotoir où n'importe qui écrirait ce qu'il veut.
+                _sonde.journaliser(
+                    {"horodatage": t.isoformat(), "refuse": "secret webhook absent ou faux",
+                     "entetes": sorted(entetes)}, chemin_sonde)
+                raise HTTPException(401, "secret webhook invalide")
+            try:
+                corps = await requete.json()
+            except Exception:
+                corps = {"_corps_illisible": (await requete.body()).decode(
+                    "utf-8", "replace")}
+            _sonde.journaliser(_sonde.resume(corps, entetes, t), chemin_sonde)
+            modele = corps.get("model") if isinstance(corps, dict) else None
+            return JSONResponse(
+                _sonde.reponse_openai(_sonde.PHRASE_SONDE, modele or "", t))
 
     # ---- porte téléphonie ----
     @app.post("/webhooks/appel", response_model=TourOut,

@@ -22,3 +22,7 @@ Thumbs.db
 *.log
 tmp/
 scratch/
+
+# journal de la sonde voix (etape 0) : contient une conversation reelle
+sonde-vapi.jsonl
+*.sonde.jsonl
