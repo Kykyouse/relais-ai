@@ -2456,3 +2456,115 @@ disponibilités de l'artisan.
 **Reste avant d'appeler un vrai numéro** : le garde-fou emoji (`check_output` laisse passer
 un 😊 qui partirait au TTS), la ligne `RELAIS_MODEL` du `.env` à retirer, et l'étape 0 du
 spike — journaliser la charge utile brute de Vapi avant d'écrire l'adaptateur.
+
+### 25/08 (fin) — garde-fous de prononçabilité, et le formuleur qui mentait
+
+Deux garde-fous et un correctif, tous nés du prérequis Haiku.
+
+#### Une sortie d'agent doit être PRONONÇABLE (R37)
+
+Trouvé pendant le prérequis : l'agent a répondu « Bonjour Mme Garcia ! 😊 ». Au téléphone,
+un emoji est soit lu à voix haute de façon absurde, soit avalé. `check_output` filtrait les
+prix hors liste blanche, les « c'est confirmé » prématurés et les diagnostics improvisés —
+**rien n'interdisait un emoji**. R23 vérifie l'alphabet GSM-7 des SMS, jamais celui de la
+parole ; le canal voix allait rendre la faille audible.
+
+Deux détections, deux mécanismes :
+
+- **emoji et pictogrammes**, par CATÉGORIE Unicode `So` plutôt que par liste : la liste
+  serait à maintenir à chaque version d'Unicode, la catégorie couvre 😊 ✅ ⚠ 🔧 © et la
+  suite ;
+- **markdown**, plus fréquent encore (15 répliques sur 214 contre 11 pour l'emoji), et par
+  marqueurs de STRUCTURE seulement — `**gras**`, `__souligné__`, titres, liens, `code`.
+  Jamais un caractère isolé : « 90 € TTC (\*) » et « Jean_Dupont » doivent passer, et une
+  mutation qui élargit la détection à tout astérisque est tuée.
+
+Dans les deux cas : **détecté, pas nettoyé.** `_say` replie sur l'instruction du contrôleur,
+et la violation reste visible dans `violations_gardes_fous`. C'est le formuleur qui dérape,
+on veut le savoir plutôt que le maquiller.
+
+**Ce que les garde-fous ont attrapé de plus important** : sur `T04_danger_gaz`, le formuleur
+a mis en gras le **numéro d'Urgence Sécurité Gaz** (`**0 800 47 33 33**`). Sur la phrase la
+plus critique du produit. Intercepté, replié. Ils ont déclenché sur 24 conversations sur 42
+— bien plus que les 12 % estimés.
+
+Un filtre que j'avais ajouté a été **retiré** : les sélecteurs de variation et le liant de
+largeur nulle. Une mutation y a survécu, et elle avait raison — tout emoji composite
+contient déjà un caractère `So`, et un sélecteur isolé est inaudible : le signaler ferait
+jeter une bonne réplique pour un caractère invisible.
+
+#### Le formuleur niait les créneaux du contrôleur (R38)
+
+Le défaut le plus grave de la journée. Le contrôleur proposait « samedi 29/08 entre 09h et
+11h » — R36 le vérifie — et le formuleur a dit : « Malheureusement, je n'ai pas de
+disponibilité le samedi matin en ce moment. » **Il a nié les créneaux qu'on venait de lui
+donner.** L'appelant a raccroché sans RDV, avec une information fausse sur les
+disponibilités de l'artisan.
+
+`violations_gardes_fous` était **vide**, et ne pouvait pas ne pas l'être : le mensonge
+portait sur le FOND, et `check_output` vérifie la forme. Aucun garde-fou n'attrapera jamais
+ça. **La seule défense est de ne pas laisser réécrire.**
+
+Or le remède existait déjà, appliqué à un seul endroit : `_reserver` porte `verbatim=True`
+avec le commentaire « LA phrase du script : date et engagement jamais réécrits ». **Proposer
+une date est le même acte que la confirmer** — la règle valait ici aussi, elle n'avait
+jamais été étendue. Exactement le même schéma que la question de prix apprise en S4 et non
+propagée à S5 : une leçon juste, appliquée une fois.
+
+Les propositions de créneau et le « rien de plus tôt » sont désormais verbatim. **Effet de
+bord bienvenu pour la voix** : un tour verbatim économise l'appel au formuleur — c'est ce
+qui explique les minima de latence mesurés, 0,67 s contre 1,93 s de médiane.
+
+#### Deux corrections du HARNAIS sur T07, aucune du produit
+
+- Son attente épinglait `score: 1`, ce qui supposait que l'appelant refuse son numéro — son
+  rôle ne le dit nulle part. Quand il l'a donné, le lead est monté à 2 : un **meilleur**
+  lead, compté comme un échec. Le score n'est plus épinglé ; `categorie` et `rdv` le sont,
+  et le refus de numéro reste couvert par T11.
+- Le persona a été durci sur son point non négociable (refuser tout créneau sans garantie de
+  gratuité). C'est la **deuxième fois** que T07 dérive faute de contrainte, après la commune
+  inventée en Haute-Garonne. Un persona sous-spécifié fabrique de faux défauts.
+
+#### Une question de conception, consignée et NON tranchée
+
+Le contrôleur est **sourd aux questions restées sans réponse**. « Vous me garantissez que je
+passe en priorité ? » a reçu pour réponse une proposition de créneau : il n'a aucune notion
+de question en suspens, et le formuleur comblait ce vide avec de l'empathie improvisée.
+
+**Le verbatim n'a pas créé cette surdité — il l'a rendue audible.** Si le contrôleur doit
+accuser réception, c'est à lui de le faire, avec des phrases que nous écrivons. Cela rejoint
+directement les **phrases-tampons** de l'arbitrage voix (décision n°4), qui devront de toute
+façon être un catalogue fermé. À traiter là, pas dans un correctif de fin de journée.
+
+#### Et une troisième fois : le raccourci « rien de plus tôt » (R39)
+
+Sixième passage, 41/42. L'appelant : « je ne suis disponible que le samedi matin,
+uniquement. C'est possible d'avoir un créneau samedi ? » — donc PLUS TARD. L'agent :
+
+> « Je n'ai malheureusement rien de PLUS TÔT : le premier créneau disponible est DEMAIN
+> entre 08h et 10h. »
+
+Deux fautes en une phrase : « plus tôt » à contresens, et le créneau qu'il venait de
+refuser reproposé. La branche `veut_plus_tot` se déclenchait AVANT la prise en compte des
+contraintes.
+
+Elle existe pour une bonne raison (bug T01/R09-LLM : la cliente voulait plus tôt, on lui
+proposait plus tard, et lundi disparaissait). Mais elle ne vaut que si la contrainte n'a
+PAS bougé — sinon ce n'est plus un raccourci, c'est une fin de non-recevoir absurde. Les
+contraintes sont désormais lues en tête de `_s5`, et une contrainte nouvelle prime.
+
+**Troisième fois de la journée** qu'un contrôleur rendu honnête révèle qu'il disait quelque
+chose de faux. Le formuleur maquillait : la question de prix en S5, la surdité aux questions
+en suspens, et maintenant ce contresens. **Le verbatim ne crée pas ces défauts, il les rend
+audibles** — et c'est un argument de plus pour lui, pas contre.
+
+#### État à la fin de la journée
+
+- **43 PASS** en mock, contrat Postgres vert.
+- Dernière mesure réelle : **41/42** au sixième passage, dont l'unique échec est celui que
+  R39 corrige — **le correctif n'a pas été rejoué contre le vrai modèle**, relance à faire.
+- Six passages du prérequis, chacun a trouvé quelque chose. Le rythme ralentit (les
+  derniers échecs étaient des cas à 1 sur 3, sur un seul persona) mais ne s'est pas arrêté.
+  Si un septième passage trouve encore un cas rare, c'est un signal en soi : passer à
+  `--n 5` sur moins de personas, ou accepter que la queue de distribution se traite en
+  production.

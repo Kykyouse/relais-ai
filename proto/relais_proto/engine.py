@@ -576,6 +576,10 @@ class Conversation:
         return self._s5({})
 
     def _s5(self, ex: dict) -> str:
+        # Les contraintes de disponibilité sont lues EN TÊTE : la branche « rien de plus
+        # tôt » comme la reproposition en dépendent toutes les deux.
+        # ("que le samedi matin" — bug T03-LLM)
+        jours, moment = self._contraintes_dispo()
         # choix d'un créneau proposé ?
         if self._proposes:
             choix = ex.get("creneau_choisi")
@@ -604,20 +608,29 @@ class Conversation:
                              f"proposer {rappel}. Lequel vous arrange ?")
         # "rien de plus tôt ?" n'est PAS un rejet : on re-propose le PREMIER créneau,
         # on n'avance pas dans le calendrier (bug T01/R09-LLM : la cliente voulait
-        # plus tôt, on lui proposait plus tard et lundi disparaissait)
-        if ex.get("veut_plus_tot") and self._proposes:
+        # plus tôt, on lui proposait plus tard et lundi disparaissait).
+        #
+        # MAIS une CONTRAINTE nouvelle prime sur ce raccourci. Le 25/08 (T03), l'appelant
+        # a dit « je ne suis disponible que le samedi matin, c'est possible d'avoir un
+        # créneau samedi ? » — donc PLUS TARD — et s'est entendu répondre « je n'ai rien
+        # de plus tôt : le premier créneau est demain entre 08h et 10h ». Deux fautes en
+        # une phrase : le mot « plus tôt » à contresens, et le créneau qu'il venait de
+        # refuser reproposé. Le raccourci ne vaut que si les contraintes n'ont PAS bougé ;
+        # sinon c'est une reproposition qu'il faut faire, pas une fin de non-recevoir.
+        contraintes_stables = (self.flags.get("contraintes_proposees")
+                               == [sorted(jours) if jours else None, moment])
+        if ex.get("veut_plus_tot") and self._proposes and contraintes_stables:
             self.flags["tours_creneaux"] += 1
             if self.flags["tours_creneaux"] <= 2:
+                # verbatim : cette phrase énonce une DATE (cf. le bloc de `_s5` plus bas)
                 return self._say(
                     f"Je n'ai malheureusement rien de plus tôt : le premier créneau "
                     f"disponible est {self._proposes[0]['label']}. "
-                    f"Voulez-vous que je vous le réserve ?")
+                    f"Voulez-vous que je vous le réserve ?", verbatim=True)
         # (re)proposer — max 2 tours (invariant 6)
         if self.flags["tours_creneaux"] >= 2:
             return self._sans_rdv()
         urgent = bool(self.slots["urgence_reelle"]) and self.slots["intent"] == "urgence"
-        # respecter les disponibilités exprimées ("que le samedi matin" — bug T03-LLM)
-        jours, moment = self._contraintes_dispo()
         # 2e tour = créneaux SUIVANTS, jamais les mêmes reproposés.
         #
         # SAUF si les contraintes ont CHANGÉ entre-temps. Le saut sert à ne pas resservir
@@ -647,7 +660,20 @@ class Conversation:
         else:
             offre = (f"Je peux vous proposer {self._proposes[0]['label']}, "
                      f"ou {self._proposes[1]['label']}. Lequel vous arrange ?")
-        return self._say(offre)
+        # VERBATIM. `_reserver` portait déjà cette règle — « date et engagement jamais
+        # réécrits » — mais elle n'avait pas été étendue à la PROPOSITION, qui est le même
+        # acte : énoncer une date. Le 25/08, le formuleur a répondu « je n'ai pas de
+        # disponibilité le samedi matin » alors que le contrôleur venait de lui donner
+        # samedi 29/08 : il a NIÉ les créneaux qu'on lui passait, et l'appelant a raccroché
+        # sans RDV avec une information fausse sur les disponibilités de l'artisan.
+        #
+        # Aucun garde-fou ne pouvait l'attraper : le mensonge portait sur le FOND, et
+        # `check_output` vérifie la forme. La seule défense est de ne pas laisser réécrire.
+        #
+        # Effet de bord bienvenu pour la voix : un tour verbatim économise l'appel au
+        # formuleur — c'est ce qui explique les minima de latence mesurés (0,67 s contre
+        # 1,93 s de médiane en Haiku).
+        return self._say(offre, verbatim=True)
 
     # ------------------------------------------------------------- issues
     def _reserver(self, slot: dict) -> str:

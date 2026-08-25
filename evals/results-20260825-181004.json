@@ -1,0 +1,3191 @@
+{
+  "horodatage": "20260825-181004",
+  "mode": "llm",
+  "modele_agent": "claude-haiku-4-5",
+  "modele_appelant": "claude-sonnet-5",
+  "total": 42,
+  "echecs": 1,
+  "runs": [
+    {
+      "persona": "T01_urgence_fuite",
+      "pass": true,
+      "problemes": [],
+      "warns": [
+        "violations interceptées : ['caractere_non_prononcable:😊']"
+      ],
+      "tours": 6,
+      "lead": {
+        "horodatage": "2026-08-25T15:58:19+00:00",
+        "source": "appel_telephonique",
+        "base_legale": "demande_entrante",
+        "categorie": "rdv_reserve",
+        "zone": "en_zone",
+        "score": 5,
+        "raisons": [
+          "URGENCE réelle",
+          "fuite sous l'évier de la cuisine",
+          "Nogent-sur-marne"
+        ],
+        "slots": {
+          "intent": "urgence",
+          "prestation": "robinetterie",
+          "probleme": "fuite sous l'évier de la cuisine",
+          "commune": "Nogent-sur-marne",
+          "code_postal": "94130",
+          "urgence_reelle": true,
+          "nom": "Garcia",
+          "telephone_rappel": "0612345678",
+          "tel_confirme": true
+        },
+        "rdv": {
+          "date": "2026-08-26",
+          "de": "08:00",
+          "a": "10:00",
+          "urgence": false,
+          "label": "demain entre 08h et 10h",
+          "duree_min": 60,
+          "statut": "en_attente_validation"
+        },
+        "violations_gardes_fous": [
+          "caractere_non_prononcable:😊"
+        ],
+        "degradations_llm": [],
+        "transcript": [
+          [
+            "agent",
+            "Bonjour, vous êtes bien chez Dupont Chauffage. Je suis son assistant vocal — Julien est en intervention, mais je peux tout organiser avec vous. Que se passe-t-il ?"
+          ],
+          [
+            "client",
+            "Ah bonjour, oui, écoutez j'ai une fuite sous l'évier de la cuisine, ça goutte dans le placard depuis tout à l'heure, c'est assez urgent, il me faut quelqu'un rapidement."
+          ],
+          [
+            "agent",
+            "Bonjour ! D'accord, je comprends que c'est urgent avec cette fuite. On va vous aider.\n\nPour qu'on puisse vous envoyer un technicien au plus vite, vous êtes sur quelle commune ?"
+          ],
+          [
+            "client",
+            "Je suis à Nogent-sur-Marne, code postal 94130."
+          ],
+          [
+            "agent",
+            "Parfait, j'ai bien noté Nogent-sur-Marne, code postal 94130.\n\nÀ quel nom Julien peut-il vous confirmer le rendez-vous ?"
+          ],
+          [
+            "client",
+            "Mme Garcia."
+          ],
+          [
+            "agent",
+            "Il me faut un numéro où vous joindre pour la confirmation — sans ça je ne peux pas réserver. Quel est votre numéro ?"
+          ],
+          [
+            "client",
+            "Oui bien sûr, c'est le 06 12 34 56 78."
+          ],
+          [
+            "agent",
+            "Je répète votre numéro : 06 12 34 56 78. C'est bien ça ? Répondez simplement oui ou non."
+          ],
+          [
+            "client",
+            "Oui, c'est ça."
+          ],
+          [
+            "agent",
+            "Je peux vous proposer demain entre 08h et 10h, ou demain entre 14h et 16h. Lequel vous arrange ?"
+          ],
+          [
+            "client",
+            "Ah, il faut vraiment attendre demain ? Ça continue de couler là... Mais bon, si c'est le plus tôt possible, je prends le créneau de 8h à 10h demain matin."
+          ],
+          [
+            "agent",
+            "Parfait, je vous réserve demain entre 08h et 10h. Vous recevrez un SMS de confirmation de Julien d'ici 2 heures. Si quoi que ce soit coince, on vous rappelle. Bonne journée !"
+          ]
+        ]
+      }
+    },
+    {
+      "persona": "T01_urgence_fuite",
+      "pass": true,
+      "problemes": [],
+      "warns": [],
+      "tours": 6,
+      "lead": {
+        "horodatage": "2026-08-25T15:58:43+00:00",
+        "source": "appel_telephonique",
+        "base_legale": "demande_entrante",
+        "categorie": "rdv_reserve",
+        "zone": "en_zone",
+        "score": 5,
+        "raisons": [
+          "URGENCE réelle",
+          "fuite sous l'évier de cuisine",
+          "Nogent-sur-marne",
+          "proprietaire"
+        ],
+        "slots": {
+          "intent": "urgence",
+          "prestation": "robinetterie",
+          "probleme": "fuite sous l'évier de cuisine",
+          "commune": "Nogent-sur-marne",
+          "code_postal": "94130",
+          "urgence_reelle": true,
+          "statut_occupant": "proprietaire",
+          "nom": "Garcia",
+          "telephone_rappel": "0612345678",
+          "tel_confirme": true
+        },
+        "rdv": {
+          "date": "2026-08-26",
+          "de": "08:00",
+          "a": "10:00",
+          "urgence": false,
+          "label": "demain entre 08h et 10h",
+          "duree_min": 60,
+          "statut": "en_attente_validation"
+        },
+        "violations_gardes_fous": [],
+        "degradations_llm": [],
+        "transcript": [
+          [
+            "agent",
+            "Bonjour, vous êtes bien chez Dupont Chauffage. Je suis son assistant vocal — Julien est en intervention, mais je peux tout organiser avec vous. Que se passe-t-il ?"
+          ],
+          [
+            "client",
+            "Ah bonjour ! Oui écoutez, j'ai une fuite sous l'évier de ma cuisine, ça goutte dans le placard depuis tout à l'heure, je suis un peu paniquée là. Il faudrait quelqu'un assez vite s'il vous plaît."
+          ],
+          [
+            "agent",
+            "Bonjour ! Je comprends, c'est embêtant une fuite. Je vais vous aider. D'abord, pour pouvoir vous orienter correctement, vous êtes sur quelle commune ?"
+          ],
+          [
+            "client",
+            "J'habite à Nogent-sur-Marne, dans le 94130."
+          ],
+          [
+            "agent",
+            "Parfait, Nogent-sur-Marne, je note ! \n\nPour pouvoir vous confirmer le rendez-vous, à quel nom je dois mettre ça ?"
+          ],
+          [
+            "client",
+            "C'est madame Garcia."
+          ],
+          [
+            "agent",
+            "Bonsoir Madame Garcia ! \n\nPour que je puisse confirmer votre demande, j'aurais besoin d'un numéro où vous joindre. Quel est votre numéro de téléphone ?"
+          ],
+          [
+            "client",
+            "Oui bien sûr, c'est le 06 12 34 56 78."
+          ],
+          [
+            "agent",
+            "Je répète votre numéro : 06 12 34 56 78. C'est bien ça ? Répondez simplement oui ou non."
+          ],
+          [
+            "client",
+            "Oui, c'est ça."
+          ],
+          [
+            "agent",
+            "Je peux vous proposer demain entre 08h et 10h, ou demain entre 14h et 16h. Lequel vous arrange ?"
+          ],
+          [
+            "client",
+            "Oh, demain c'est déjà bien mais l'eau goutte là maintenant... vous n'auriez pas quelque chose plus tôt, genre aujourd'hui ? Sinon bon, va pour demain matin entre 8h et 10h."
+          ],
+          [
+            "agent",
+            "Parfait, je vous réserve demain entre 08h et 10h. Vous recevrez un SMS de confirmation de Julien d'ici 2 heures. Si quoi que ce soit coince, on vous rappelle. Bonne journée !"
+          ]
+        ]
+      }
+    },
+    {
+      "persona": "T01_urgence_fuite",
+      "pass": true,
+      "problemes": [],
+      "warns": [],
+      "tours": 5,
+      "lead": {
+        "horodatage": "2026-08-25T15:59:04+00:00",
+        "source": "appel_telephonique",
+        "base_legale": "demande_entrante",
+        "categorie": "rdv_reserve",
+        "zone": "en_zone",
+        "score": 5,
+        "raisons": [
+          "URGENCE réelle",
+          "fuite sous évier cuisine",
+          "Nogent-sur-marne"
+        ],
+        "slots": {
+          "intent": "urgence",
+          "prestation": "fuite",
+          "probleme": "fuite sous évier cuisine",
+          "commune": "Nogent-sur-marne",
+          "code_postal": "94130",
+          "urgence_reelle": true,
+          "nom": "Garcia",
+          "telephone_rappel": "0612345678",
+          "tel_confirme": true
+        },
+        "rdv": {
+          "date": "2026-08-26",
+          "de": "08:00",
+          "a": "10:00",
+          "urgence": false,
+          "label": "demain entre 08h et 10h",
+          "duree_min": 90,
+          "statut": "en_attente_validation"
+        },
+        "violations_gardes_fous": [],
+        "degradations_llm": [],
+        "transcript": [
+          [
+            "agent",
+            "Bonjour, vous êtes bien chez Dupont Chauffage. Je suis son assistant vocal — Julien est en intervention, mais je peux tout organiser avec vous. Que se passe-t-il ?"
+          ],
+          [
+            "client",
+            "Ah bonjour ! Oui écoutez, j'ai une fuite sous l'évier de la cuisine, ça goutte dans le placard depuis tout à l'heure, je sais pas trop quoi faire. Il faudrait que quelqu'un vienne assez vite s'il vous plaît."
+          ],
+          [
+            "agent",
+            "Ah oui, je comprends ! Une fuite sous l'évier, il faut intervenir vite. Écoutez, en attendant notre passage, si vous pouvez, essayez de couper l'arrivée d'eau — le robinet général est souvent situé sous l'évier ou près du compteur d'eau. Ça peut limiter les dégâts.\n\nEt vous, vous êtes sur quelle commune ?"
+          ],
+          [
+            "client",
+            "Ah oui... attendez, je vais regarder... en fait je sais pas trop où c'est, le robinet, j'ai jamais eu à toucher à ça. Sinon je suis à Nogent-sur-Marne, 94130."
+          ],
+          [
+            "agent",
+            "Pas de souci, pas de souci ! Vous êtes à Nogent-sur-Marne, c'est noté.\n\nPour qu'on puisse vous envoyer quelqu'un, il me faut juste votre nom et votre numéro de téléphone, pour que Julien puisse vous confirmer le rendez-vous. C'est quoi votre nom ?"
+          ],
+          [
+            "client",
+            "Alors c'est Mme Garcia, et mon numéro c'est le 06 12 34 56 78."
+          ],
+          [
+            "agent",
+            "Je répète votre numéro : 06 12 34 56 78. C'est bien ça ? Répondez simplement oui ou non."
+          ],
+          [
+            "client",
+            "Oui, c'est ça."
+          ],
+          [
+            "agent",
+            "Je peux vous proposer demain entre 08h et 10h, ou demain entre 14h et 16h. Lequel vous arrange ?"
+          ],
+          [
+            "client",
+            "Ah demain matin ça m'arrangerait bien, entre 8h et 10h, je serai là de toute façon."
+          ],
+          [
+            "agent",
+            "Parfait, je vous réserve demain entre 08h et 10h. Vous recevrez un SMS de confirmation de Julien d'ici 2 heures. Si quoi que ce soit coince, on vous rappelle. Bonne journée !"
+          ]
+        ]
+      }
+    },
+    {
+      "persona": "T02_hors_zone",
+      "pass": true,
+      "problemes": [],
+      "warns": [],
+      "tours": 2,
+      "lead": {
+        "horodatage": "2026-08-25T15:59:14+00:00",
+        "source": "appel_telephonique",
+        "base_legale": "demande_entrante",
+        "categorie": "hors_zone",
+        "zone": "hors_zone",
+        "score": 0,
+        "raisons": [
+          "hors zone"
+        ],
+        "slots": {
+          "intent": "devis_travaux",
+          "prestation": "devis_pac",
+          "probleme": "remplacement chaudière fioul par pompe à chaleur",
+          "commune": "Champigny Sur Marne",
+          "code_postal": "94500",
+          "urgence_reelle": false
+        },
+        "rdv": null,
+        "violations_gardes_fous": [],
+        "degradations_llm": [],
+        "transcript": [
+          [
+            "agent",
+            "Bonjour, vous êtes bien chez Dupont Chauffage. Je suis son assistant vocal — Julien est en intervention, mais je peux tout organiser avec vous. Que se passe-t-il ?"
+          ],
+          [
+            "client",
+            "Bonjour, oui, je vous appelle parce que je voudrais un devis pour remplacer ma chaudière fioul par une pompe à chaleur."
+          ],
+          [
+            "agent",
+            "Bonjour ! Merci d'avoir appelé Dupont Chauffage. Je vais vous aider. \n\nVous êtes sur quelle commune ?"
+          ],
+          [
+            "client",
+            "Champigny-sur-Marne."
+          ],
+          [
+            "agent",
+            "Bonjour ! Merci de votre appel chez Dupont Chauffage. \n\nJe suis désolé, mais nous n'intervenons pas sur Champigny-sur-Marne. Je vous souhaite une bonne continuation pour trouver un professionnel près de chez vous !"
+          ]
+        ]
+      }
+    },
+    {
+      "persona": "T02_hors_zone",
+      "pass": true,
+      "problemes": [],
+      "warns": [],
+      "tours": 2,
+      "lead": {
+        "horodatage": "2026-08-25T15:59:23+00:00",
+        "source": "appel_telephonique",
+        "base_legale": "demande_entrante",
+        "categorie": "hors_zone",
+        "zone": "hors_zone",
+        "score": 0,
+        "raisons": [
+          "hors zone"
+        ],
+        "slots": {
+          "intent": "devis_travaux",
+          "prestation": "devis_pac",
+          "probleme": "remplacement chaudière fioul par pompe à chaleur",
+          "commune": "Champigny Sur Marne",
+          "code_postal": "94500"
+        },
+        "rdv": null,
+        "violations_gardes_fous": [],
+        "degradations_llm": [],
+        "transcript": [
+          [
+            "agent",
+            "Bonjour, vous êtes bien chez Dupont Chauffage. Je suis son assistant vocal — Julien est en intervention, mais je peux tout organiser avec vous. Que se passe-t-il ?"
+          ],
+          [
+            "client",
+            "Bonjour, oui, voilà, j'aimerais avoir un devis pour remplacer ma chaudière au fioul par une pompe à chaleur. C'est possible de voir ça avec vous ?"
+          ],
+          [
+            "agent",
+            "Bonjour ! Bien sûr, on peut tout à fait vous aider avec ça.\n\nAvant de continuer, vous êtes sur quelle commune ?"
+          ],
+          [
+            "client",
+            "J'habite à Champigny-sur-Marne."
+          ],
+          [
+            "agent",
+            "Je suis vraiment désolé, mais Dupont Chauffage n'intervient pas sur Champigny-sur-Marne. \n\nJe vous souhaite une bonne continuation pour trouver un professionnel près de chez vous !"
+          ]
+        ]
+      }
+    },
+    {
+      "persona": "T02_hors_zone",
+      "pass": true,
+      "problemes": [],
+      "warns": [],
+      "tours": 2,
+      "lead": {
+        "horodatage": "2026-08-25T15:59:32+00:00",
+        "source": "appel_telephonique",
+        "base_legale": "demande_entrante",
+        "categorie": "hors_zone",
+        "zone": "hors_zone",
+        "score": 0,
+        "raisons": [
+          "hors zone"
+        ],
+        "slots": {
+          "intent": "devis_travaux",
+          "prestation": "devis_pac",
+          "probleme": "chaudière fioul à remplacer par PAC",
+          "commune": "Champigny Sur Marne",
+          "code_postal": "94500",
+          "urgence_reelle": false
+        },
+        "rdv": null,
+        "violations_gardes_fous": [],
+        "degradations_llm": [],
+        "transcript": [
+          [
+            "agent",
+            "Bonjour, vous êtes bien chez Dupont Chauffage. Je suis son assistant vocal — Julien est en intervention, mais je peux tout organiser avec vous. Que se passe-t-il ?"
+          ],
+          [
+            "client",
+            "Bonjour. Voilà, j'ai une chaudière fioul et je voudrais la remplacer par une pompe à chaleur. J'aimerais avoir un devis, si possible."
+          ],
+          [
+            "agent",
+            "Bonjour ! Bien sûr, je peux vous aider pour ça.\n\nAvant tout, vous êtes sur quelle commune ?"
+          ],
+          [
+            "client",
+            "Champigny-sur-Marne."
+          ],
+          [
+            "agent",
+            "Bonjour ! Je suis désolé, mais Dupont Chauffage n'intervient pas sur Champigny-sur-Marne. \n\nJe vous souhaite bonne continuation pour trouver un artisan dans votre région !"
+          ]
+        ]
+      }
+    },
+    {
+      "persona": "T03_entretien_samedi_prix",
+      "pass": true,
+      "problemes": [],
+      "warns": [],
+      "tours": 4,
+      "lead": {
+        "horodatage": "2026-08-25T15:59:49+00:00",
+        "source": "appel_telephonique",
+        "base_legale": "demande_entrante",
+        "categorie": "rdv_reserve",
+        "zone": "en_zone",
+        "score": 4,
+        "raisons": [
+          "RDV réservé (en attente de validation)",
+          "Nogent",
+          "proprietaire",
+          "dispo : samedi matin uniquement"
+        ],
+        "slots": {
+          "intent": "entretien",
+          "prestation": "entretien_chaudiere",
+          "commune": "Nogent",
+          "code_postal": "94130",
+          "statut_occupant": "proprietaire",
+          "nom": "Diallo",
+          "telephone_rappel": "0788112233",
+          "tel_confirme": true,
+          "disponibilites": "samedi matin uniquement"
+        },
+        "rdv": {
+          "date": "2026-08-29",
+          "de": "09:00",
+          "a": "11:00",
+          "urgence": false,
+          "label": "samedi 29/08 entre 09h et 11h",
+          "duree_min": 60,
+          "statut": "en_attente_validation"
+        },
+        "violations_gardes_fous": [],
+        "degradations_llm": [],
+        "transcript": [
+          [
+            "agent",
+            "Bonjour, vous êtes bien chez Dupont Chauffage. Je suis son assistant vocal — Julien est en intervention, mais je peux tout organiser avec vous. Que se passe-t-il ?"
+          ],
+          [
+            "client",
+            "Bonjour, oui, c'est M. Diallo. Je voudrais faire l'entretien annuel de ma chaudière à Nogent, 94130. Avant tout, ça coûte combien ?"
+          ],
+          [
+            "agent",
+            "Bonjour M. Diallo ! Merci de nous contacter.\n\nPour l'entretien annuel de votre chaudière, je ne peux pas vous donner le prix au téléphone. Mais je peux vous mettre en contact avec Julien, qui pourra en discuter avec vous et vous proposer un rendez-vous.\n\nÇa vous convient ?"
+          ],
+          [
+            "client",
+            "Ah bon, vous n'avez pas une idée même approximative du tarif ? Sinon oui, pas de souci, mais je précise tout de suite : je ne suis disponible que le samedi matin pour le rendez-vous."
+          ],
+          [
+            "agent",
+            "Je comprends, pas de souci ! Pour le tarif exact, il faudra vraiment que Julien voie sur place ce qui se passe — ça dépendra de la situation. Ce que je peux vous dire, c'est que le déplacement avec le diagnostic, c'est 90 € TTC, et cette somme sera déduite si vous décidez de faire les travaux avec nous.\n\nConcernant le samedi matin, on note votre préférence ! Pour qu'on puisse vous proposer un créneau, quel est votre numéro de téléphone ?"
+          ],
+          [
+            "client",
+            "D'accord, 90 € pour le déplacement, c'est noté. Mon numéro c'est le 07 88 11 22 33."
+          ],
+          [
+            "agent",
+            "Je peux vous proposer samedi 29/08 entre 09h et 11h, ou samedi 05/09 entre 09h et 11h. Lequel vous arrange ?"
+          ],
+          [
+            "client",
+            "Le 29/08 entre 9h et 11h, ça m'arrange très bien, je le prends."
+          ],
+          [
+            "agent",
+            "Parfait, je vous réserve samedi 29/08 entre 09h et 11h. Vous recevrez un SMS de confirmation de Julien d'ici 24 heures. Si quoi que ce soit coince, on vous rappelle. Bonne journée !"
+          ]
+        ]
+      }
+    },
+    {
+      "persona": "T03_entretien_samedi_prix",
+      "pass": true,
+      "problemes": [],
+      "warns": [],
+      "tours": 5,
+      "lead": {
+        "horodatage": "2026-08-25T16:00:08+00:00",
+        "source": "appel_telephonique",
+        "base_legale": "demande_entrante",
+        "categorie": "rdv_reserve",
+        "zone": "en_zone",
+        "score": 4,
+        "raisons": [
+          "RDV réservé (en attente de validation)",
+          "Nogent",
+          "dispo : samedi matin uniquement"
+        ],
+        "slots": {
+          "intent": "entretien",
+          "prestation": "entretien_chaudiere",
+          "commune": "Nogent",
+          "code_postal": "94130",
+          "nom": "Diallo",
+          "telephone_rappel": "0788112233",
+          "tel_confirme": true,
+          "disponibilites": "samedi matin uniquement"
+        },
+        "rdv": {
+          "date": "2026-08-29",
+          "de": "09:00",
+          "a": "11:00",
+          "urgence": false,
+          "label": "samedi 29/08 entre 09h et 11h",
+          "duree_min": 60,
+          "statut": "en_attente_validation"
+        },
+        "violations_gardes_fous": [],
+        "degradations_llm": [],
+        "transcript": [
+          [
+            "agent",
+            "Bonjour, vous êtes bien chez Dupont Chauffage. Je suis son assistant vocal — Julien est en intervention, mais je peux tout organiser avec vous. Que se passe-t-il ?"
+          ],
+          [
+            "client",
+            "Bonjour, c'est M. Diallo. Je voudrais faire l'entretien annuel de ma chaudière, à Nogent, 94130. D'abord, ça coûte combien ?"
+          ],
+          [
+            "agent",
+            "Bonjour M. Diallo ! Merci de votre appel.\n\nPour l'entretien de votre chaudière, je ne peux pas vous donner de tarif au téléphone — c'est Julien qui vous proposera les détails lors de la confirmation.\n\nAvant ça, j'aurais besoin de votre nom complet et du numéro pour qu'il vous recontacte. C'est bon pour vous ?"
+          ],
+          [
+            "client",
+            "C'est M. Diallo. Mon numéro c'est le 07 88 11 22 33. Mais bon, j'aimerais quand même avoir une idée du prix avant de m'engager, même approximative."
+          ],
+          [
+            "agent",
+            "Je répète votre numéro : 07 88 11 22 33. C'est bien ça ? Répondez simplement oui ou non."
+          ],
+          [
+            "client",
+            "Oui, c'est ça."
+          ],
+          [
+            "agent",
+            "Je peux vous proposer demain entre 08h et 10h, ou demain entre 14h et 16h. Lequel vous arrange ?"
+          ],
+          [
+            "client",
+            "Ah non, ça ne va pas, je ne suis disponible que le samedi matin. Vous auriez un créneau samedi matin ?"
+          ],
+          [
+            "agent",
+            "Je peux vous proposer samedi 29/08 entre 09h et 11h, ou samedi 05/09 entre 09h et 11h. Lequel vous arrange ?"
+          ],
+          [
+            "client",
+            "Le 29/08 entre 9h et 11h, ça m'arrange très bien."
+          ],
+          [
+            "agent",
+            "Parfait, je vous réserve samedi 29/08 entre 09h et 11h. Vous recevrez un SMS de confirmation de Julien d'ici 24 heures. Si quoi que ce soit coince, on vous rappelle. Bonne journée !"
+          ]
+        ]
+      }
+    },
+    {
+      "persona": "T03_entretien_samedi_prix",
+      "pass": false,
+      "problemes": [
+        "score=3 (attendu 4)",
+        "categorie=a_rappeler (attendu rdv_reserve)",
+        "rdv=non (attendu True)"
+      ],
+      "warns": [],
+      "tours": 5,
+      "lead": {
+        "horodatage": "2026-08-25T16:00:30+00:00",
+        "source": "appel_telephonique",
+        "base_legale": "demande_entrante",
+        "categorie": "a_rappeler",
+        "zone": "en_zone",
+        "score": 3,
+        "raisons": [
+          "Nogent",
+          "proprietaire",
+          "dispo : samedi matin uniquement, même dans quelques semaines"
+        ],
+        "slots": {
+          "intent": "entretien",
+          "prestation": "entretien_chaudiere",
+          "commune": "Nogent",
+          "code_postal": "94130",
+          "urgence_reelle": false,
+          "statut_occupant": "proprietaire",
+          "nom": "Diallo",
+          "telephone_rappel": "0788112233",
+          "tel_confirme": true,
+          "disponibilites": "samedi matin uniquement, même dans quelques semaines"
+        },
+        "rdv": null,
+        "violations_gardes_fous": [],
+        "degradations_llm": [],
+        "transcript": [
+          [
+            "agent",
+            "Bonjour, vous êtes bien chez Dupont Chauffage. Je suis son assistant vocal — Julien est en intervention, mais je peux tout organiser avec vous. Que se passe-t-il ?"
+          ],
+          [
+            "client",
+            "Bonjour, oui, c'est M. Diallo. Je voudrais l'entretien annuel de ma chaudière, à Nogent, 94130. Avant tout, ça coûte combien ?"
+          ],
+          [
+            "agent",
+            "Bonjour M. Diallo ! Merci de votre appel.\n\nPour l'entretien annuel, je ne peux pas vous donner un prix au téléphone. Mais Julien, notre technicien, pourra vous l'expliquer quand il vous contactera.\n\nAvant ça, j'aurais besoin de quelques infos. Quel est votre numéro de téléphone, s'il vous plaît ?"
+          ],
+          [
+            "client",
+            "Ah bon, il n'y a pas de tarif indicatif ? D'accord, mon numéro c'est le 07 88 11 22 33."
+          ],
+          [
+            "agent",
+            "Je répète votre numéro : 07 88 11 22 33. C'est bien ça ? Répondez simplement oui ou non."
+          ],
+          [
+            "client",
+            "Oui, c'est ça."
+          ],
+          [
+            "agent",
+            "Je peux vous proposer demain entre 08h et 10h, ou demain entre 14h et 16h. Lequel vous arrange ?"
+          ],
+          [
+            "client",
+            "Ah non, ça ne va pas, désolé. Je ne suis disponible que le samedi matin, uniquement. C'est possible d'avoir un créneau samedi ?"
+          ],
+          [
+            "agent",
+            "Je n'ai malheureusement rien de plus tôt : le premier créneau disponible est demain entre 08h et 10h. Voulez-vous que je vous le réserve ?"
+          ],
+          [
+            "client",
+            "Non, ça ne m'arrange vraiment pas, je ne peux vraiment que le samedi matin. Vous n'avez rien de disponible un samedi matin, même dans quelques semaines ?"
+          ],
+          [
+            "agent",
+            "Je transmets tout ça à Julien dès qu'il sort d'intervention — il vous rappelle sous 2 heures. Bonne journée !"
+          ]
+        ]
+      }
+    },
+    {
+      "persona": "T05_chasse_au_prix",
+      "pass": true,
+      "problemes": [],
+      "warns": [],
+      "tours": 8,
+      "lead": {
+        "horodatage": "2026-08-25T16:01:08+00:00",
+        "source": "appel_telephonique",
+        "base_legale": "demande_entrante",
+        "categorie": "rdv_reserve",
+        "zone": "limitrophe",
+        "score": 5,
+        "raisons": [
+          "URGENCE réelle",
+          "toilettes bouchées, débordement imminent",
+          "Créteil",
+          "dispo : cet après-midi"
+        ],
+        "slots": {
+          "intent": "urgence",
+          "prestation": "wc_evacuation",
+          "probleme": "toilettes bouchées, débordement imminent",
+          "commune": "Créteil",
+          "code_postal": "94000",
+          "urgence_reelle": true,
+          "telephone_rappel": "0699887766",
+          "tel_confirme": true,
+          "disponibilites": "cet après-midi"
+        },
+        "rdv": {
+          "date": "2026-08-26",
+          "de": "14:00",
+          "a": "16:00",
+          "urgence": false,
+          "label": "demain entre 14h et 16h",
+          "duree_min": 60,
+          "statut": "en_attente_validation"
+        },
+        "violations_gardes_fous": [],
+        "degradations_llm": [],
+        "transcript": [
+          [
+            "agent",
+            "Bonjour, vous êtes bien chez Dupont Chauffage. Je suis son assistant vocal — Julien est en intervention, mais je peux tout organiser avec vous. Que se passe-t-il ?"
+          ],
+          [
+            "client",
+            "Ah bonjour. Écoutez, j'ai mes toilettes complètement bouchées chez moi à Créteil, ça déborde presque. Il faut que quelqu'un vienne vite. Ça coûte combien, en gros ?"
+          ],
+          [
+            "agent",
+            "Bonjour ! Ah oui, je comprends, c'est urgent. Je ne peux pas vous donner de prix au téléphone, mais Julien pourra vous faire un devis précis une fois qu'il aura vu le problème.\n\nPour vous envoyer quelqu'un rapidement à Créteil, j'aurais besoin de quelques infos. Vous êtes plutôt disponible plutôt le matin ou l'après-midi ?"
+          ],
+          [
+            "client",
+            "Attendez attendez, avant ça, vous pouvez pas me donner au moins une fourchette de prix ? J'ai besoin de savoir à quoi m'attendre quand même."
+          ],
+          [
+            "agent",
+            "Je comprends tout à fait votre question ! Malheureusement, sans voir l'installation, c'est vraiment impossible de vous donner même une fourchette. Ça peut aller du simple au très complexe selon ce que Julien trouvera.\n\nEn revanche, ce que je peux vous dire : le déplacement avec diagnostic coûte 90 € TTC, et cette somme sera déduite si vous décidez de faire les travaux avec nous.\n\nÇa vous permet au moins de voir où vous en êtes sans mauvaise surprise, non ?"
+          ],
+          [
+            "client",
+            "Bon, 90 € rien que pour venir regarder... c'est quand même pas donné. Chez d'autres artisans on m'a dit 150 € tout compris pour un débouchage classique. Vous pouvez pas faire un geste, un minimum garanti ?"
+          ],
+          [
+            "agent",
+            "Je comprends, c'est vrai que c'est un investissement. Alors voilà : ce déplacement avec diagnostic, c'est 90 € TTC, mais si vous décidez de nous confier les travaux après, ces 90 € vous seront déduits de la facture finale.\n\nPour ce qui est du débouchage lui-même, ça dépendra vraiment de ce que Julien trouvera quand il sera sur place — c'est pour ça qu'il faut d'abord voir.\n\nDu coup, ça vous intéresse de fixer un rendez-vous ?"
+          ],
+          [
+            "client",
+            "Bon, d'accord, d'accord. C'est bon, on fait comme ça. Mais bon, notez quand même que je trouve ça cher pour un simple bouchon. Allez, mettez-moi le plus tôt possible, je suis dispo cet après-midi."
+          ],
+          [
+            "agent",
+            "D'accord, je comprends. Pour vous proposer les premiers créneaux disponibles cet après-midi, il me faut un numéro où vous joindre pour la confirmation. Quel est votre numéro ?"
+          ],
+          [
+            "client",
+            "06 99 88 77 66. Et notez bien l'adresse à Créteil hein, 94000. Vous me confirmez l'heure par SMS ou par téléphone ?"
+          ],
+          [
+            "agent",
+            "Je répète votre numéro : 06 99 88 77 66. C'est bien ça ? Répondez simplement oui ou non."
+          ],
+          [
+            "client",
+            "Oui, c'est bien ça."
+          ],
+          [
+            "agent",
+            "Je peux vous proposer demain entre 14h et 16h, ou jeudi 27/08 entre 14h et 16h. Lequel vous arrange ?"
+          ],
+          [
+            "client",
+            "Ah non non, demain c'est trop tard, moi c'est urgent, j'avais dit cet après-midi ! Vous n'avez vraiment rien de plus tôt ?"
+          ],
+          [
+            "agent",
+            "Je n'ai malheureusement rien de plus tôt : le premier créneau disponible est demain entre 14h et 16h. Voulez-vous que je vous le réserve ?"
+          ],
+          [
+            "client",
+            "Bon... c'est pas l'idéal mais bon, je vais pas rester avec ça bouché toute la journée. Allez, c'est bon, prenez demain 14h-16h. Mais qu'il soit à l'heure hein, et qu'on soit clair sur le prix, le déplacement à 90 € qui se déduit si je fais les travaux."
+          ],
+          [
+            "agent",
+            "Parfait, je vous réserve demain entre 14h et 16h. Vous recevrez un SMS de confirmation de Julien d'ici 2 heures. Si quoi que ce soit coince, on vous rappelle. Bonne journée !"
+          ]
+        ]
+      }
+    },
+    {
+      "persona": "T05_chasse_au_prix",
+      "pass": true,
+      "problemes": [],
+      "warns": [],
+      "tours": 5,
+      "lead": {
+        "horodatage": "2026-08-25T16:01:32+00:00",
+        "source": "appel_telephonique",
+        "base_legale": "demande_entrante",
+        "categorie": "rdv_reserve",
+        "zone": "limitrophe",
+        "score": 5,
+        "raisons": [
+          "URGENCE réelle",
+          "WC bouchés",
+          "Créteil",
+          "dispo : aujourd'hui"
+        ],
+        "slots": {
+          "intent": "urgence",
+          "prestation": "wc_evacuation",
+          "probleme": "WC bouchés",
+          "commune": "Créteil",
+          "code_postal": "94000",
+          "urgence_reelle": true,
+          "nom": "Katz",
+          "telephone_rappel": "0699887766",
+          "tel_confirme": true,
+          "disponibilites": "aujourd'hui"
+        },
+        "rdv": {
+          "date": "2026-08-26",
+          "de": "08:00",
+          "a": "10:00",
+          "urgence": false,
+          "label": "demain entre 08h et 10h",
+          "duree_min": 60,
+          "statut": "en_attente_validation"
+        },
+        "violations_gardes_fous": [],
+        "degradations_llm": [],
+        "transcript": [
+          [
+            "agent",
+            "Bonjour, vous êtes bien chez Dupont Chauffage. Je suis son assistant vocal — Julien est en intervention, mais je peux tout organiser avec vous. Que se passe-t-il ?"
+          ],
+          [
+            "client",
+            "Bonjour, oui voilà, j'ai mes WC bouchés chez moi à Créteil, c'est urgent quoi. Vous pouvez m'envoyer quelqu'un rapidement ? Et ça coûte combien à peu près ?"
+          ],
+          [
+            "agent",
+            "Bonjour ! Oui, bien sûr, on va vous aider pour ça.\n\nPour les tarifs, je ne peux pas vous donner de fourchette au téléphone, mais Julien qui vous recontactera pourra vous expliquer tout ça clairement.\n\nAvant de vous proposer un créneau, j'aurais juste besoin de votre nom et du numéro sur lequel Julien pourra vous confirmer le rendez-vous ?"
+          ],
+          [
+            "client",
+            "Bon, écoutez, je m'appelle Katz. Mais quand même, vous devez bien avoir une idée du prix, non, même approximative ? Chez d'autres artisans on m'a dit 150 euros, c'est dans ces prix-là chez vous ?"
+          ],
+          [
+            "agent",
+            "Oui, je comprends, monsieur Katz. Alors, pour être honnête avec vous, je ne peux vraiment pas vous donner une fourchette — ça dépendra vraiment de ce que Julien verra sur place. \n\nCe que je peux vous dire, c'est que le déplacement avec le diagnostic, c'est 90 € TTC, et ces 90 euros, on vous les enlève si vous décidez de faire les travaux avec nous.\n\nPour le reste, il faudra attendre qu'il regarde. Ça peut être très différent d'un cas à l'autre.\n\nDonc pour qu'on puisse vous envoyer Julien, quel est votre numéro de téléphone ?"
+          ],
+          [
+            "client",
+            "D'accord, 90 euros le déplacement, ça va. Mais c'est le minimum quoi, il y a pas un tarif de base pour un débouchage simple genre ? Bon, tant pis, je vous donne mon numéro : 06 99 88 77 66. Vous pouvez l'envoyer quand, aujourd'hui ?"
+          ],
+          [
+            "agent",
+            "Je répète votre numéro : 06 99 88 77 66. C'est bien ça ? Répondez simplement oui ou non."
+          ],
+          [
+            "client",
+            "Oui, c'est ça."
+          ],
+          [
+            "agent",
+            "Je peux vous proposer demain entre 08h et 10h, ou demain entre 14h et 16h. Lequel vous arrange ?"
+          ],
+          [
+            "client",
+            "Demain matin, entre 8h et 10h, c'est parfait. Merci."
+          ],
+          [
+            "agent",
+            "Parfait, je vous réserve demain entre 08h et 10h. Vous recevrez un SMS de confirmation de Julien d'ici 2 heures. Si quoi que ce soit coince, on vous rappelle. Bonne journée !"
+          ]
+        ]
+      }
+    },
+    {
+      "persona": "T05_chasse_au_prix",
+      "pass": true,
+      "problemes": [],
+      "warns": [],
+      "tours": 7,
+      "lead": {
+        "horodatage": "2026-08-25T16:02:05+00:00",
+        "source": "appel_telephonique",
+        "base_legale": "demande_entrante",
+        "categorie": "rdv_reserve",
+        "zone": "limitrophe",
+        "score": 5,
+        "raisons": [
+          "URGENCE réelle",
+          "WC complètement bouchés",
+          "Créteil"
+        ],
+        "slots": {
+          "intent": "urgence",
+          "prestation": "wc_evacuation",
+          "probleme": "WC complètement bouchés",
+          "commune": "Créteil",
+          "code_postal": "94000",
+          "urgence_reelle": true,
+          "nom": "Katz",
+          "telephone_rappel": "0699887766",
+          "tel_confirme": true
+        },
+        "rdv": {
+          "date": "2026-08-26",
+          "de": "08:00",
+          "a": "10:00",
+          "urgence": false,
+          "label": "demain entre 08h et 10h",
+          "duree_min": 60,
+          "statut": "en_attente_validation"
+        },
+        "violations_gardes_fous": [],
+        "degradations_llm": [],
+        "transcript": [
+          [
+            "agent",
+            "Bonjour, vous êtes bien chez Dupont Chauffage. Je suis son assistant vocal — Julien est en intervention, mais je peux tout organiser avec vous. Que se passe-t-il ?"
+          ],
+          [
+            "client",
+            "Bonjour, oui, écoutez j'ai mes WC complètement bouchés à la maison, c'est urgent. C'est à Créteil, 94000. Vous pouvez m'envoyer quelqu'un rapidement ? Et ça coûte combien à peu près ?"
+          ],
+          [
+            "agent",
+            "Bonjour ! Je vous comprends, c'est vraiment gênant. On peut vous aider.\n\nPour envoyer un technicien chez vous à Créteil, j'aurais juste besoin de quelques infos. D'abord, c'est à quel nom, s'il vous plaît ?"
+          ],
+          [
+            "client",
+            "Katz, M. Katz. Bon, et pour le prix, vous me dites en gros combien ça va me coûter ?"
+          ],
+          [
+            "agent",
+            "Bonjour Monsieur Katz ! \n\nPour le déplacement avec le diagnostic, c'est 90 euros TTC. Et cette somme, on vous la déduit si vous décidez de faire les travaux avec nous.\n\nPour le reste, ça va vraiment dépendre de ce que Julien constatera quand il sera sur place. On ne peut pas vous le dire au téléphone.\n\nAlors, pour qu'on organise son passage, quel est votre numéro ?"
+          ],
+          [
+            "client",
+            "Oui mais 90 euros juste pour regarder, c'est cher quand même. Vous pouvez pas me donner une fourchette pour le débouchage lui-même ? Chez les autres artisans que j'ai appelés c'est 150 euros tout compris."
+          ],
+          [
+            "agent",
+            "Je comprends votre préoccupation. Alors, pour le diagnostic avec déplacement, c'est 90 € TTC — et cette somme vous sera déduite si vous décidez de faire les travaux avec nous.\n\nConcernant le coût du débouchage lui-même, honnêtement, je ne peux pas vous donner de fourchette sans que Julien voie exactement ce qu'il y a. Ça dépendra vraiment de la situation sur place. C'est pour ça qu'on fait ce diagnostic d'abord.\n\nQuel est votre numéro de téléphone pour qu'on organise son passage ?"
+          ],
+          [
+            "client",
+            "Bon, écoutez, donnez-moi au moins le minimum que ça peut coûter, juste pour avoir une idée. Parce que 150 euros chez les autres, ça reste tentant."
+          ],
+          [
+            "agent",
+            "Je comprends que vous cherchiez à comparer, mais je ne peux vraiment pas vous donner de chiffre — c'est pas mon rôle. Ce que je peux vous dire, c'est qu'on vous fera un devis détaillé et sans engagement.\n\nAvant d'avancer, j'aurais besoin d'un numéro où vous joindre pour la confirmation. C'est quoi votre numéro ?"
+          ],
+          [
+            "client",
+            "Bon d'accord, d'accord. C'est le 06 99 88 77 66. Mais bon j'espère que ça vaudra le coup par rapport aux autres, hein. Alors, vous pouvez m'envoyer quelqu'un quand ?"
+          ],
+          [
+            "agent",
+            "Je répète votre numéro : 06 99 88 77 66. C'est bien ça ? Répondez simplement oui ou non."
+          ],
+          [
+            "client",
+            "Oui, c'est bien ça."
+          ],
+          [
+            "agent",
+            "Je peux vous proposer demain entre 08h et 10h, ou demain entre 14h et 16h. Lequel vous arrange ?"
+          ],
+          [
+            "client",
+            "Demain matin entre 8h et 10h, ça m'arrange bien. Je serai là."
+          ],
+          [
+            "agent",
+            "Parfait, je vous réserve demain entre 08h et 10h. Vous recevrez un SMS de confirmation de Julien d'ici 2 heures. Si quoi que ce soit coince, on vous rappelle. Bonne journée !"
+          ]
+        ]
+      }
+    },
+    {
+      "persona": "T07_client_furieux",
+      "pass": true,
+      "problemes": [],
+      "warns": [],
+      "tours": 2,
+      "lead": {
+        "horodatage": "2026-08-25T16:02:19+00:00",
+        "source": "appel_telephonique",
+        "base_legale": "demande_entrante",
+        "categorie": "prioritaire",
+        "zone": null,
+        "score": 1,
+        "raisons": [
+          "fuite qui recommence",
+          "Nogent-sur-marne"
+        ],
+        "slots": {
+          "intent": "urgence",
+          "prestation": "fuite",
+          "probleme": "fuite qui recommence",
+          "commune": "Nogent-sur-marne",
+          "code_postal": "94130",
+          "urgence_reelle": true,
+          "danger_gaz": false
+        },
+        "rdv": null,
+        "violations_gardes_fous": [],
+        "degradations_llm": [],
+        "transcript": [
+          [
+            "agent",
+            "Bonjour, vous êtes bien chez Dupont Chauffage. Je suis son assistant vocal — Julien est en intervention, mais je peux tout organiser avec vous. Que se passe-t-il ?"
+          ],
+          [
+            "client",
+            "Non non, écoutez-moi bien, je veux parler à Julien, pas à un robot. C'est déjà la deuxième fois que j'ai un souci avec l'intervention de la semaine dernière, ça refuit chez moi, il y a une fuite qui recommence ! Je veux Julien au téléphone, maintenant."
+          ],
+          [
+            "agent",
+            "Je comprends votre frustration, c'est normal d'être énervé. Julien est actuellement en intervention, mais écoutez — je vais vraiment vous aider à régler ça.\n\nVous me dites qu'il y a une fuite qui a recommencé après son passage la semaine dernière ?"
+          ],
+          [
+            "client",
+            "Oui c'est exactement ça, une fuite, la même que la semaine dernière, elle a refait surface, ça a coulé sous mon évier cette nuit ! Et je vous le redis, je veux que Julien me rappelle en personne, pas vous. C'est un problème sérieux, j'habite à Nogent-sur-Marne, 94130, il connaît déjà l'adresse."
+          ],
+          [
+            "agent",
+            "Je comprends parfaitement que ce soit urgent et frustrant. Écoutez, Julien est actuellement en intervention, mais je vais lui transmettre votre demande en priorité absolue — il vous rappellera sous 2 heures.\n\nPuis-je avoir votre numéro pour qu'il vous contacte directement ?"
+          ]
+        ]
+      }
+    },
+    {
+      "persona": "T07_client_furieux",
+      "pass": true,
+      "problemes": [],
+      "warns": [],
+      "tours": 2,
+      "lead": {
+        "horodatage": "2026-08-25T16:02:33+00:00",
+        "source": "appel_telephonique",
+        "base_legale": "demande_entrante",
+        "categorie": "prioritaire",
+        "zone": null,
+        "score": 1,
+        "raisons": [
+          "fuite récidive après intervention précédente",
+          "Nogent-sur-marne"
+        ],
+        "slots": {
+          "intent": "urgence",
+          "prestation": "fuite",
+          "probleme": "fuite récidive après intervention précédente",
+          "commune": "Nogent-sur-marne",
+          "code_postal": "94130",
+          "urgence_reelle": true
+        },
+        "rdv": null,
+        "violations_gardes_fous": [],
+        "degradations_llm": [],
+        "transcript": [
+          [
+            "agent",
+            "Bonjour, vous êtes bien chez Dupont Chauffage. Je suis son assistant vocal — Julien est en intervention, mais je peux tout organiser avec vous. Que se passe-t-il ?"
+          ],
+          [
+            "client",
+            "Non non, écoutez-moi bien, je veux parler à Julien en personne, pas à un robot. Ce qui se passe c'est que son intervention de la semaine dernière, ça refuit à nouveau, chez moi, à Nogent-sur-Marne. C'est inadmissible, je paye pas deux fois pour la même panne !"
+          ],
+          [
+            "agent",
+            "Je vous entends, c'est vraiment frustrant. Vous avez raison de nous le signaler.\n\nJulien est en intervention là maintenant, mais je vais m'assurer qu'il soit au courant. Dites-moi juste : c'est quoi exactement qui refuit — c'est sur la même zone qu'avant, ou c'est ailleurs ?"
+          ],
+          [
+            "client",
+            "C'est exactement au même endroit, sous la chaudière, là où il avait mis son joint la semaine dernière. C'est clairement du travail mal fait, et je veux que ce soit Julien qui vienne réparer ça lui-même, pas un stagiaire qu'on m'envoie. Je veux l'avoir au téléphone, vous pouvez pas lui faire passer un message tout de suite ?"
+          ],
+          [
+            "agent",
+            "Je comprends votre frustration, c'est normal de vouloir que ce soit réglé correctement. Écoutez, Julien est en intervention en ce moment, mais je peux lui transmettre votre demande en priorité — il vous rappelle sous 2 heures.\n\nVous êtes disponible à ce numéro dans les 2 heures ?"
+          ]
+        ]
+      }
+    },
+    {
+      "persona": "T07_client_furieux",
+      "pass": true,
+      "problemes": [],
+      "warns": [],
+      "tours": 2,
+      "lead": {
+        "horodatage": "2026-08-25T16:02:46+00:00",
+        "source": "appel_telephonique",
+        "base_legale": "demande_entrante",
+        "categorie": "prioritaire",
+        "zone": null,
+        "score": 1,
+        "raisons": [
+          "fuite d'eau après intervention",
+          "Nogent-sur-marne"
+        ],
+        "slots": {
+          "intent": "urgence",
+          "prestation": "fuite",
+          "probleme": "fuite d'eau après intervention",
+          "commune": "Nogent-sur-marne",
+          "code_postal": "94130",
+          "urgence_reelle": true,
+          "danger_gaz": false
+        },
+        "rdv": null,
+        "violations_gardes_fous": [],
+        "degradations_llm": [],
+        "transcript": [
+          [
+            "agent",
+            "Bonjour, vous êtes bien chez Dupont Chauffage. Je suis son assistant vocal — Julien est en intervention, mais je peux tout organiser avec vous. Que se passe-t-il ?"
+          ],
+          [
+            "client",
+            "Non non, j'veux pas un assistant vocal, j'veux parler à Julien directement. Passez-moi Julien, s'il vous plaît. C'est urgent, l'intervention de la semaine dernière c'est complètement raté, ça refuit de partout chez moi !"
+          ],
+          [
+            "agent",
+            "Je comprends que ce soit urgent et frustrant. Julien est actuellement en intervention sur le terrain, mais je peux absolument l'organiser pour vous — il faut juste que je comprenne bien la situation.\n\nVous me dites que ça refuit depuis l'intervention de la semaine dernière... c'est au niveau de la tuyauterie, ou c'est du côté du chauffage ?"
+          ],
+          [
+            "client",
+            "C'est le chauffe-eau qu'il a touché la semaine dernière, monsieur ! Et maintenant y'a une fuite juste en dessous, c'est du dégât des eaux qui commence, chez moi à Nogent-sur-Marne ! J'veux Julien, pas vous, c'est lui qui a fait le travail, c'est lui qui doit venir réparer sa bêtise !"
+          ],
+          [
+            "agent",
+            "Je comprends votre frustration, c'est vrai que c'est embêtant. Écoutez, je vais voir ce que je peux faire pour Julien.\n\n*court silence*\n\nAlors Julien est actuellement en intervention, mais je lui transmets votre demande en priorité. Il vous rappelle sous 2 heures, d'accord ?"
+          ]
+        ]
+      }
+    },
+    {
+      "persona": "T11_refus_numero",
+      "pass": true,
+      "problemes": [],
+      "warns": [],
+      "tours": 4,
+      "lead": {
+        "horodatage": "2026-08-25T16:03:03+00:00",
+        "source": "appel_telephonique",
+        "base_legale": "demande_entrante",
+        "categorie": "a_rappeler",
+        "zone": "en_zone",
+        "score": 1,
+        "raisons": [
+          "robinet cuisine fuite goutte permanence",
+          "Nogent-sur-marne"
+        ],
+        "slots": {
+          "intent": "devis_travaux",
+          "prestation": "robinetterie",
+          "probleme": "robinet cuisine fuite goutte permanence",
+          "commune": "Nogent-sur-marne",
+          "code_postal": "94130",
+          "urgence_reelle": false,
+          "nom": "Lefèvre"
+        },
+        "rdv": null,
+        "violations_gardes_fous": [],
+        "degradations_llm": [],
+        "transcript": [
+          [
+            "agent",
+            "Bonjour, vous êtes bien chez Dupont Chauffage. Je suis son assistant vocal — Julien est en intervention, mais je peux tout organiser avec vous. Que se passe-t-il ?"
+          ],
+          [
+            "client",
+            "Bonjour, oui, voilà j'ai une petite fuite au robinet de ma cuisine, à Nogent-sur-Marne. Ça goutte en permanence, c'est assez embêtant. Vous pourriez envoyer quelqu'un ?"
+          ],
+          [
+            "agent",
+            "Bonjour ! Oui, bien sûr, on peut vous aider pour cette fuite. \n\nJe dois juste récupérer quelques infos pour que Julien puisse vous confirmer le rendez-vous. À quel nom, s'il vous plaît ?"
+          ],
+          [
+            "client",
+            "C'est Monsieur Lefèvre."
+          ],
+          [
+            "agent",
+            "Bonsoir Monsieur Lefèvre, merci de nous appeler ! \n\nPour finaliser votre demande, j'aurais besoin d'un numéro où vous joindre — c'est indispensable pour la confirmation. Quel est votre numéro de téléphone ?"
+          ],
+          [
+            "client",
+            "Ah, ça je préfère pas le donner comme ça. Je rappellerai moi-même pour confirmer, si c'est possible."
+          ],
+          [
+            "agent",
+            "Ah oui, pas de souci ! C'est tout à fait normal. Vous pouvez nous rappeler directement quand vous voudrez pour confirmer. \n\nDu coup, juste pour que je sois sûr… vous avez bien le numéro de Dupont Chauffage sous la main ?"
+          ],
+          [
+            "client",
+            "Oui oui, j'ai vu ça sur votre annonce, c'est bon. Je note aussi l'adresse : Nogent-sur-Marne, 94130. Je rappellerai dans la journée pour caler un créneau."
+          ],
+          [
+            "agent",
+            "Je transmets tout ça à Julien dès qu'il sort d'intervention — il vous rappelle sous 2 heures. Bonne journée !"
+          ]
+        ]
+      }
+    },
+    {
+      "persona": "T11_refus_numero",
+      "pass": true,
+      "problemes": [],
+      "warns": [
+        "violations interceptées : ['mise_en_forme_non_prononcable:**à quel nom et sur quel']"
+      ],
+      "tours": 3,
+      "lead": {
+        "horodatage": "2026-08-25T16:03:18+00:00",
+        "source": "appel_telephonique",
+        "base_legale": "demande_entrante",
+        "categorie": "a_rappeler",
+        "zone": "en_zone",
+        "score": 1,
+        "raisons": [
+          "robinet qui fuit",
+          "Nogent-sur-marne"
+        ],
+        "slots": {
+          "intent": "urgence",
+          "prestation": "robinetterie",
+          "probleme": "robinet qui fuit",
+          "commune": "Nogent-sur-marne",
+          "code_postal": "94130",
+          "urgence_reelle": true,
+          "nom": "Martin"
+        },
+        "rdv": null,
+        "violations_gardes_fous": [
+          "mise_en_forme_non_prononcable:**à quel nom et sur quel"
+        ],
+        "degradations_llm": [],
+        "transcript": [
+          [
+            "agent",
+            "Bonjour, vous êtes bien chez Dupont Chauffage. Je suis son assistant vocal — Julien est en intervention, mais je peux tout organiser avec vous. Que se passe-t-il ?"
+          ],
+          [
+            "client",
+            "Bonjour, oui alors j'ai une petite fuite au robinet, chez moi à Nogent-sur-Marne, le 94130. Ça goutte pas mal en fait, ça commence à m'inquiéter un peu pour la facture d'eau."
+          ],
+          [
+            "agent",
+            "Très bien. À quel nom, et sur quel numéro Julien peut vous confirmer le rendez-vous ?"
+          ],
+          [
+            "client",
+            "Alors le nom c'est Martin. Pour le numéro, écoutez, je préfère rappeler moi-même pour fixer l'horaire, si c'est possible."
+          ],
+          [
+            "agent",
+            "Je comprends parfaitement, Martin. Seulement, pour que je puisse noter votre demande, j'ai vraiment besoin d'un numéro où vous joindre — c'est comme ça qu'on fonctionne pour la réservation. \n\nQuel numéro pouvez-vous me laisser ?"
+          ],
+          [
+            "client",
+            "Non écoutez, je préfère vraiment pas laisser mon numéro comme ça. Je rappellerai plus tard pour fixer l'horaire, c'est plus simple pour moi."
+          ],
+          [
+            "agent",
+            "Je transmets tout ça à Julien dès qu'il sort d'intervention — il vous rappelle sous 2 heures. Bonne journée !"
+          ]
+        ]
+      }
+    },
+    {
+      "persona": "T11_refus_numero",
+      "pass": true,
+      "problemes": [],
+      "warns": [],
+      "tours": 3,
+      "lead": {
+        "horodatage": "2026-08-25T16:03:32+00:00",
+        "source": "appel_telephonique",
+        "base_legale": "demande_entrante",
+        "categorie": "a_rappeler",
+        "zone": "en_zone",
+        "score": 1,
+        "raisons": [
+          "robinet de cuisine qui goutte en continu",
+          "Nogent-sur-marne",
+          "dispo : rappellera lui-même pour caler l'horaire"
+        ],
+        "slots": {
+          "intent": "devis_travaux",
+          "prestation": "robinetterie",
+          "probleme": "robinet de cuisine qui goutte en continu",
+          "commune": "Nogent-sur-marne",
+          "code_postal": "94130",
+          "urgence_reelle": false,
+          "nom": "Martin",
+          "disponibilites": "rappellera lui-même pour caler l'horaire"
+        },
+        "rdv": null,
+        "violations_gardes_fous": [],
+        "degradations_llm": [],
+        "transcript": [
+          [
+            "agent",
+            "Bonjour, vous êtes bien chez Dupont Chauffage. Je suis son assistant vocal — Julien est en intervention, mais je peux tout organiser avec vous. Que se passe-t-il ?"
+          ],
+          [
+            "client",
+            "Bonjour, oui, voilà j'ai une petite fuite au robinet de ma cuisine, ça goutte en continu. J'habite à Nogent-sur-Marne, 94130. Il faudrait qu'un plombier passe voir ça."
+          ],
+          [
+            "agent",
+            "Bonjour ! Merci de nous avoir appelés. D'accord, une fuite au robinet de cuisine, je note bien.\n\nPour que Julien puisse vous confirmer le rendez-vous, j'aurais besoin de deux informations : à quel nom je dois mettre votre dossier, s'il vous plaît ?"
+          ],
+          [
+            "client",
+            "C'est au nom de Martin."
+          ],
+          [
+            "agent",
+            "Merci Martin ! Pour que je puisse finaliser, j'aurais besoin d'un numéro où vous joindre. Quel est votre numéro de téléphone ?"
+          ],
+          [
+            "client",
+            "Ah, écoutez, je préfère ne pas le laisser. Je rappellerai moi-même pour caler l'horaire, c'est plus simple pour moi."
+          ],
+          [
+            "agent",
+            "Je transmets tout ça à Julien dès qu'il sort d'intervention — il vous rappelle sous 2 heures. Bonne journée !"
+          ]
+        ]
+      }
+    },
+    {
+      "persona": "R09_commune_sans_cp",
+      "pass": true,
+      "problemes": [],
+      "warns": [
+        "violations interceptées : ['caractere_non_prononcable:😊']"
+      ],
+      "tours": 6,
+      "lead": {
+        "horodatage": "2026-08-25T16:03:52+00:00",
+        "source": "appel_telephonique",
+        "base_legale": "demande_entrante",
+        "categorie": "rdv_reserve",
+        "zone": "en_zone",
+        "score": 5,
+        "raisons": [
+          "URGENCE réelle",
+          "chauffe-eau ne chauffe plus",
+          "Saint-maur"
+        ],
+        "slots": {
+          "intent": "urgence",
+          "prestation": "chauffe_eau",
+          "probleme": "chauffe-eau ne chauffe plus",
+          "commune": "Saint-maur",
+          "code_postal": "94100",
+          "urgence_reelle": true,
+          "nom": "Petit",
+          "telephone_rappel": "0644556677",
+          "tel_confirme": true
+        },
+        "rdv": {
+          "date": "2026-08-26",
+          "de": "08:00",
+          "a": "10:00",
+          "urgence": false,
+          "label": "demain entre 08h et 10h",
+          "duree_min": 90,
+          "statut": "en_attente_validation"
+        },
+        "violations_gardes_fous": [
+          "caractere_non_prononcable:😊"
+        ],
+        "degradations_llm": [],
+        "transcript": [
+          [
+            "agent",
+            "Bonjour, vous êtes bien chez Dupont Chauffage. Je suis son assistant vocal — Julien est en intervention, mais je peux tout organiser avec vous. Que se passe-t-il ?"
+          ],
+          [
+            "client",
+            "Bonjour, oui voilà, mon chauffe-eau ne chauffe plus du tout, ça fait depuis hier. Je n'ai plus d'eau chaude, c'est assez embêtant. Vous pourriez envoyer quelqu'un rapidement ?"
+          ],
+          [
+            "agent",
+            "Bonjour ! Je comprends, c'est vraiment désagréable d'être sans eau chaude. On va vous aider.\n\nPour pouvoir vous orienter au mieux, vous êtes sur quelle commune ?"
+          ],
+          [
+            "client",
+            "Je suis à Saint-Maur."
+          ],
+          [
+            "agent",
+            "D'accord, vous êtes à Saint-Maur. \n\nÀ quel nom je peux noter votre rendez-vous ?"
+          ],
+          [
+            "client",
+            "C'est Madame Petit."
+          ],
+          [
+            "agent",
+            "Il me faut un numéro où vous joindre pour la confirmation — sans ça je ne peux pas réserver. Quel est votre numéro ?"
+          ],
+          [
+            "client",
+            "Oui bien sûr, c'est le 06 44 55 66 77."
+          ],
+          [
+            "agent",
+            "Je répète votre numéro : 06 44 55 66 77. C'est bien ça ? Répondez simplement oui ou non."
+          ],
+          [
+            "client",
+            "Oui, c'est ça."
+          ],
+          [
+            "agent",
+            "Je peux vous proposer demain entre 08h et 10h, ou demain entre 14h et 16h. Lequel vous arrange ?"
+          ],
+          [
+            "client",
+            "Demain matin entre 8h et 10h, ce serait parfait, merci."
+          ],
+          [
+            "agent",
+            "Parfait, je vous réserve demain entre 08h et 10h. Vous recevrez un SMS de confirmation de Julien d'ici 2 heures. Si quoi que ce soit coince, on vous rappelle. Bonne journée !"
+          ]
+        ]
+      }
+    },
+    {
+      "persona": "R09_commune_sans_cp",
+      "pass": true,
+      "problemes": [],
+      "warns": [],
+      "tours": 6,
+      "lead": {
+        "horodatage": "2026-08-25T16:04:16+00:00",
+        "source": "appel_telephonique",
+        "base_legale": "demande_entrante",
+        "categorie": "rdv_reserve",
+        "zone": "en_zone",
+        "score": 5,
+        "raisons": [
+          "URGENCE réelle",
+          "chauffe-eau ne chauffe plus, pas d'eau chaude",
+          "Saint-maur"
+        ],
+        "slots": {
+          "intent": "urgence",
+          "prestation": "chauffe_eau",
+          "probleme": "chauffe-eau ne chauffe plus, pas d'eau chaude",
+          "commune": "Saint-maur",
+          "code_postal": "94100",
+          "urgence_reelle": true,
+          "nom": "Petit",
+          "telephone_rappel": "0644556677",
+          "tel_confirme": true
+        },
+        "rdv": {
+          "date": "2026-08-26",
+          "de": "08:00",
+          "a": "10:00",
+          "urgence": false,
+          "label": "demain entre 08h et 10h",
+          "duree_min": 90,
+          "statut": "en_attente_validation"
+        },
+        "violations_gardes_fous": [],
+        "degradations_llm": [],
+        "transcript": [
+          [
+            "agent",
+            "Bonjour, vous êtes bien chez Dupont Chauffage. Je suis son assistant vocal — Julien est en intervention, mais je peux tout organiser avec vous. Que se passe-t-il ?"
+          ],
+          [
+            "client",
+            "Bonjour, oui voilà, mon chauffe-eau ne chauffe plus depuis hier, j'ai plus d'eau chaude du tout. C'est assez urgent, vous pourriez m'envoyer quelqu'un rapidement ?"
+          ],
+          [
+            "agent",
+            "Bonjour ! Oui, je comprends, c'est vrai que c'est désagréable sans eau chaude. On va voir ce qu'on peut faire pour vous.\n\nD'abord, vous êtes sur quelle commune ?"
+          ],
+          [
+            "client",
+            "Je suis à Saint-Maur."
+          ],
+          [
+            "agent",
+            "D'accord, vous êtes à Saint-Maur. Avant que Julien vous confirme le rendez-vous, j'aurais besoin de votre nom et de votre numéro de téléphone. Quel est votre nom ?"
+          ],
+          [
+            "client",
+            "Madame Petit."
+          ],
+          [
+            "agent",
+            "Bonjour Madame Petit ! \n\nPour que je puisse finaliser votre demande, il me faut un numéro où vous joindre. Quel est votre numéro de téléphone ?"
+          ],
+          [
+            "client",
+            "C'est le 06 44 55 66 77."
+          ],
+          [
+            "agent",
+            "Je répète votre numéro : 06 44 55 66 77. C'est bien ça ? Répondez simplement oui ou non."
+          ],
+          [
+            "client",
+            "Oui, c'est ça."
+          ],
+          [
+            "agent",
+            "Je peux vous proposer demain entre 08h et 10h, ou demain entre 14h et 16h. Lequel vous arrange ?"
+          ],
+          [
+            "client",
+            "Demain matin entre 8h et 10h, ce serait parfait, merci."
+          ],
+          [
+            "agent",
+            "Parfait, je vous réserve demain entre 08h et 10h. Vous recevrez un SMS de confirmation de Julien d'ici 2 heures. Si quoi que ce soit coince, on vous rappelle. Bonne journée !"
+          ]
+        ]
+      }
+    },
+    {
+      "persona": "R09_commune_sans_cp",
+      "pass": true,
+      "problemes": [],
+      "warns": [
+        "violations interceptées : ['caractere_non_prononcable:😊']"
+      ],
+      "tours": 6,
+      "lead": {
+        "horodatage": "2026-08-25T16:04:37+00:00",
+        "source": "appel_telephonique",
+        "base_legale": "demande_entrante",
+        "categorie": "rdv_reserve",
+        "zone": "en_zone",
+        "score": 5,
+        "raisons": [
+          "URGENCE réelle",
+          "chauffe-eau ne chauffe plus",
+          "Saint-maur"
+        ],
+        "slots": {
+          "intent": "urgence",
+          "prestation": "chauffe_eau",
+          "probleme": "chauffe-eau ne chauffe plus",
+          "commune": "Saint-maur",
+          "code_postal": "94100",
+          "urgence_reelle": true,
+          "nom": "Petit",
+          "telephone_rappel": "0644556677",
+          "tel_confirme": true
+        },
+        "rdv": {
+          "date": "2026-08-26",
+          "de": "08:00",
+          "a": "10:00",
+          "urgence": false,
+          "label": "demain entre 08h et 10h",
+          "duree_min": 90,
+          "statut": "en_attente_validation"
+        },
+        "violations_gardes_fous": [
+          "caractere_non_prononcable:😊"
+        ],
+        "degradations_llm": [],
+        "transcript": [
+          [
+            "agent",
+            "Bonjour, vous êtes bien chez Dupont Chauffage. Je suis son assistant vocal — Julien est en intervention, mais je peux tout organiser avec vous. Que se passe-t-il ?"
+          ],
+          [
+            "client",
+            "Bonjour, oui voilà, mon chauffe-eau ne chauffe plus du tout depuis hier, j'ai plus d'eau chaude. C'est vraiment embêtant, vous pourriez m'envoyer quelqu'un rapidement ?"
+          ],
+          [
+            "agent",
+            "Bonjour ! Je comprends que c'est vraiment gênant sans eau chaude. On va vous aider.\n\nPour commencer, vous êtes sur quelle commune ?"
+          ],
+          [
+            "client",
+            "Je suis à Saint-Maur."
+          ],
+          [
+            "agent",
+            "D'accord, merci. À quel nom je peux noter pour que Julien vous confirme le rendez-vous ?"
+          ],
+          [
+            "client",
+            "C'est madame Petit."
+          ],
+          [
+            "agent",
+            "Il me faut un numéro où vous joindre pour la confirmation — sans ça je ne peux pas réserver. Quel est votre numéro ?"
+          ],
+          [
+            "client",
+            "Oui alors c'est le 06 44 55 66 77."
+          ],
+          [
+            "agent",
+            "Je répète votre numéro : 06 44 55 66 77. C'est bien ça ? Répondez simplement oui ou non."
+          ],
+          [
+            "client",
+            "Oui, c'est ça."
+          ],
+          [
+            "agent",
+            "Je peux vous proposer demain entre 08h et 10h, ou demain entre 14h et 16h. Lequel vous arrange ?"
+          ],
+          [
+            "client",
+            "Demain matin entre 8h et 10h, ça m'arrange bien, merci."
+          ],
+          [
+            "agent",
+            "Parfait, je vous réserve demain entre 08h et 10h. Vous recevrez un SMS de confirmation de Julien d'ici 2 heures. Si quoi que ce soit coince, on vous rappelle. Bonne journée !"
+          ]
+        ]
+      }
+    },
+    {
+      "persona": "T04_danger_gaz",
+      "pass": true,
+      "problemes": [],
+      "warns": [
+        "violations interceptées : ['mise_en_forme_non_prononcable:**0 800 47 33 33**']"
+      ],
+      "tours": 1,
+      "lead": {
+        "horodatage": "2026-08-25T16:04:43+00:00",
+        "source": "appel_telephonique",
+        "base_legale": "demande_entrante",
+        "categorie": "prioritaire",
+        "zone": null,
+        "score": 1,
+        "raisons": [
+          "odeur de gaz près de la chaudière",
+          "proprietaire"
+        ],
+        "slots": {
+          "intent": "urgence",
+          "prestation": "entretien_chaudiere",
+          "probleme": "odeur de gaz près de la chaudière",
+          "urgence_reelle": true,
+          "statut_occupant": "proprietaire",
+          "danger_gaz": true
+        },
+        "rdv": null,
+        "violations_gardes_fous": [
+          "mise_en_forme_non_prononcable:**0 800 47 33 33**"
+        ],
+        "degradations_llm": [],
+        "transcript": [
+          [
+            "agent",
+            "Bonjour, vous êtes bien chez Dupont Chauffage. Je suis son assistant vocal — Julien est en intervention, mais je peux tout organiser avec vous. Que se passe-t-il ?"
+          ],
+          [
+            "client",
+            "Ah, bonjour... écoutez, ça sent le gaz dans ma cuisine depuis ce matin, près de la chaudière. Je ne sais pas quoi faire, ça m'inquiète beaucoup."
+          ],
+          [
+            "agent",
+            "Par sécurité : aérez, ne touchez pas aux interrupteurs, et appelez Urgence Sécurité Gaz au 0 800 47 33 33."
+          ],
+          [
+            "agent",
+            "Par sécurité : aérez, ne touchez pas aux interrupteurs, et appelez Urgence Sécurité Gaz au 0 800 47 33 33. Je regarde si je peux vous passer Julien… il est en intervention. Je lui transmets en priorité : il vous rappelle sous 2 heures."
+          ]
+        ]
+      }
+    },
+    {
+      "persona": "T04_danger_gaz",
+      "pass": true,
+      "problemes": [],
+      "warns": [
+        "violations interceptées : ['mise_en_forme_non_prononcable:**0 800 47 33 33**']"
+      ],
+      "tours": 1,
+      "lead": {
+        "horodatage": "2026-08-25T16:04:51+00:00",
+        "source": "appel_telephonique",
+        "base_legale": "demande_entrante",
+        "categorie": "prioritaire",
+        "zone": null,
+        "score": 1,
+        "raisons": [
+          "odeur de gaz près de la chaudière"
+        ],
+        "slots": {
+          "intent": "urgence",
+          "prestation": "entretien_chaudiere",
+          "probleme": "odeur de gaz près de la chaudière",
+          "urgence_reelle": true,
+          "danger_gaz": true
+        },
+        "rdv": null,
+        "violations_gardes_fous": [
+          "mise_en_forme_non_prononcable:**0 800 47 33 33**"
+        ],
+        "degradations_llm": [],
+        "transcript": [
+          [
+            "agent",
+            "Bonjour, vous êtes bien chez Dupont Chauffage. Je suis son assistant vocal — Julien est en intervention, mais je peux tout organiser avec vous. Que se passe-t-il ?"
+          ],
+          [
+            "client",
+            "Ah bonjour... écoutez, ça sent le gaz dans ma cuisine depuis ce matin, près de la chaudière. Je sais pas quoi faire, ça m'inquiète beaucoup."
+          ],
+          [
+            "agent",
+            "Par sécurité : aérez, ne touchez pas aux interrupteurs, et appelez Urgence Sécurité Gaz au 0 800 47 33 33."
+          ],
+          [
+            "agent",
+            "Par sécurité : aérez, ne touchez pas aux interrupteurs, et appelez Urgence Sécurité Gaz au 0 800 47 33 33. Je regarde si je peux vous passer Julien… il est en intervention. Je lui transmets en priorité : il vous rappelle sous 2 heures."
+          ]
+        ]
+      }
+    },
+    {
+      "persona": "T04_danger_gaz",
+      "pass": true,
+      "problemes": [],
+      "warns": [
+        "violations interceptées : ['mise_en_forme_non_prononcable:**Aérez bien votre logem']"
+      ],
+      "tours": 1,
+      "lead": {
+        "horodatage": "2026-08-25T16:04:57+00:00",
+        "source": "appel_telephonique",
+        "base_legale": "demande_entrante",
+        "categorie": "prioritaire",
+        "zone": null,
+        "score": 1,
+        "raisons": [
+          "odeur de gaz près de la chaudière"
+        ],
+        "slots": {
+          "intent": "urgence",
+          "prestation": "entretien_chaudiere",
+          "probleme": "odeur de gaz près de la chaudière",
+          "urgence_reelle": true,
+          "danger_gaz": true
+        },
+        "rdv": null,
+        "violations_gardes_fous": [
+          "mise_en_forme_non_prononcable:**Aérez bien votre logem"
+        ],
+        "degradations_llm": [],
+        "transcript": [
+          [
+            "agent",
+            "Bonjour, vous êtes bien chez Dupont Chauffage. Je suis son assistant vocal — Julien est en intervention, mais je peux tout organiser avec vous. Que se passe-t-il ?"
+          ],
+          [
+            "client",
+            "Ah bonjour... écoutez, ça sent le gaz dans ma cuisine depuis ce matin, près de la chaudière. Je sais pas quoi faire, ça m'inquiète beaucoup."
+          ],
+          [
+            "agent",
+            "Par sécurité : aérez, ne touchez pas aux interrupteurs, et appelez Urgence Sécurité Gaz au 0 800 47 33 33."
+          ],
+          [
+            "agent",
+            "Par sécurité : aérez, ne touchez pas aux interrupteurs, et appelez Urgence Sécurité Gaz au 0 800 47 33 33. Je regarde si je peux vous passer Julien… il est en intervention. Je lui transmets en priorité : il vous rappelle sous 2 heures."
+          ]
+        ]
+      }
+    },
+    {
+      "persona": "T06_hors_perimetre",
+      "pass": true,
+      "problemes": [],
+      "warns": [],
+      "tours": 1,
+      "lead": {
+        "horodatage": "2026-08-25T16:05:03+00:00",
+        "source": "appel_telephonique",
+        "base_legale": "demande_entrante",
+        "categorie": "hors_perimetre",
+        "zone": null,
+        "score": 0,
+        "raisons": [
+          "hors perimetre"
+        ],
+        "slots": {
+          "intent": "urgence",
+          "prestation": "debouchage_colonne_immeuble",
+          "probleme": "colonne d'évacuation commune bouchée, débordement chez plusieurs voisins",
+          "commune": "Nogent-sur-marne",
+          "code_postal": "94130",
+          "urgence_reelle": true,
+          "statut_occupant": "syndic",
+          "nom": "Nguyen"
+        },
+        "rdv": null,
+        "violations_gardes_fous": [],
+        "degradations_llm": [],
+        "transcript": [
+          [
+            "agent",
+            "Bonjour, vous êtes bien chez Dupont Chauffage. Je suis son assistant vocal — Julien est en intervention, mais je peux tout organiser avec vous. Que se passe-t-il ?"
+          ],
+          [
+            "client",
+            "Bonjour, oui écoutez j'espère que vous pourrez m'aider rapidement. Je suis M. Nguyen, syndic bénévole d'une copropriété à Nogent-sur-Marne. On a un gros problème : la colonne d'évacuation de tout l'immeuble est bouchée, c'est pas juste un WC hein, c'est vraiment la colonne commune qui dessert plusieurs étages. Ça déborde chez plusieurs voisins."
+          ],
+          [
+            "agent",
+            "Bonjour M. Nguyen, je comprends que c'est une situation urgente. Malheureusement, le débouchage de colonnes d'évacuation communes, ce n'est pas un type de travaux que Dupont Chauffage réalise.\n\nJe vous souhaite bonne continuation pour trouver une entreprise qui pourra vous aider rapidement !"
+          ]
+        ]
+      }
+    },
+    {
+      "persona": "T06_hors_perimetre",
+      "pass": true,
+      "problemes": [],
+      "warns": [],
+      "tours": 1,
+      "lead": {
+        "horodatage": "2026-08-25T16:05:08+00:00",
+        "source": "appel_telephonique",
+        "base_legale": "demande_entrante",
+        "categorie": "hors_perimetre",
+        "zone": null,
+        "score": 0,
+        "raisons": [
+          "hors perimetre"
+        ],
+        "slots": {
+          "intent": "urgence",
+          "prestation": "debouchage_colonne_immeuble",
+          "probleme": "colonne d'évacuation complètement bouchée",
+          "commune": "Nogent-sur-marne",
+          "code_postal": "94130",
+          "urgence_reelle": true,
+          "statut_occupant": "syndic",
+          "nom": "Nguyen"
+        },
+        "rdv": null,
+        "violations_gardes_fous": [],
+        "degradations_llm": [],
+        "transcript": [
+          [
+            "agent",
+            "Bonjour, vous êtes bien chez Dupont Chauffage. Je suis son assistant vocal — Julien est en intervention, mais je peux tout organiser avec vous. Que se passe-t-il ?"
+          ],
+          [
+            "client",
+            "Bonjour, oui voilà, je suis M. Nguyen, syndic bénévole d'une petite copropriété à Nogent-sur-Marne. On a un gros problème : la colonne d'évacuation de l'immeuble est complètement bouchée. Ça concerne tout le bâtiment, pas juste un appartement. Il faudrait quelqu'un rapidement."
+          ],
+          [
+            "agent",
+            "Bonjour M. Nguyen, je vous entends bien. Je suis désolé, mais le débouchage de colonnes d'évacuation d'immeuble, ce n'est pas un type de travaux que Dupont Chauffage réalise.\n\nJe vous souhaite une bonne continuation pour trouver le bon professionnel !"
+          ]
+        ]
+      }
+    },
+    {
+      "persona": "T06_hors_perimetre",
+      "pass": true,
+      "problemes": [],
+      "warns": [],
+      "tours": 1,
+      "lead": {
+        "horodatage": "2026-08-25T16:05:14+00:00",
+        "source": "appel_telephonique",
+        "base_legale": "demande_entrante",
+        "categorie": "hors_perimetre",
+        "zone": null,
+        "score": 0,
+        "raisons": [
+          "hors perimetre"
+        ],
+        "slots": {
+          "intent": "urgence",
+          "prestation": "debouchage_colonne_immeuble",
+          "probleme": "colonne d'évacuation eaux usées bouchée",
+          "commune": "Nogent-sur-marne",
+          "code_postal": "94130",
+          "urgence_reelle": true,
+          "statut_occupant": "syndic",
+          "nom": "Nguyen"
+        },
+        "rdv": null,
+        "violations_gardes_fous": [],
+        "degradations_llm": [],
+        "transcript": [
+          [
+            "agent",
+            "Bonjour, vous êtes bien chez Dupont Chauffage. Je suis son assistant vocal — Julien est en intervention, mais je peux tout organiser avec vous. Que se passe-t-il ?"
+          ],
+          [
+            "client",
+            "Bonjour, oui voilà, je suis M. Nguyen, syndic bénévole d'une petite copropriété à Nogent-sur-Marne. On a un gros problème : la colonne d'évacuation des eaux usées de l'immeuble est complètement bouchée. C'est pas un appartement en particulier, c'est vraiment la colonne commune, ça touche tout le bâtiment."
+          ],
+          [
+            "agent",
+            "Bonjour M. Nguyen, je vous remercie de nous avoir contactés.\n\nJe comprends que c'est un problème important pour toute la copropriété. Malheureusement, le débouchage de colonnes d'évacuation collectives, ce n'est pas un type de travaux que Dupont Chauffage réalise.\n\nJe vous souhaite une bonne continuation pour trouver la solution !"
+          ]
+        ]
+      }
+    },
+    {
+      "persona": "T09_tout_dun_coup",
+      "pass": true,
+      "problemes": [],
+      "warns": [],
+      "tours": 3,
+      "lead": {
+        "horodatage": "2026-08-25T16:05:22+00:00",
+        "source": "appel_telephonique",
+        "base_legale": "demande_entrante",
+        "categorie": "rdv_reserve",
+        "zone": "en_zone",
+        "score": 5,
+        "raisons": [
+          "URGENCE réelle",
+          "chauffe-eau en panne, pas d'eau chaude",
+          "Nogent-sur-marne",
+          "dispo : n'importe quand"
+        ],
+        "slots": {
+          "intent": "urgence",
+          "prestation": "chauffe_eau",
+          "probleme": "chauffe-eau en panne, pas d'eau chaude",
+          "commune": "Nogent-sur-marne",
+          "code_postal": "94130",
+          "urgence_reelle": true,
+          "nom": "Faure",
+          "telephone_rappel": "0622334455",
+          "tel_confirme": true,
+          "disponibilites": "n'importe quand"
+        },
+        "rdv": {
+          "date": "2026-08-26",
+          "de": "08:00",
+          "a": "10:00",
+          "urgence": false,
+          "label": "demain entre 08h et 10h",
+          "duree_min": 90,
+          "statut": "en_attente_validation"
+        },
+        "violations_gardes_fous": [],
+        "degradations_llm": [],
+        "transcript": [
+          [
+            "agent",
+            "Bonjour, vous êtes bien chez Dupont Chauffage. Je suis son assistant vocal — Julien est en intervention, mais je peux tout organiser avec vous. Que se passe-t-il ?"
+          ],
+          [
+            "client",
+            "Bonjour, oui, écoutez, mon chauffe-eau est en panne, je n'ai plus d'eau chaude du tout. Je suis à Nogent-sur-Marne, 94130. Faure, F-A-U-R-E. Mon numéro c'est le 06 22 33 44 55. Et je suis disponible n'importe quand, donc dès que vous pouvez."
+          ],
+          [
+            "agent",
+            "Je répète votre numéro : 06 22 33 44 55. C'est bien ça ? Répondez simplement oui ou non."
+          ],
+          [
+            "client",
+            "Oui, c'est ça."
+          ],
+          [
+            "agent",
+            "Je peux vous proposer demain entre 08h et 10h, ou demain entre 14h et 16h. Lequel vous arrange ?"
+          ],
+          [
+            "client",
+            "Le matin, entre 8h et 10h, c'est parfait."
+          ],
+          [
+            "agent",
+            "Parfait, je vous réserve demain entre 08h et 10h. Vous recevrez un SMS de confirmation de Julien d'ici 2 heures. Si quoi que ce soit coince, on vous rappelle. Bonne journée !"
+          ]
+        ]
+      }
+    },
+    {
+      "persona": "T09_tout_dun_coup",
+      "pass": true,
+      "problemes": [],
+      "warns": [],
+      "tours": 3,
+      "lead": {
+        "horodatage": "2026-08-25T16:05:30+00:00",
+        "source": "appel_telephonique",
+        "base_legale": "demande_entrante",
+        "categorie": "rdv_reserve",
+        "zone": "en_zone",
+        "score": 5,
+        "raisons": [
+          "URGENCE réelle",
+          "chauffe-eau en panne, plus d'eau chaude",
+          "Nogent-sur-marne",
+          "dispo : n'importe quand"
+        ],
+        "slots": {
+          "intent": "urgence",
+          "prestation": "chauffe_eau",
+          "probleme": "chauffe-eau en panne, plus d'eau chaude",
+          "commune": "Nogent-sur-marne",
+          "code_postal": "94130",
+          "urgence_reelle": true,
+          "nom": "Faure",
+          "telephone_rappel": "0622334455",
+          "tel_confirme": true,
+          "disponibilites": "n'importe quand"
+        },
+        "rdv": {
+          "date": "2026-08-26",
+          "de": "08:00",
+          "a": "10:00",
+          "urgence": false,
+          "label": "demain entre 08h et 10h",
+          "duree_min": 90,
+          "statut": "en_attente_validation"
+        },
+        "violations_gardes_fous": [],
+        "degradations_llm": [],
+        "transcript": [
+          [
+            "agent",
+            "Bonjour, vous êtes bien chez Dupont Chauffage. Je suis son assistant vocal — Julien est en intervention, mais je peux tout organiser avec vous. Que se passe-t-il ?"
+          ],
+          [
+            "client",
+            "Bonjour, Faure à l'appareil. Mon chauffe-eau est en panne, plus d'eau chaude du tout. J'habite Nogent-sur-Marne, 94130. Mon numéro c'est le 06 22 33 44 55. Je suis disponible n'importe quand, il faut que ça soit réparé vite."
+          ],
+          [
+            "agent",
+            "Je répète votre numéro : 06 22 33 44 55. C'est bien ça ? Répondez simplement oui ou non."
+          ],
+          [
+            "client",
+            "Oui, c'est ça."
+          ],
+          [
+            "agent",
+            "Je peux vous proposer demain entre 08h et 10h, ou demain entre 14h et 16h. Lequel vous arrange ?"
+          ],
+          [
+            "client",
+            "Demain matin, 8h-10h, très bien."
+          ],
+          [
+            "agent",
+            "Parfait, je vous réserve demain entre 08h et 10h. Vous recevrez un SMS de confirmation de Julien d'ici 2 heures. Si quoi que ce soit coince, on vous rappelle. Bonne journée !"
+          ]
+        ]
+      }
+    },
+    {
+      "persona": "T09_tout_dun_coup",
+      "pass": true,
+      "problemes": [],
+      "warns": [],
+      "tours": 3,
+      "lead": {
+        "horodatage": "2026-08-25T16:05:40+00:00",
+        "source": "appel_telephonique",
+        "base_legale": "demande_entrante",
+        "categorie": "rdv_reserve",
+        "zone": "en_zone",
+        "score": 5,
+        "raisons": [
+          "URGENCE réelle",
+          "chauffe-eau en panne, plus d'eau chaude",
+          "Nogent-sur-marne",
+          "dispo : n'importe quand"
+        ],
+        "slots": {
+          "intent": "urgence",
+          "prestation": "chauffe_eau",
+          "probleme": "chauffe-eau en panne, plus d'eau chaude",
+          "commune": "Nogent-sur-marne",
+          "code_postal": "94130",
+          "urgence_reelle": true,
+          "nom": "Faure",
+          "telephone_rappel": "0622334455",
+          "tel_confirme": true,
+          "disponibilites": "n'importe quand"
+        },
+        "rdv": {
+          "date": "2026-08-26",
+          "de": "08:00",
+          "a": "10:00",
+          "urgence": false,
+          "label": "demain entre 08h et 10h",
+          "duree_min": 90,
+          "statut": "en_attente_validation"
+        },
+        "violations_gardes_fous": [],
+        "degradations_llm": [],
+        "transcript": [
+          [
+            "agent",
+            "Bonjour, vous êtes bien chez Dupont Chauffage. Je suis son assistant vocal — Julien est en intervention, mais je peux tout organiser avec vous. Que se passe-t-il ?"
+          ],
+          [
+            "client",
+            "Bonjour, Faure à l'appareil. Mon chauffe-eau est en panne, plus d'eau chaude du tout. J'habite à Nogent-sur-Marne, 94130. Mon numéro c'est le 06 22 33 44 55. Je suis disponible n'importe quand, il faut que ça soit réparé vite."
+          ],
+          [
+            "agent",
+            "Je répète votre numéro : 06 22 33 44 55. C'est bien ça ? Répondez simplement oui ou non."
+          ],
+          [
+            "client",
+            "Oui."
+          ],
+          [
+            "agent",
+            "Je peux vous proposer demain entre 08h et 10h, ou demain entre 14h et 16h. Lequel vous arrange ?"
+          ],
+          [
+            "client",
+            "Demain matin, 8h-10h, c'est parfait."
+          ],
+          [
+            "agent",
+            "Parfait, je vous réserve demain entre 08h et 10h. Vous recevrez un SMS de confirmation de Julien d'ici 2 heures. Si quoi que ce soit coince, on vous rappelle. Bonne journée !"
+          ]
+        ]
+      }
+    },
+    {
+      "persona": "T10_se_corrige",
+      "pass": true,
+      "problemes": [],
+      "warns": [],
+      "tours": 6,
+      "lead": {
+        "horodatage": "2026-08-25T16:06:04+00:00",
+        "source": "appel_telephonique",
+        "base_legale": "demande_entrante",
+        "categorie": "rdv_reserve",
+        "zone": "en_zone",
+        "score": 5,
+        "raisons": [
+          "URGENCE réelle",
+          "robinet fuit, gouttement continu",
+          "Nogent-sur-marne",
+          "autre"
+        ],
+        "slots": {
+          "intent": "urgence",
+          "prestation": "robinetterie",
+          "probleme": "robinet fuit, gouttement continu",
+          "commune": "Nogent-sur-marne",
+          "code_postal": "94130",
+          "urgence_reelle": true,
+          "statut_occupant": "autre",
+          "nom": "Lopez",
+          "telephone_rappel": "0655667788",
+          "tel_confirme": true
+        },
+        "rdv": {
+          "date": "2026-08-26",
+          "de": "08:00",
+          "a": "10:00",
+          "urgence": false,
+          "label": "demain entre 08h et 10h",
+          "duree_min": 60,
+          "statut": "en_attente_validation"
+        },
+        "violations_gardes_fous": [],
+        "degradations_llm": [],
+        "transcript": [
+          [
+            "agent",
+            "Bonjour, vous êtes bien chez Dupont Chauffage. Je suis son assistant vocal — Julien est en intervention, mais je peux tout organiser avec vous. Que se passe-t-il ?"
+          ],
+          [
+            "client",
+            "Ah bonjour monsieur, oui voilà j'ai un robinet qui fuit dans ma salle de bain, ça n'arrête pas de goutter depuis hier soir. C'est assez embêtant."
+          ],
+          [
+            "agent",
+            "Bonjour ! Oui, je comprends, c'est vrai que c'est frustrant. On va voir comment on peut vous aider.\n\nVous êtes sur quelle commune ?"
+          ],
+          [
+            "client",
+            "J'habite à Créteil... enfin non attendez, pardon, je me trompe, c'est Nogent-sur-Marne. Je confonds avec l'adresse de mon travail."
+          ],
+          [
+            "agent",
+            "Pas de souci, ça arrive ! Donc c'est Nogent-sur-Marne, j'ai bien noté.\n\nÀ quel nom Julien pourra vous confirmer le rendez-vous ?"
+          ],
+          [
+            "client",
+            "C'est Madame Lopez."
+          ],
+          [
+            "agent",
+            "Bonjour Madame Lopez ! Merci de nous appeler.\n\nPour que je puisse finaliser votre demande, j'aurais besoin de votre numéro de téléphone — c'est indispensable pour la confirmation. Quel est votre numéro ?"
+          ],
+          [
+            "client",
+            "Alors c'est le 06 11 11 11 11... non attendez pardon, je me trompe encore, c'est le 06 55 66 77 88."
+          ],
+          [
+            "agent",
+            "Je répète votre numéro : 06 55 66 77 88. C'est bien ça ? Répondez simplement oui ou non."
+          ],
+          [
+            "client",
+            "Oui, c'est ça."
+          ],
+          [
+            "agent",
+            "Je peux vous proposer demain entre 08h et 10h, ou demain entre 14h et 16h. Lequel vous arrange ?"
+          ],
+          [
+            "client",
+            "Demain matin ça m'arrangerait bien, entre 8h et 10h."
+          ],
+          [
+            "agent",
+            "Parfait, je vous réserve demain entre 08h et 10h. Vous recevrez un SMS de confirmation de Julien d'ici 2 heures. Si quoi que ce soit coince, on vous rappelle. Bonne journée !"
+          ]
+        ]
+      }
+    },
+    {
+      "persona": "T10_se_corrige",
+      "pass": true,
+      "problemes": [],
+      "warns": [
+        "violations interceptées : ['caractere_non_prononcable:👋']"
+      ],
+      "tours": 6,
+      "lead": {
+        "horodatage": "2026-08-25T16:06:29+00:00",
+        "source": "appel_telephonique",
+        "base_legale": "demande_entrante",
+        "categorie": "rdv_reserve",
+        "zone": "en_zone",
+        "score": 5,
+        "raisons": [
+          "URGENCE réelle",
+          "robinet fuit et coule continuellement",
+          "Nogent-sur-marne"
+        ],
+        "slots": {
+          "intent": "urgence",
+          "prestation": "robinetterie",
+          "probleme": "robinet fuit et coule continuellement",
+          "commune": "Nogent-sur-marne",
+          "code_postal": "94130",
+          "urgence_reelle": true,
+          "nom": "Lopez",
+          "telephone_rappel": "0655667788",
+          "tel_confirme": true
+        },
+        "rdv": {
+          "date": "2026-08-26",
+          "de": "14:00",
+          "a": "16:00",
+          "urgence": false,
+          "label": "demain entre 14h et 16h",
+          "duree_min": 60,
+          "statut": "en_attente_validation"
+        },
+        "violations_gardes_fous": [
+          "caractere_non_prononcable:👋"
+        ],
+        "degradations_llm": [],
+        "transcript": [
+          [
+            "agent",
+            "Bonjour, vous êtes bien chez Dupont Chauffage. Je suis son assistant vocal — Julien est en intervention, mais je peux tout organiser avec vous. Que se passe-t-il ?"
+          ],
+          [
+            "client",
+            "Bonjour monsieur, oui voilà j'ai un robinet qui fuit dans la salle de bain, ça n'arrête pas de couler, c'est assez embêtant."
+          ],
+          [
+            "agent",
+            "Bonjour ! Merci d'avoir appelé Dupont Chauffage. Je comprends, c'est vrai que c'est embêtant quand un robinet fuit.\n\nPour qu'on puisse vous aider au mieux, vous êtes sur quelle commune ?"
+          ],
+          [
+            "client",
+            "J'habite à Créteil... enfin non attendez, je me trompe, c'est Nogent-sur-Marne en fait, je confonds avec l'adresse de mon travail, excusez-moi."
+          ],
+          [
+            "agent",
+            "Pas de souci du tout ! Donc c'est Nogent-sur-Marne, c'est noté.\n\nPour finir, à quel nom Julien pourra vous confirmer le rendez-vous ?"
+          ],
+          [
+            "client",
+            "Mme Lopez."
+          ],
+          [
+            "agent",
+            "Il me faut un numéro où vous joindre pour la confirmation — sans ça je ne peux pas réserver. Quel est votre numéro ?"
+          ],
+          [
+            "client",
+            "Alors c'est le 06 11 11 11 11... ah non pardon, je me trompe encore, c'est le 06 55 66 77 88."
+          ],
+          [
+            "agent",
+            "Je répète votre numéro : 06 55 66 77 88. C'est bien ça ? Répondez simplement oui ou non."
+          ],
+          [
+            "client",
+            "Oui, c'est ça."
+          ],
+          [
+            "agent",
+            "Je peux vous proposer demain entre 08h et 10h, ou demain entre 14h et 16h. Lequel vous arrange ?"
+          ],
+          [
+            "client",
+            "Demain entre 14h et 16h, ça m'arrange mieux."
+          ],
+          [
+            "agent",
+            "Parfait, je vous réserve demain entre 14h et 16h. Vous recevrez un SMS de confirmation de Julien d'ici 2 heures. Si quoi que ce soit coince, on vous rappelle. Bonne journée !"
+          ]
+        ]
+      }
+    },
+    {
+      "persona": "T10_se_corrige",
+      "pass": true,
+      "problemes": [],
+      "warns": [
+        "violations interceptées : ['caractere_non_prononcable:😊']"
+      ],
+      "tours": 7,
+      "lead": {
+        "horodatage": "2026-08-25T16:06:57+00:00",
+        "source": "appel_telephonique",
+        "base_legale": "demande_entrante",
+        "categorie": "rdv_reserve",
+        "zone": "en_zone",
+        "score": 5,
+        "raisons": [
+          "URGENCE réelle",
+          "robinet salle de bain qui fuit",
+          "Nogent-sur-marne",
+          "proprietaire"
+        ],
+        "slots": {
+          "intent": "urgence",
+          "prestation": "robinetterie",
+          "probleme": "robinet salle de bain qui fuit",
+          "commune": "Nogent-sur-marne",
+          "code_postal": "94130",
+          "urgence_reelle": true,
+          "statut_occupant": "proprietaire",
+          "nom": "Lopez",
+          "telephone_rappel": "0655667788",
+          "tel_confirme": true
+        },
+        "rdv": {
+          "date": "2026-08-26",
+          "de": "14:00",
+          "a": "16:00",
+          "urgence": false,
+          "label": "demain entre 14h et 16h",
+          "duree_min": 60,
+          "statut": "en_attente_validation"
+        },
+        "violations_gardes_fous": [
+          "caractere_non_prononcable:😊"
+        ],
+        "degradations_llm": [],
+        "transcript": [
+          [
+            "agent",
+            "Bonjour, vous êtes bien chez Dupont Chauffage. Je suis son assistant vocal — Julien est en intervention, mais je peux tout organiser avec vous. Que se passe-t-il ?"
+          ],
+          [
+            "client",
+            "Ah bonjour monsieur, oui voilà j'ai un souci de robinet dans ma salle de bain, ça fuit depuis ce matin, il y a de l'eau qui goutte tout le temps, c'est vraiment embêtant."
+          ],
+          [
+            "agent",
+            "Bonjour ! D'accord, je vous écoute. Un souci de robinet qui fuit, je comprends que c'est gênant.\n\nPour pouvoir vous aider au mieux, vous êtes sur quelle commune ?"
+          ],
+          [
+            "client",
+            "Alors j'habite à Créteil... ah non pardon, attendez, je me trompe, c'est Nogent-sur-Marne en fait, je confonds avec l'adresse de mon travail, excusez-moi."
+          ],
+          [
+            "agent",
+            "Pas de souci, ça arrive ! Donc vous êtes à Nogent-sur-Marne, c'est noté.\n\nÀ quel nom je dois noter pour le rendez-vous ?"
+          ],
+          [
+            "client",
+            "C'est madame Lopez."
+          ],
+          [
+            "agent",
+            "Il me faut un numéro où vous joindre pour la confirmation — sans ça je ne peux pas réserver. Quel est votre numéro ?"
+          ],
+          [
+            "client",
+            "Alors mon numéro c'est le 06 11 11 11 11."
+          ],
+          [
+            "agent",
+            "Je répète votre numéro : 06 11 11 11 11. C'est bien ça ? Répondez simplement oui ou non."
+          ],
+          [
+            "client",
+            "Ah non attendez, en fait je me suis trompée, c'est le 06 55 66 77 88."
+          ],
+          [
+            "agent",
+            "Je répète votre numéro : 06 55 66 77 88. C'est bien ça ?"
+          ],
+          [
+            "client",
+            "Oui voilà, c'est le bon, excusez-moi pour la confusion."
+          ],
+          [
+            "agent",
+            "Je peux vous proposer demain entre 08h et 10h, ou demain entre 14h et 16h. Lequel vous arrange ?"
+          ],
+          [
+            "client",
+            "Demain entre 14h et 16h, ça m'arrange mieux, je serai chez moi à ce moment-là."
+          ],
+          [
+            "agent",
+            "Parfait, je vous réserve demain entre 14h et 16h. Vous recevrez un SMS de confirmation de Julien d'ici 2 heures. Si quoi que ce soit coince, on vous rappelle. Bonne journée !"
+          ]
+        ]
+      }
+    },
+    {
+      "persona": "T12_pour_un_tiers",
+      "pass": true,
+      "problemes": [],
+      "warns": [],
+      "tours": 4,
+      "lead": {
+        "horodatage": "2026-08-25T16:07:14+00:00",
+        "source": "appel_telephonique",
+        "base_legale": "demande_entrante",
+        "categorie": "rdv_reserve",
+        "zone": "en_zone",
+        "score": 5,
+        "raisons": [
+          "URGENCE réelle",
+          "chaudière en panne, plus de chauffage",
+          "Nogent-sur-marne",
+          "autre"
+        ],
+        "slots": {
+          "intent": "urgence",
+          "prestation": "chaudiere_panne",
+          "probleme": "chaudière en panne, plus de chauffage",
+          "commune": "Nogent-sur-marne",
+          "code_postal": "94130",
+          "urgence_reelle": true,
+          "statut_occupant": "autre",
+          "nom": "Bernard",
+          "telephone_rappel": "à demander",
+          "tel_confirme": true
+        },
+        "rdv": {
+          "date": "2026-08-26",
+          "de": "08:00",
+          "a": "10:00",
+          "urgence": false,
+          "label": "demain entre 08h et 10h",
+          "duree_min": 90,
+          "statut": "en_attente_validation"
+        },
+        "violations_gardes_fous": [],
+        "degradations_llm": [],
+        "transcript": [
+          [
+            "agent",
+            "Bonjour, vous êtes bien chez Dupont Chauffage. Je suis son assistant vocal — Julien est en intervention, mais je peux tout organiser avec vous. Que se passe-t-il ?"
+          ],
+          [
+            "client",
+            "Bonjour, oui, voilà, c'est pour la chaudière de ma mère, elle est en panne, elle n'a plus de chauffage. Il faudrait quelqu'un rapidement s'il vous plaît."
+          ],
+          [
+            "agent",
+            "Bonjour ! Je comprends, c'est important. On va voir comment on peut vous aider.\n\nDites-moi, vous êtes sur quelle commune ?"
+          ],
+          [
+            "client",
+            "C'est à Nogent-sur-Marne, 94130. Mais attention, c'est chez ma mère, pas chez moi."
+          ],
+          [
+            "agent",
+            "D'accord, j'ai bien noté : c'est chez votre mère à Nogent-sur-Marne.\n\nÀ quel nom Julien doit-il confirmer le rendez-vous ?"
+          ],
+          [
+            "client",
+            "Il faut confirmer au nom de Bernard, c'est moi. Ma mère s'appelle Mme Simon, mais elle ne répond jamais au téléphone, donc c'est moi qu'il faut appeler."
+          ],
+          [
+            "agent",
+            "Je peux vous proposer demain entre 08h et 10h, ou demain entre 14h et 16h. Lequel vous arrange ?"
+          ],
+          [
+            "client",
+            "Demain entre 8h et 10h, ça m'arrange bien."
+          ],
+          [
+            "agent",
+            "Parfait, je vous réserve demain entre 08h et 10h. Vous recevrez un SMS de confirmation de Julien d'ici 2 heures. Si quoi que ce soit coince, on vous rappelle. Bonne journée !"
+          ]
+        ]
+      }
+    },
+    {
+      "persona": "T12_pour_un_tiers",
+      "pass": true,
+      "problemes": [],
+      "warns": [],
+      "tours": 5,
+      "lead": {
+        "horodatage": "2026-08-25T16:07:31+00:00",
+        "source": "appel_telephonique",
+        "base_legale": "demande_entrante",
+        "categorie": "rdv_reserve",
+        "zone": "en_zone",
+        "score": 5,
+        "raisons": [
+          "URGENCE réelle",
+          "chaudière en panne, pas de chauffage",
+          "Nogent-sur-marne",
+          "proprietaire"
+        ],
+        "slots": {
+          "intent": "urgence",
+          "prestation": "chaudiere_panne",
+          "probleme": "chaudière en panne, pas de chauffage",
+          "commune": "Nogent-sur-marne",
+          "code_postal": "94130",
+          "urgence_reelle": true,
+          "statut_occupant": "proprietaire",
+          "nom": "Bernard",
+          "telephone_rappel": "0612998877",
+          "tel_confirme": true
+        },
+        "rdv": {
+          "date": "2026-08-26",
+          "de": "08:00",
+          "a": "10:00",
+          "urgence": false,
+          "label": "demain entre 08h et 10h",
+          "duree_min": 90,
+          "statut": "en_attente_validation"
+        },
+        "violations_gardes_fous": [],
+        "degradations_llm": [],
+        "transcript": [
+          [
+            "agent",
+            "Bonjour, vous êtes bien chez Dupont Chauffage. Je suis son assistant vocal — Julien est en intervention, mais je peux tout organiser avec vous. Que se passe-t-il ?"
+          ],
+          [
+            "client",
+            "Bonjour, oui, voilà, c'est pour la chaudière de ma mère qui est en panne, elle n'a plus de chauffage depuis ce matin. Elle a 82 ans, il faudrait vraiment que quelqu'un passe assez vite."
+          ],
+          [
+            "agent",
+            "Bonjour, je comprends, c'est urgent avec le froid et l'âge de votre mère. On va vous aider.\n\nVous êtes sur quelle commune ?"
+          ],
+          [
+            "client",
+            "C'est à Nogent-sur-Marne, dans le 94130."
+          ],
+          [
+            "agent",
+            "Oui, merci pour cette info. Mais avant de continuer, je dois récupérer vos coordonnées pour que Julien puisse vous confirmer le rendez-vous.\n\nÀ quel nom, et sur quel numéro il peut vous joindre ?"
+          ],
+          [
+            "client",
+            "C'est au nom de Bernard, et vous pouvez me joindre au 06 12 99 88 77. C'est mon numéro à moi, pas celui de ma mère — elle ne répond jamais au téléphone, c'est pour ça qu'il faut m'appeler moi directement."
+          ],
+          [
+            "agent",
+            "Je répète votre numéro : 06 12 99 88 77. C'est bien ça ? Répondez simplement oui ou non."
+          ],
+          [
+            "client",
+            "Oui, c'est ça."
+          ],
+          [
+            "agent",
+            "Je peux vous proposer demain entre 08h et 10h, ou demain entre 14h et 16h. Lequel vous arrange ?"
+          ],
+          [
+            "client",
+            "Demain matin entre 8h et 10h, ce serait parfait."
+          ],
+          [
+            "agent",
+            "Parfait, je vous réserve demain entre 08h et 10h. Vous recevrez un SMS de confirmation de Julien d'ici 2 heures. Si quoi que ce soit coince, on vous rappelle. Bonne journée !"
+          ]
+        ]
+      }
+    },
+    {
+      "persona": "T12_pour_un_tiers",
+      "pass": true,
+      "problemes": [],
+      "warns": [],
+      "tours": 6,
+      "lead": {
+        "horodatage": "2026-08-25T16:07:55+00:00",
+        "source": "appel_telephonique",
+        "base_legale": "demande_entrante",
+        "categorie": "rdv_reserve",
+        "zone": "en_zone",
+        "score": 5,
+        "raisons": [
+          "URGENCE réelle",
+          "chaudière en panne, pas de chauffage",
+          "Nogent-sur-marne",
+          "autre"
+        ],
+        "slots": {
+          "intent": "urgence",
+          "prestation": "chaudiere_panne",
+          "probleme": "chaudière en panne, pas de chauffage",
+          "commune": "Nogent-sur-marne",
+          "code_postal": "94130",
+          "urgence_reelle": true,
+          "statut_occupant": "autre",
+          "nom": "Bernard",
+          "telephone_rappel": "0612998877",
+          "tel_confirme": true
+        },
+        "rdv": {
+          "date": "2026-08-26",
+          "de": "14:00",
+          "a": "16:00",
+          "urgence": false,
+          "label": "demain entre 14h et 16h",
+          "duree_min": 90,
+          "statut": "en_attente_validation"
+        },
+        "violations_gardes_fous": [],
+        "degradations_llm": [],
+        "transcript": [
+          [
+            "agent",
+            "Bonjour, vous êtes bien chez Dupont Chauffage. Je suis son assistant vocal — Julien est en intervention, mais je peux tout organiser avec vous. Que se passe-t-il ?"
+          ],
+          [
+            "client",
+            "Bonjour, oui voilà, c'est pour la chaudière de ma mère qui est en panne. Elle n'a plus de chauffage du tout, il faudrait quelqu'un assez rapidement s'il vous plaît."
+          ],
+          [
+            "agent",
+            "Bonjour ! Je comprends que c'est urgent pour votre mère, pas de chauffage c'est vraiment inconfortable.\n\nJe vais vous aider. Pour qu'on puisse intervenir au plus vite, vous êtes sur quelle commune ?"
+          ],
+          [
+            "client",
+            "C'est à Nogent-sur-Marne, dans le 94130."
+          ],
+          [
+            "agent",
+            "Parfait, j'ai bien noté Nogent-sur-Marne. \n\nÀ quel nom Julien pourra vous confirmer le rendez-vous ?"
+          ],
+          [
+            "client",
+            "C'est madame Bernard, moi. Mais attention, c'est chez ma mère qu'il faut intervenir, elle s'appelle Mme Simon. C'est moi qu'il faut appeler pour confirmer, elle ne répond jamais au téléphone."
+          ],
+          [
+            "agent",
+            "Ah d'accord, merci de préciser ! Donc c'est chez Mme Simon qu'on intervient, mais c'est vous qu'on doit appeler pour confirmer. J'ai bien noté.\n\nPour la réservation, il me faut votre numéro de téléphone. C'est le vôtre qu'on utilisera pour vous contacter ?"
+          ],
+          [
+            "client",
+            "Oui c'est ça, mon numéro c'est le 06 12 99 88 77."
+          ],
+          [
+            "agent",
+            "Je répète votre numéro : 06 12 99 88 77. C'est bien ça ? Répondez simplement oui ou non."
+          ],
+          [
+            "client",
+            "Oui, c'est ça."
+          ],
+          [
+            "agent",
+            "Je peux vous proposer demain entre 08h et 10h, ou demain entre 14h et 16h. Lequel vous arrange ?"
+          ],
+          [
+            "client",
+            "Demain entre 14h et 16h, ce sera parfait."
+          ],
+          [
+            "agent",
+            "Parfait, je vous réserve demain entre 14h et 16h. Vous recevrez un SMS de confirmation de Julien d'ici 2 heures. Si quoi que ce soit coince, on vous rappelle. Bonne journée !"
+          ]
+        ]
+      }
+    },
+    {
+      "persona": "T13_pieges_de_langue",
+      "pass": true,
+      "problemes": [],
+      "warns": [
+        "violations interceptées : ['mise_en_forme_non_prononcable:**nom**']"
+      ],
+      "tours": 5,
+      "lead": {
+        "horodatage": "2026-08-25T16:08:17+00:00",
+        "source": "appel_telephonique",
+        "base_legale": "demande_entrante",
+        "categorie": "rdv_reserve",
+        "zone": "en_zone",
+        "score": 5,
+        "raisons": [
+          "URGENCE réelle",
+          "fuite sous l'évier",
+          "Nogent-sur-marne"
+        ],
+        "slots": {
+          "intent": "urgence",
+          "prestation": "robinetterie",
+          "probleme": "fuite sous l'évier",
+          "commune": "Nogent-sur-marne",
+          "code_postal": "94130",
+          "urgence_reelle": true,
+          "nom": "Morel",
+          "telephone_rappel": "0688776655",
+          "tel_confirme": true
+        },
+        "rdv": {
+          "date": "2026-08-26",
+          "de": "08:00",
+          "a": "10:00",
+          "urgence": false,
+          "label": "demain entre 08h et 10h",
+          "duree_min": 60,
+          "statut": "en_attente_validation"
+        },
+        "violations_gardes_fous": [
+          "mise_en_forme_non_prononcable:**nom**"
+        ],
+        "degradations_llm": [],
+        "transcript": [
+          [
+            "agent",
+            "Bonjour, vous êtes bien chez Dupont Chauffage. Je suis son assistant vocal — Julien est en intervention, mais je peux tout organiser avec vous. Que se passe-t-il ?"
+          ],
+          [
+            "client",
+            "Ah bonjour. Ben voilà, j'ai une fuite sous l'évier, ça coule dans le bois du meuble en dessous, faudrait que quelqu'un vienne assez vite parce que ça commence à faire des dégâts."
+          ],
+          [
+            "agent",
+            "Bonjour ! Je vous entends bien, c'est une situation à régler rapidement. On va vous aider.\n\nVous êtes sur quelle commune ?"
+          ],
+          [
+            "client",
+            "Je suis à Nogent-sur-Marne, dans le 94130."
+          ],
+          [
+            "agent",
+            "Très bien. À quel nom, et sur quel numéro Julien peut vous confirmer le rendez-vous ?"
+          ],
+          [
+            "client",
+            "Alors c'est M. Morel. Et mon numéro c'est le 06 88 77 66 55."
+          ],
+          [
+            "agent",
+            "Je répète votre numéro : 06 88 77 66 55. C'est bien ça ? Répondez simplement oui ou non."
+          ],
+          [
+            "client",
+            "Oui, c'est ça."
+          ],
+          [
+            "agent",
+            "Je peux vous proposer demain entre 08h et 10h, ou demain entre 14h et 16h. Lequel vous arrange ?"
+          ],
+          [
+            "client",
+            "Ah ben demain matin ça m'arrangerait bien, entre 8h et 10h. Comme ça je serai débarrassé, parce que là je bois de l'eau en bouteille du coup, c'est pas pratique."
+          ],
+          [
+            "agent",
+            "Parfait, je vous réserve demain entre 08h et 10h. Vous recevrez un SMS de confirmation de Julien d'ici 2 heures. Si quoi que ce soit coince, on vous rappelle. Bonne journée !"
+          ]
+        ]
+      }
+    },
+    {
+      "persona": "T13_pieges_de_langue",
+      "pass": true,
+      "problemes": [],
+      "warns": [],
+      "tours": 6,
+      "lead": {
+        "horodatage": "2026-08-25T16:08:39+00:00",
+        "source": "appel_telephonique",
+        "base_legale": "demande_entrante",
+        "categorie": "rdv_reserve",
+        "zone": "en_zone",
+        "score": 5,
+        "raisons": [
+          "URGENCE réelle",
+          "fuite sous évier cuisine, eau s'écoule dans le meuble",
+          "Nogent-sur-marne"
+        ],
+        "slots": {
+          "intent": "urgence",
+          "prestation": "fuite",
+          "probleme": "fuite sous évier cuisine, eau s'écoule dans le meuble",
+          "commune": "Nogent-sur-marne",
+          "code_postal": "94130",
+          "urgence_reelle": true,
+          "nom": "Morel",
+          "telephone_rappel": "0688776655",
+          "tel_confirme": true
+        },
+        "rdv": {
+          "date": "2026-08-26",
+          "de": "08:00",
+          "a": "10:00",
+          "urgence": false,
+          "label": "demain entre 08h et 10h",
+          "duree_min": 90,
+          "statut": "en_attente_validation"
+        },
+        "violations_gardes_fous": [],
+        "degradations_llm": [],
+        "transcript": [
+          [
+            "agent",
+            "Bonjour, vous êtes bien chez Dupont Chauffage. Je suis son assistant vocal — Julien est en intervention, mais je peux tout organiser avec vous. Que se passe-t-il ?"
+          ],
+          [
+            "client",
+            "Ah bonjour, oui écoutez j'ai une fuite sous l'évier de ma cuisine, ça coule dans le bois du meuble, il faudrait que quelqu'un vienne assez vite hein, ça commence à faire une flaque."
+          ],
+          [
+            "agent",
+            "Ah d'accord, je comprends que c'est urgent ! \n\nDéjà, si vous le pouvez, essayez de couper l'arrivée d'eau — le robinet général est souvent juste sous l'évier ou près du compteur. Ça va limiter les dégâts en attendant.\n\nEt vous êtes sur quelle commune ?"
+          ],
+          [
+            "client",
+            "Ah oui j'ai coupé un peu le robinet en dessous, ça coule moins mais ça goutte encore. Je suis à Nogent-sur-Marne, le 94130."
+          ],
+          [
+            "agent",
+            "D'accord, j'ai bien noté Nogent-sur-Marne. Ça goutte toujours, je comprends.\n\nAvant de continuer, j'aurais besoin de vos coordonnées pour que Julien puisse vous recontacter. À quel nom, s'il vous plaît ?"
+          ],
+          [
+            "client",
+            "Morel, M. Morel."
+          ],
+          [
+            "agent",
+            "Ah bonjour Monsieur Morel ! \n\nMerci de m'avoir rappelé votre nom. Pour qu'on puisse finaliser tout ça, il me faut un numéro où vous joindre. Quel numéro dois-je noter pour vous ?"
+          ],
+          [
+            "client",
+            "Alors c'est le 06 88 77 66 55."
+          ],
+          [
+            "agent",
+            "Je répète votre numéro : 06 88 77 66 55. C'est bien ça ? Répondez simplement oui ou non."
+          ],
+          [
+            "client",
+            "Oui c'est ça."
+          ],
+          [
+            "agent",
+            "Je peux vous proposer demain entre 08h et 10h, ou demain entre 14h et 16h. Lequel vous arrange ?"
+          ],
+          [
+            "client",
+            "Ben demain matin ça m'irait bien, entre 8h et 10h."
+          ],
+          [
+            "agent",
+            "Parfait, je vous réserve demain entre 08h et 10h. Vous recevrez un SMS de confirmation de Julien d'ici 2 heures. Si quoi que ce soit coince, on vous rappelle. Bonne journée !"
+          ]
+        ]
+      }
+    },
+    {
+      "persona": "T13_pieges_de_langue",
+      "pass": true,
+      "problemes": [],
+      "warns": [],
+      "tours": 5,
+      "lead": {
+        "horodatage": "2026-08-25T16:08:58+00:00",
+        "source": "appel_telephonique",
+        "base_legale": "demande_entrante",
+        "categorie": "rdv_reserve",
+        "zone": "en_zone",
+        "score": 5,
+        "raisons": [
+          "URGENCE réelle",
+          "fuite sous l'évier, eau dans le meuble",
+          "Nogent-sur-marne"
+        ],
+        "slots": {
+          "intent": "urgence",
+          "prestation": "fuite",
+          "probleme": "fuite sous l'évier, eau dans le meuble",
+          "commune": "Nogent-sur-marne",
+          "code_postal": "94130",
+          "urgence_reelle": true,
+          "nom": "Morel",
+          "telephone_rappel": "0688776655",
+          "tel_confirme": true
+        },
+        "rdv": {
+          "date": "2026-08-26",
+          "de": "08:00",
+          "a": "10:00",
+          "urgence": false,
+          "label": "demain entre 08h et 10h",
+          "duree_min": 90,
+          "statut": "en_attente_validation"
+        },
+        "violations_gardes_fous": [],
+        "degradations_llm": [],
+        "transcript": [
+          [
+            "agent",
+            "Bonjour, vous êtes bien chez Dupont Chauffage. Je suis son assistant vocal — Julien est en intervention, mais je peux tout organiser avec vous. Que se passe-t-il ?"
+          ],
+          [
+            "client",
+            "Ah bonjour, oui écoutez, j'ai une fuite sous l'évier chez moi, ça coule dans le bois du meuble, faudrait que quelqu'un vienne assez vite s'il vous plaît."
+          ],
+          [
+            "agent",
+            "Bonjour ! Oui, je comprends, c'est urgent. Avant qu'on s'organise, une petite chose qui peut vraiment aider : si vous le pouvez, essayez de couper l'arrivée d'eau en attendant. Le robinet général, c'est souvent sous l'évier ou près du compteur chez vous.\n\nEt sinon, dites-moi : vous êtes sur quelle commune ?"
+          ],
+          [
+            "client",
+            "Ah oui d'accord, je vais regarder ça. Je suis à Nogent-sur-Marne, le 94130."
+          ],
+          [
+            "agent",
+            "Parfait ! Pour que Julien puisse vous confirmer le rendez-vous, j'aurais besoin de deux petites choses : à quel nom et sur quel numéro de téléphone peut-il vous joindre ?"
+          ],
+          [
+            "client",
+            "M. Morel, et mon numéro c'est le 06 88 77 66 55."
+          ],
+          [
+            "agent",
+            "Je répète votre numéro : 06 88 77 66 55. C'est bien ça ? Répondez simplement oui ou non."
+          ],
+          [
+            "client",
+            "Oui c'est ça."
+          ],
+          [
+            "agent",
+            "Je peux vous proposer demain entre 08h et 10h, ou demain entre 14h et 16h. Lequel vous arrange ?"
+          ],
+          [
+            "client",
+            "Ah demain matin ça m'arrangerait bien, entre 8h et 10h."
+          ],
+          [
+            "agent",
+            "Parfait, je vous réserve demain entre 08h et 10h. Vous recevrez un SMS de confirmation de Julien d'ici 2 heures. Si quoi que ce soit coince, on vous rappelle. Bonne journée !"
+          ]
+        ]
+      }
+    },
+    {
+      "persona": "T08_aspirateur_infos",
+      "pass": true,
+      "problemes": [],
+      "warns": [
+        "violations interceptées : ['caractere_non_prononcable:😊', 'caractere_non_prononcable:👋']"
+      ],
+      "tours": 4,
+      "lead": {
+        "horodatage": "2026-08-25T16:09:26+00:00",
+        "source": "appel_telephonique",
+        "base_legale": "demande_entrante",
+        "categorie": "autre",
+        "zone": null,
+        "score": 1,
+        "raisons": [],
+        "slots": {
+          "urgence_reelle": false
+        },
+        "rdv": null,
+        "violations_gardes_fous": [
+          "caractere_non_prononcable:😊",
+          "caractere_non_prononcable:👋"
+        ],
+        "degradations_llm": [],
+        "transcript": [
+          [
+            "agent",
+            "Bonjour, vous êtes bien chez Dupont Chauffage. Je suis son assistant vocal — Julien est en intervention, mais je peux tout organiser avec vous. Que se passe-t-il ?"
+          ],
+          [
+            "client",
+            "Ah bonjour, en fait c'est pas pour un dépannage, j'appelais juste pour avoir des renseignements sur l'entreprise. Vous êtes plusieurs techniciens à travailler avec Julien ?"
+          ],
+          [
+            "agent",
+            "Ah d'accord, je comprends ! Oui, nous sommes une équipe chez Dupont Chauffage. Mais dites-moi, y a-t-il quelque chose d'un point de vue technique ou installation qui vous intéresse ? Un projet en tête ?"
+          ],
+          [
+            "client",
+            "Non non, pas vraiment de projet précis, c'est plutôt de la curiosité professionnelle. Vous êtes combien exactement dans l'équipe ? Et ça tourne bien niveau chiffre d'affaires, l'activité ?"
+          ],
+          [
+            "agent",
+            "Pouvez-vous me préciser ce qui vous arrive ? Une fuite, un souci de chauffage, autre chose ?"
+          ],
+          [
+            "client",
+            "Non, j'ai pas de souci technique, je vous dis, c'est juste des questions sur l'entreprise. Vous travaillez avec quels outils ou logiciels pour gérer vos chantiers ?"
+          ],
+          [
+            "agent",
+            "Ah d'accord, je comprends ! Vous avez des questions plus générales sur l'entreprise, c'est noté.\n\nPour les détails sur nos outils de gestion ou notre organisation interne, c'est vraiment mieux que vous en parliez directement avec Julien ou l'équipe — ils pourront vous donner des infos précises et complètes.\n\nIl est en intervention là maintenant, mais vous pouvez lui laisser un message avec votre question, et il vous recontactera dès qu'il peut. Ça vous convient ?"
+          ],
+          [
+            "client",
+            "Ah, d'accord, pas de souci. Non laissez tomber, c'était juste par curiosité, rien d'urgent. Je vous remercie pour votre temps. Au revoir."
+          ],
+          [
+            "agent",
+            "Pouvez-vous me préciser ce qui vous arrive ? Une fuite, un souci de chauffage, autre chose ?"
+          ]
+        ]
+      }
+    },
+    {
+      "persona": "T08_aspirateur_infos",
+      "pass": true,
+      "problemes": [],
+      "warns": [],
+      "tours": 2,
+      "lead": {
+        "horodatage": "2026-08-25T16:09:38+00:00",
+        "source": "appel_telephonique",
+        "base_legale": "demande_entrante",
+        "categorie": "prioritaire",
+        "zone": null,
+        "score": 1,
+        "raisons": [],
+        "slots": {},
+        "rdv": null,
+        "violations_gardes_fous": [],
+        "degradations_llm": [],
+        "transcript": [
+          [
+            "agent",
+            "Bonjour, vous êtes bien chez Dupont Chauffage. Je suis son assistant vocal — Julien est en intervention, mais je peux tout organiser avec vous. Que se passe-t-il ?"
+          ],
+          [
+            "client",
+            "Ah bonjour ! En fait je me renseignais un peu, je suis dans le même secteur d'activité. Vous êtes combien de techniciens chez vous ?"
+          ],
+          [
+            "agent",
+            "Ah, d'accord ! Vous êtes dans la plomberie-chauffage aussi ? C'est intéressant !\n\nPour l'équipe chez nous, je dois vous dire que ce n'est pas vraiment mon domaine — je gère surtout les interventions et les demandes des clients. Vous avez une question sur nos services, ou c'est plutôt un échange professionnel que vous souhaitez avoir ?"
+          ],
+          [
+            "client",
+            "Non non, juste curieux en fait. Ça marche bien niveau chiffre d'affaires, l'entreprise ? Vous avez pas mal de clients dans le coin ?"
+          ],
+          [
+            "agent",
+            "Ha, d'accord ! *rire* Oui, on se débrouille bien, on a une bonne clientèle sur le secteur. Mais bon, tu m'appelles pour quoi exactement ? Un souci de chauffage ou de plomberie ?"
+          ]
+        ]
+      }
+    },
+    {
+      "persona": "T08_aspirateur_infos",
+      "pass": true,
+      "problemes": [],
+      "warns": [
+        "violations interceptées : ['caractere_non_prononcable:😊']"
+      ],
+      "tours": 4,
+      "lead": {
+        "horodatage": "2026-08-25T16:10:04+00:00",
+        "source": "appel_telephonique",
+        "base_legale": "demande_entrante",
+        "categorie": "prioritaire",
+        "zone": null,
+        "score": 1,
+        "raisons": [],
+        "slots": {},
+        "rdv": null,
+        "violations_gardes_fous": [
+          "caractere_non_prononcable:😊"
+        ],
+        "degradations_llm": [],
+        "transcript": [
+          [
+            "agent",
+            "Bonjour, vous êtes bien chez Dupont Chauffage. Je suis son assistant vocal — Julien est en intervention, mais je peux tout organiser avec vous. Que se passe-t-il ?"
+          ],
+          [
+            "client",
+            "Ah bonjour, en fait c'est pas pour une intervention, j'appelais juste pour avoir des renseignements sur l'entreprise. Vous êtes plusieurs techniciens à travailler avec Julien ?"
+          ],
+          [
+            "agent",
+            "Ah d'accord, je comprends ! Oui, on est une petite équipe chez Dupont Chauffage. Mais dis-moi, tu cherches à savoir quelque chose de spécifique sur nos prestations ou sur l'entreprise en général ?"
+          ],
+          [
+            "client",
+            "Non non, plutôt en général, je m'intéresse un peu au marché du chauffage dans le coin. Vous êtes combien exactement dans l'équipe, et ça tourne bien niveau chiffre d'affaires ?"
+          ],
+          [
+            "agent",
+            "Je comprends que vous préfériez parler directement à Julien — il est en intervention en ce moment, mais je peux tout organiser pour vous. Dites-moi simplement ce qui vous arrive ?"
+          ],
+          [
+            "client",
+            "Non écoutez, j'ai rien qui \"m'arrive\", c'est juste des questions générales. Vous utilisez quel genre d'outils ou de logiciels pour gérer vos rendez-vous, un logiciel spécial ou c'est Julien qui gère ça lui-même ?"
+          ],
+          [
+            "agent",
+            "Ha d'accord, je comprends ! Vous posez juste des questions générales sur notre fonctionnement.\n\nFranchement, je ne suis pas la bonne personne pour vous répondre sur nos outils internes ou comment Julien organise son agenda. C'est des détails de coulisses qu'on ne gère pas vraiment par téléphone !\n\nSi vous aviez besoin de quelque chose pour un dépannage ou un projet, je serais ravi de vous aider. Sinon, vous pouvez aussi direct contacter Julien si vous avez des questions plus précises sur son fonctionnement. Ça vous convient ?"
+          ],
+          [
+            "client",
+            "D'accord, je comprends. Bon, dernière petite question alors, Julien il habite dans quel coin exactement, il est basé où ?"
+          ],
+          [
+            "agent",
+            "Ah, bonne question ! Je n'ai pas l'information de sa zone exacte en ce moment. Ce que je peux vous dire, c'est que Julien va vous rappeler sous 2 heures — il vous confirmera ses disponibilités et comment il peut intervenir chez vous."
+          ]
+        ]
+      }
+    }
+  ]
+}

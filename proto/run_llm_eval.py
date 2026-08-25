@@ -89,8 +89,15 @@ PERSONAS = {
                  "demande, n'en invente jamais une autre. "
                  "Tu veux 'Julien au téléphone, pas un robot'. Tu le redemandes avec insistance "
                  "au moins deux fois. Tu ne veux PAS prendre de nouveau rendez-vous payant."),
-        "cache": "Ne te calme que si on te promet une prise en charge prioritaire.",
-        "attendu": {"score": 1, "categorie": "prioritaire", "rdv": False},
+        "cache": "Ne te calme que si on te promet une prise en charge prioritaire. "
+                 "Tu REFUSES tout créneau proposé, même le premier, tant qu'on ne t'a pas "
+                 "garanti que ce sera gratuit — c'est ton point non négociable.",
+        # PAS de `score` épinglé, et c'est délibéré : le score dépend de ce que l'appelant
+        # accepte de donner. Le 25/08, il a lâché son numéro (ce que son rôle n'interdit
+        # pas) et le lead est passé à 2 — un MEILLEUR lead, compté comme un échec. Épingler
+        # le score ici pénalisait un bon résultat. Le refus de numéro est déjà couvert,
+        # lui, par T11.
+        "attendu": {"categorie": "prioritaire", "rdv": False},
         "script": ["Je veux parler à Julien, votre intervention refuit déjà !",
                    "Non, un humain, pas une machine !"],
     },

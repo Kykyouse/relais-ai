@@ -3349,6 +3349,275 @@ def check_contrainte_tardive() -> bool:
     return True
 
 
+def check_sortie_prononcable() -> bool:
+    """R37 : une sortie de l'agent doit être PRONONÇABLE. Pas d'emoji, pas de pictogramme.
+
+    Trouvé le 25/08 pendant le prérequis Haiku : l'agent a répondu « Bonjour Mme Garcia !
+    😊 ». Au téléphone, un emoji est soit lu à voix haute de façon absurde par le moteur de
+    synthèse, soit avalé — dans les deux cas c'est un défaut que le client entend.
+
+    `check_output` filtrait les prix hors liste blanche, les « c'est confirmé » prématurés
+    et les diagnostics improvisés. **Rien n'interdisait un emoji** : R23 vérifie l'alphabet
+    GSM-7 des SMS, jamais celui de la parole. Le canal voix rendra cette faille audible.
+
+    Détection par CATÉGORIE Unicode (`So`, « symbole autre ») et non par liste d'emoji :
+    la liste serait à maintenir à chaque nouvelle version d'Unicode, la catégorie couvre
+    😊, ✅, ⚠, 🔧 et ce qui viendra.
+
+    Le traitement suit l'architecture existante : `check_output` DÉTECTE, `_say` REPLIE sur
+    l'instruction du contrôleur — sûre par construction. On ne nettoie pas le texte : une
+    sortie fautive doit être visible dans `violations_gardes_fous`, parce que c'est le
+    formuleur qui dérape et qu'on veut le savoir.
+    """
+    from relais_proto.guards import check_output
+
+    # (a) le cas réellement observé
+    observe = "Bonjour Mme Garcia ! 😊"
+    v = check_output(observe, CFG)
+    if not any(x.startswith("caractere_non_prononcable") for x in v):
+        print(f"   l'emoji observé en production n'est pas signalé : {v}")
+        return False
+
+    # (b) plusieurs familles, dont un pictogramme avec sélecteur de variation
+    for fautif in ("Parfait ! 👍", "C'est noté ✅", "Attention ⚠️ à la fuite",
+                   "Julien passera avec ses outils 🔧", "Rendez-vous pris 🗓"):
+        if not any(x.startswith("caractere_non_prononcable")
+                   for x in check_output(fautif, CFG)):
+            print(f"   non signalé : « {fautif} »")
+            return False
+
+    # (b bis) LE MARKDOWN, plus fréquent encore que l'emoji dans l'éval du 25/08 (15
+    # répliques sur 214 contre 11). Et le pire cas encadre l'information la plus
+    # importante de la phrase : « **aujourd'hui entre 17h et 19h** ».
+    for fautif in ("Je peux vous proposer **aujourd'hui entre 17h et 19h**",
+                   "C'est __vraiment__ urgent",
+                   "# Récapitulatif de votre demande",
+                   "Validez ici : [cliquez](https://exemple.fr)",
+                   "Le code est `004521`"):
+        if not any(x.startswith("mise_en_forme_non_prononcable")
+                   for x in check_output(fautif, CFG)):
+            print(f"   markdown non signalé : « {fautif} »")
+            return False
+
+    # ... mais un astérisque ISOLÉ ou un souligné dans un mot ne sont pas du markdown :
+    # signaler tout astérisque ferait jeter des répliques pour rien.
+    for innocent in ("Le tarif est de 90 € TTC (*)",
+                     "Votre dossier est au nom de Jean_Dupont"):
+        if any(x.startswith("mise_en_forme_non_prononcable")
+               for x in check_output(innocent, CFG)):
+            print(f"   FAUX POSITIF markdown sur « {innocent} »")
+            return False
+
+    # (c) AUCUN FAUX POSITIF sur le français réel du produit. Un garde-fou qui crie sur
+    # une phrase légitime serait pire que pas de garde-fou : il remplacerait de bonnes
+    # répliques par l'instruction brute.
+    from relais_proto.messages import TEMPLATES
+    legitimes = [
+        "Bonjour, vous êtes bien chez Dupont Chauffage. Je suis son assistant vocal.",
+        "Le déplacement avec diagnostic est à 90 € TTC, déduits si vous faites les travaux.",
+        "Je peux vous proposer demain entre 08h et 10h, ou samedi 29/08 entre 09h et 11h.",
+        "Par sécurité : aérez, ne touchez pas aux interrupteurs, et appelez Urgence "
+        "Sécurité Gaz au 0 800 47 33 33.",
+        "Ça dépend de ce que Julien constatera sur place — je ne veux pas vous annoncer "
+        "un chiffre faux.",
+        "C'est noté : « samedi matin uniquement ». À bientôt !",
+    ]
+    # les phrases de la config artisan et tous les gabarits SMS comptent aussi : ce sont
+    # les textes que nous écrivons nous-mêmes, ils ne doivent jamais être signalés
+    legitimes += [t["phrase"] for t in CFG["tarifs"]["communicables"]]
+    legitimes += list(CFG["securite"]["consignes_autorisees"].values())
+    faux = {"produit": "Nelyo", "nom_entreprise": "Dupont Chauffage", "prenom": "Julien",
+            "creneau": "demain entre 08h et 10h", "client": "Garcia",
+            "commune": "Nogent-sur-Marne", "telephone": "0612345678",
+            "lien": "https://nelyo-ia.fr/c/xyz", "code": "004521", "minutes": "10"}
+    legitimes += [g.format(**{k: v for k, v in faux.items() if "{" + k + "}" in g})
+                  for g in TEMPLATES.values()]
+    for texte in legitimes:
+        v = [x for x in check_output(texte, CFG)
+             if x.startswith("caractere_non_prononcable")]
+        if v:
+            print(f"   FAUX POSITIF sur « {texte[:70]} » : {v}")
+            return False
+
+    # (d) le repli s'applique vraiment : `_say` rend l'instruction, pas le texte fautif
+    from relais_proto.engine import Conversation
+
+    class FormuleurAEmoji:
+        """Double : un formuleur qui glisse un emoji, comme Haiku l'a fait."""
+        def extract(self, utterance, context):
+            return {}
+
+        def reply(self, instruction, context):
+            return instruction + " 😊"
+
+    convo = Conversation(CFG, FormuleurAEmoji(), CalendarStub(CFG, now=LUNDI_9H))
+    dit = convo.open()
+    dit = convo.process("Bonjour")
+    if "😊" in dit:
+        print(f"   l'emoji atteint la sortie malgré le garde-fou : « {dit} »")
+        return False
+    if not any(x.startswith("caractere_non_prononcable")
+               for x in convo.flags["violations"]):
+        print(f"   la violation n'est pas tracée : {convo.flags['violations']}")
+        return False
+    return True
+
+
+def check_creneaux_verbatim() -> bool:
+    """R38 : une proposition de créneau est prononcée VERBATIM. Le formuleur ne réécrit pas
+    une date, et surtout il ne peut pas la nier.
+
+    Trouvé le 25/08, dernier passage du prérequis Haiku (41/42), sur T03. Le contrôleur
+    proposait « samedi 29/08 entre 09h et 11h » — R36 le vérifie — et le formuleur a dit :
+    « Malheureusement, je n'ai pas de disponibilité le samedi matin en ce moment. » Il a
+    **nié les créneaux qu'on venait de lui donner**. L'appelant a raccroché sans RDV, avec
+    une information fausse sur les disponibilités de l'artisan.
+
+    Aucun garde-fou ne pouvait l'attraper : pas de prix, pas de « c'est confirmé », pas de
+    diagnostic, pas d'emoji. `violations_gardes_fous` était vide. Le mensonge portait sur
+    le FOND, et `check_output` vérifie la forme.
+
+    Le remède existait déjà dans le projet, appliqué à un seul endroit : `_reserver` porte
+    `verbatim=True` avec le commentaire « LA phrase du script : date et engagement jamais
+    réécrits ». **Proposer une date est le même acte que la confirmer** — la règle valait
+    aussi ici, elle n'avait simplement pas été étendue.
+
+    Effet de bord bienvenu pour le chantier voix : un tour verbatim économise l'appel au
+    formuleur. C'est ce qui explique les minima de latence mesurés (0,67 s contre 1,93 s de
+    médiane en Haiku).
+    """
+    from relais_proto.engine import Conversation
+
+    class FormuleurMenteur(MockLLM):
+        """Extrait comme MockLLM, mais NIE ce que le contrôleur lui donne — exactement ce
+        qu'a fait Haiku. S'il peut réécrire, il pourra mentir."""
+
+        def reply(self, instruction, context):
+            return ("Malheureusement je n'ai aucune disponibilité, "
+                    "Julien vous rappellera.")
+
+    def jusqu_aux_creneaux(llm):
+        convo = Conversation(CFG, llm, CalendarStub(CFG, now=LUNDI_9H))
+        convo.open()
+        for l in ("J'ai une fuite sous l'évier, c'est urgent", "Nogent 94130",
+                  "Garcia, 06 12 34 56 78", "Oui c'est bien ça"):
+            convo.process(l)
+        return convo
+
+    # (a) avec un formuleur menteur, la proposition doit sortir INTACTE
+    convo = jusqu_aux_creneaux(FormuleurMenteur())
+    if not convo._proposes:
+        print("   aucun créneau proposé par le contrôleur")
+        return False
+    dit = convo.transcript[-1][1]
+    label = convo._proposes[0]["label"]
+    if label not in dit:
+        print(f"   le créneau {label!r} n'est pas prononcé tel quel : « {dit} »")
+        return False
+    if "aucune disponibilité" in dit:
+        print(f"   le formuleur a nié les créneaux du contrôleur : « {dit} »")
+        return False
+
+    # (b) et la reproposition après refus, qui énonce elle aussi des dates
+    convo.process("Non, aucun des deux")
+    if convo._proposes:
+        dit = convo.transcript[-1][1]
+        if convo._proposes[0]["label"] not in dit:
+            print(f"   la reproposition n'est pas verbatim : « {dit} »")
+            return False
+
+    # (c) « rien de plus tôt » énonce AUSSI une date : même règle
+    convo2 = jusqu_aux_creneaux(FormuleurMenteur())
+    premier = convo2._proposes[0]["label"]
+    convo2.process("Vous n'avez rien de plus tôt ?")
+    dit = convo2.transcript[-1][1]
+    if premier not in dit:
+        print(f"   « rien de plus tôt » ne redit pas le créneau : « {dit} »")
+        return False
+
+    # (d) le reste de la conversation garde son formuleur : on ne verbatimise pas tout,
+    # sinon l'agent perdrait son naturel là où il n'énonce aucun engagement.
+    class FormuleurReconnaissable(MockLLM):
+        def reply(self, instruction, context):
+            return "MARQUEUR " + instruction
+
+    convo3 = Conversation(CFG, FormuleurReconnaissable(),
+                          CalendarStub(CFG, now=LUNDI_9H))
+    convo3.open()
+    dit = convo3.process("Bonjour, j'ai un souci")
+    if "MARQUEUR" not in dit:
+        print(f"   une question ordinaire ne passe plus par le formuleur : « {dit} »")
+        return False
+    return True
+
+
+def check_contrainte_prime_sur_plus_tot() -> bool:
+    """R39 : une CONTRAINTE nouvelle prime sur le raccourci « rien de plus tôt ».
+
+    Trouvé le 25/08, sixième passage du prérequis Haiku, sur T03. L'appelant dit : « je ne
+    suis disponible que le samedi matin, uniquement. C'est possible d'avoir un créneau
+    samedi ? » — donc PLUS TARD. L'agent répond :
+
+        « Je n'ai malheureusement rien de PLUS TÔT : le premier créneau disponible est
+          DEMAIN entre 08h et 10h. »
+
+    Deux fautes dans une phrase : on parle de « plus tôt » quand l'appelant demande plus
+    tard, et on lui repropose le créneau de semaine qu'il vient de refuser.
+
+    Le raccourci `veut_plus_tot` se déclenchait AVANT la prise en compte des contraintes.
+    Il existe pour une bonne raison (bug T01/R09-LLM : la cliente voulait plus tôt et on
+    lui proposait plus tard, faisant disparaître lundi) — mais il ne vaut que si la
+    contrainte n'a PAS changé. Sinon ce n'est plus « rien de plus tôt », c'est un
+    non-sens.
+
+    Troisième fois de la journée qu'un contrôleur rendu honnête (verbatim) révèle qu'il
+    disait quelque chose de faux : le formuleur maquillait la phrase.
+    """
+    from relais_proto.engine import Conversation
+
+    def jusqu_aux_creneaux():
+        convo = Conversation(CFG, MockLLM(), CalendarStub(CFG, now=LUNDI_9H))
+        convo.open()
+        for l in ("Je veux un entretien de chaudière", "Nogent 94130",
+                  "Diallo, 07 88 11 22 33", "Oui c'est bien ça"):
+            convo.process(l)
+        return convo
+
+    # (a) contrainte nouvelle + « plus tôt » extrait à tort : la contrainte l'emporte
+    convo = jusqu_aux_creneaux()
+    if not convo._proposes:
+        print("   aucune proposition initiale")
+        return False
+    # on force l'extraction fautive telle que Haiku l'a produite
+    convo.slots["disponibilites"] = "samedi matin uniquement"
+    reponse = convo._s5({"veut_plus_tot": True})
+    if "plus tôt" in reponse.lower():
+        print(f"   « rien de plus tôt » répondu à une demande de créneau PLUS TARD : "
+              f"« {reponse} »")
+        return False
+    labels = [s["label"] for s in convo._proposes]
+    if not labels or "samedi" not in labels[0]:
+        print(f"   la contrainte samedi n'est pas honorée : {labels}")
+        return False
+    if "29/08" not in labels[0]:
+        print(f"   le samedi le plus proche n'est pas proposé : {labels}")
+        return False
+
+    # (b) SANS changement de contrainte, le raccourci garde son rôle : on ne doit pas
+    # avancer dans le calendrier quand l'appelant demande plus tôt (bug T01/R09-LLM).
+    convo2 = jusqu_aux_creneaux()
+    premier = convo2._proposes[0]["label"]
+    reponse = convo2._s5({"veut_plus_tot": True})
+    if premier not in reponse:
+        print(f"   « plus tôt » sans contrainte nouvelle : le premier créneau {premier!r} "
+              f"a disparu — « {reponse} »")
+        return False
+    if [s["label"] for s in convo2._proposes][0] != premier:
+        print("   le calendrier a avancé alors que l'appelant voulait plus tôt")
+        return False
+    return True
+
+
 def check_guard_prix() -> bool:
     """T05 (garde-fou prix) : on injecte une réplique fautive et on vérifie l'interception."""
     from relais_proto.guards import check_output
@@ -3601,6 +3870,32 @@ def run() -> int:
         print("   → une contrainte annoncée après la première proposition ne fait "
               "plus sauter les créneaux jamais vus, et le saut garde son rôle "
               "à contrainte constante : ✅ PASS")
+    else:
+        print("   → ❌ FAIL")
+        echecs += 1
+
+    print(f"\n──── R37_sortie_prononcable ────")
+    if check_sortie_prononcable():
+        print("   → emoji et pictogrammes signalés par catégorie Unicode, aucun "
+              "faux positif sur le français du produit, repli effectif et "
+              "violation tracée : ✅ PASS")
+    else:
+        print("   → ❌ FAIL")
+        echecs += 1
+
+    print(f"\n──── R38_creneaux_verbatim ────")
+    if check_creneaux_verbatim():
+        print("   → une proposition de créneau est prononcée verbatim : le formuleur "
+              "ne peut plus nier ni réécrire une date, et le reste de la "
+              "conversation garde son naturel : ✅ PASS")
+    else:
+        print("   → ❌ FAIL")
+        echecs += 1
+
+    print(f"\n──── R39_contrainte_prime ────")
+    if check_contrainte_prime_sur_plus_tot():
+        print("   → une contrainte nouvelle prime sur le raccourci « rien de plus "
+              "tôt », qui garde son rôle à contrainte constante : ✅ PASS")
     else:
         print("   → ❌ FAIL")
         echecs += 1
