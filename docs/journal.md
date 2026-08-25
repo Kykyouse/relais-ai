@@ -21,7 +21,7 @@ du produit — et le nom commercial, qui commande le reste.
 
 ```bash
 cd proto
-python run_scenario.py                              # 32 tests, ~3 s, sans clé ni base
+python run_scenario.py                              # 33 tests, ~3 s, sans clé ni base
 python semer_artisans.py [--ecrire]                 # amorce la table `artisan`
 python run_depot_pg.py [--migrer]                   # contrat du port contre Supabase
 uvicorn serveur:app --port 8000                     # API HTTP
@@ -46,6 +46,7 @@ python run_llm_eval.py [--mock] [--n 3]             # éval appelant-simulé
 | SMS de confirmation au client, chemin nominal (R27) | ✅ | mock, mutations 5/5 |
 | Table `artisan` + FK sur 5 tables (migration 008) | ✅ | **Supabase réel**, contrat du port |
 | Connexion artisan par code SMS (R28) | ✅ | mock, mutations 7/8 (1 défense en profondeur) |
+| Nom du produit et expéditeur SMS en config (R29) | ✅ | mock, mutations 7/7 |
 
 ## Ce qui est encore un double (et non un manque caché)
 
@@ -99,11 +100,9 @@ python run_llm_eval.py [--mock] [--n 3]             # éval appelant-simulé
    uniquement (ni espace ni spécial), déclaré en minuscules, termes génériques interdits
    (RDV, ALERTE, LIVRAISON, PAIEMENT…), et correspondance avec le nom commercial ou une
    marque dont on a la titularité.
-3. **Conséquences code du nom** : « Relais : » est **en dur** dans `confirmation_artisan` et
-   `expiration_artisan` → doit devenir une variable de config produit, et le pire-cas de
-   R23 devra être rejoué avec un nom de 11 caractères. Et `sms.expediteur` est aujourd'hui
-   lu dans la config **artisan** → doit remonter au niveau produit, sinon chaque artisan
-   pourrait déclarer le sien, contre la décision actée.
+3. ~~Conséquences code du nom~~ — **traitées le 25/08** (`config/produit.json`, R29).
+   Le nom et l'expéditeur sont des réglages, les contraintes AF2M sont vérifiées au
+   démarrage, et R23 éprouve déjà 11 caractères. Le jour où le nom arrive : une ligne.
 4. **Premier calendrier à brancher** (Google / Outlook / aucun) — tranché par les
    **interviews terrain** du cousin, question ajoutée à sa liste. L'OAuth Google n'est
    **volontairement pas lancé** : sa vérification exige nom d'app, domaine vérifié et
@@ -136,8 +135,8 @@ Les candidats sans dépendance externe, par valeur décroissante :
 1. **Qualité de l'agent** — faire tourner l'éval contre le vrai modèle, analyser, corriger.
    C'est le différenciateur du produit et le seul chantier qui ne dépend de personne.
 2. **Un vrai parcours d'onboarding** pour remplacer `semer_artisans.py`.
-3. **Le nom du produit en config** (dette n°3) : faisable sans connaître le nom final,
-   justement pour que le jour où il arrive, ce soit une ligne de config.
+3. **Un worker de rattrapage** pour les RDV décidés dont le SMS n'a pas été mis en file
+   (l'écriture et la mise en file ne sont pas atomiques — point laissé ouvert le 25/08).
 
 Le spike vocal ne s'ouvre **qu'en session dédiée**.
 
@@ -1745,3 +1744,64 @@ panne SMS nous enfermerait dehors. Et `semer_artisans.py` reste le seul chemin d
 du registre : il faudra un vrai onboarding, pas un script.
 
 Suite : **32 PASS**, contrat Postgres vert contre les deux migrations.
+
+### 25/08 — le nom du produit devient un réglage, avant même d'être connu
+
+**Fait.** `config/produit.json` + `relais_proto/produit.py` + **R29**. Le jour où le cousin
+tranche le nom, c'est **une ligne à changer**, dans un fichier, une fois.
+
+**Pourquoi maintenant, justement parce qu'on ne connaît pas le nom.** C'est le seul moment
+où ce travail a du sens : le faire après aurait été une chasse dans les gabarits, sous la
+pression d'une déclaration en attente.
+
+### Deux défauts, et le second était le plus grave
+
+1. **« Relais » était en dur dans trois gabarits** — dont `code_connexion_artisan`, ajouté
+   la veille : la dette se creusait pendant qu'on la constatait.
+2. **`sms.expediteur` vivait dans la config de chaque ARTISAN**, ce qui contredisait
+   frontalement la décision actée du 25/08 : un expéditeur **unique** déclaré sous notre
+   société. En l'état, chaque artisan aurait déclaré le sien. Ce n'était pas une dette de
+   confort mais un **écart entre le code et une décision verrouillée**.
+
+### La séparation retenue
+
+- **config ARTISAN** (`config/dupont.json`) : ce que l'agent sait de LUI — tarifs, zone,
+  horaires, délais. Elle lui appartient.
+- **config PRODUIT** (`config/produit.json`) : qui NOUS sommes — le nom affiché dans les
+  SMS qu'il reçoit, et l'expéditeur déclaré chez l'opérateur. Il ne peut rien y régler.
+
+La fusion se fait **au chargement du registre** (`produit.appliquer`), pas en passant un
+second argument à chaque constructeur de message : `cfg` devient « tout ce que le système
+sait pour cet artisan », ce qui était déjà son rôle. Aucune signature existante n'a changé.
+
+### Les contraintes AF2M sont encodées, plus seulement écrites
+
+`produit.valider_expediteur` refuse au **démarrage** : plus de 11 caractères, tout ce qui
+n'est pas alphanumérique latin (espace, accent, tiret), et les termes génériques
+(`rdv`, `alerte`, `livraison`, `paiement`…). Un nom qui ne passerait pas la déclaration doit
+être refusé tout de suite, pas découvert 72 heures après le dépôt du dossier. La règle
+vivait dans le journal depuis ce matin ; elle vit maintenant dans le code.
+
+Corollaire : **le pire cas de R23 se joue désormais avec un nom de 11 caractères**
+(« Chantierpro »), la limite AF2M — puisque le nom affiché et l'expéditeur désigneront la
+même marque, il n'y a pas de raison que l'un dépasse l'autre.
+
+### Détails qui comptent
+
+- `sms.expediteur` a été **retiré** de `config/dupont.json` et de la spec. Le laisser
+  traîner ferait croire qu'il est réglable, et le premier onboarding le remplirait pour
+  rien. R29 vérifie qu'il n'y revient pas.
+- Sans config produit, l'envoi est refusé par un échec **définitif** : aucun passage de
+  worker ne réparera une config manquante, et signer un SMS de rien serait pire que ne pas
+  l'envoyer.
+- La spec artisan portait encore l'arbitrage « sender alphanumérique vs SMS
+  bidirectionnel », tranché le 23/08. Nettoyé au passage.
+
+**Mutation : 7/7.** Dont le retour du nom en dur, le nom redevenu une constante déguisée
+derrière la config, l'artisan qui reprend la main sur l'expéditeur, et chacune des trois
+contraintes AF2M retirée séparément.
+
+**Reste à faire le jour où le nom arrive** : changer `config/produit.json`, vérifier que
+R23 passe (il éprouve déjà 11 caractères), déposer le Sender ID. Rien d'autre dans le code.
+
+Suite : **33 PASS**, contrat Postgres vert.

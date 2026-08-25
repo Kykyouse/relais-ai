@@ -100,9 +100,17 @@ class EnvoyeurOVH:
             # en numéro court, on n'envoie PAS de clé `sender`.
             corps["senderForResponse"] = True
         else:
-            expediteur = (cfg.get("sms") or {}).get("expediteur")
-            if not expediteur:
-                raise EchecDefinitif("sms.expediteur absent de la config artisan")
+            # L'expéditeur vient de la config PRODUIT, jamais de celle de l'artisan.
+            # C'est la décision du 25/08 : un expéditeur unique déclaré sous NOTRE
+            # société — un Kbis à fournir au lieu d'un par artisan, une réputation qui
+            # se cumule chez les opérateurs, et l'honnêteté vis-à-vis d'eux puisque
+            # c'est nous qui émettons. Le lire dans la config artisan, comme avant,
+            # aurait laissé chaque artisan déclarer le sien.
+            from .produit import ConfigProduitInvalide, de_config
+            try:
+                expediteur = de_config(cfg)["expediteur_sms"]
+            except ConfigProduitInvalide as exc:
+                raise EchecDefinitif(str(exc)) from None
             corps["sender"] = expediteur
         try:
             reponse = self.transport(f"/sms/{self.compte}/jobs", **corps)

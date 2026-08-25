@@ -13,7 +13,7 @@ import re
 import sys
 from zoneinfo import ZoneInfo
 
-from relais_proto import messages
+from relais_proto import messages, produit
 from relais_proto.calendar_stub import CalendarStub
 from relais_proto.depot import DepotMemoire
 from relais_proto.engine import Conversation
@@ -25,8 +25,13 @@ from relais_proto.rdv import (Rdv, StatutRdv, TransitionInterdite,
                               calculer_expiration)
 from relais_proto.scoring import build_lead
 
-CFG = json.loads((pathlib.Path(__file__).parent / "config" / "dupont.json")
-                 .read_text(encoding="utf-8"))
+_DOSSIER_CONFIG = pathlib.Path(__file__).parent / "config"
+# La config artisan SEULE ne suffit plus : depuis le 25/08 les gabarits nomment le
+# produit, et l'expéditeur SMS vient de la config produit. `appliquer` fait la fusion
+# que le registre fait en production — les tests voient donc la même chose que la prod.
+CFG = produit.appliquer(
+    json.loads((_DOSSIER_CONFIG / "dupont.json").read_text(encoding="utf-8")),
+    produit.charger(_DOSSIER_CONFIG))
 
 SCENARIOS = {
     "T01_urgence_fuite": {
@@ -1392,8 +1397,10 @@ def check_adaptateur_ovh() -> bool:
     if corps["receivers"] != ["+33612345678"]:
         print(f"   destinataire non normalisé : {corps['receivers']}")
         return False
-    if corps["sender"] != CFG["sms"]["expediteur"]:
-        print(f"   expéditeur : {corps['sender']!r}, attendu la config artisan")
+    # l'expéditeur vient de la config PRODUIT, pas de celle de l'artisan : décision du
+    # 25/08, un expéditeur unique déclaré sous notre société
+    if corps["sender"] != CFG["produit"]["expediteur_sms"]:
+        print(f"   expéditeur : {corps['sender']!r}, attendu la config produit")
         return False
     if corps.get("noStopClause") is not True:
         print("   noStopClause absent : la clause STOP mangerait 20 caractères utiles "
@@ -1408,8 +1415,10 @@ def check_adaptateur_ovh() -> bool:
         print(f"   coût de l'envoi non remonté : {envoi.cout!r}, attendu 1")
         return False
 
-    cfg_sans_expediteur = {**CFG, "sms": {k: v for k, v in CFG["sms"].items()
-                                          if k != "expediteur"}}
+    # config produit absente = défaut de câblage : on refuse d'envoyer plutôt que de
+    # signer le SMS de rien. Un échec DÉFINITIF, pas un réessai — aucun passage de worker
+    # ne réparera une config manquante.
+    cfg_sans_expediteur = {k: v for k, v in CFG.items() if k != "produit"}
     try:
         EnvoyeurOVH(transport_ok, "sms-ab12345-1").envoyer(msg, cfg_sans_expediteur)
         print("   expéditeur manquant accepté en mode normal")
@@ -1604,6 +1613,11 @@ def check_cout_sms() -> bool:
         "lien": "https://relais.app/c/" + "x" * 22,
         "code": "000000",                                # 6 chiffres, zéros compris
         "minutes": "10",
+        # Le nom du produit est INCONNU (décision du cousin) et ne sera pas « Relais ».
+        # On éprouve donc le pire cas plausible : 11 caractères, la limite que la Charte
+        # AF2M impose au Sender ID — le nom affiché et l'expéditeur désigneront la même
+        # marque, il n'y a pas de raison que l'un dépasse l'autre.
+        "produit": "Chantierpro",                        # 11 car. (Relais : 6)
     }
 
     ok = True
@@ -2467,6 +2481,120 @@ def check_connexion_sms() -> bool:
     return True
 
 
+def check_config_produit() -> bool:
+    """R29 : le nom du produit et l'expéditeur SMS sont de la CONFIG, pas du code.
+
+    Deux défauts distincts corrigés le 25/08, et le second était le plus grave :
+
+    * « Relais » était écrit **en dur** dans trois gabarits, alors que le nom final n'est
+      pas tranché et ne sera pas « Relais » (nom de code interne). Le rendre paramétrable
+      AVANT de le connaître est ce qui permet d'attendre la décision sans être bloqué ;
+    * `sms.expediteur` vivait dans la config de chaque **artisan**, ce qui contredisait
+      frontalement la décision actée du 25/08 : un expéditeur UNIQUE déclaré sous NOTRE
+      société. En l'état, chaque artisan aurait déclaré le sien.
+
+    Ce test verrouille les deux, plus les contraintes AF2M encodées dans `produit.py` —
+    elles sont là pour qu'un nom impossible soit refusé au démarrage, et non découvert
+    72 heures après le dépôt du dossier.
+    """
+    from relais_proto import produit as prod
+    from relais_proto.envoi_ovh import EnvoyeurOVH
+    from relais_proto.envoi import EchecDefinitif
+    from relais_proto.messages import TEMPLATES
+
+    # (a) plus AUCUN nom de produit en dur dans les gabarits. Le test cherche le nom
+    # actuel : le jour où il change, ce qui traîne encore en dur apparaît ici.
+    nom_actuel = CFG["produit"]["nom"]
+    for cle, gabarit in TEMPLATES.items():
+        if nom_actuel in gabarit:
+            print(f"   gabarit {cle} contient « {nom_actuel} » en dur : "
+                  f"il doit passer par {{produit}}")
+            return False
+
+    # (b) et le nom rendu est bien CELUI DE LA CONFIG, pas une constante déguisée : on
+    # rend les gabarits avec un autre nom et on vérifie qu'il ressort.
+    cfg_autre = prod.appliquer(CFG, {"nom": "Zephyr", "expediteur_sms": "Zephyr"})
+    rdv_bidon = _rdv_test(StatutRdv.EN_ATTENTE_VALIDATION, echu=False)
+    lead_bidon = {"slots": {"nom": "Garcia", "telephone_rappel": "0612345678",
+                            "commune": "Nogent-sur-Marne"}}
+    texte = messages.relance_artisan(rdv_bidon, lead_bidon, cfg_autre).texte
+    if not texte.startswith("Zephyr"):
+        print(f"   le nom du produit ne vient pas de la config : « {texte} »")
+        return False
+
+    # (c) l'expéditeur SMS vient de la config PRODUIT. Un artisan qui tenterait de poser le
+    # sien ne doit rien changer — c'est le sens de l'expéditeur unique.
+    vus = []
+    cfg_artisan_bavard = {**cfg_autre, "sms": {**cfg_autre.get("sms", {}),
+                                               "expediteur": "PasLeSien"}}
+    msg = MessageSortant(id="m", cle_idempotence="k", destinataire=Destinataire.CLIENT,
+                         canal=messages.Canal.SMS, cible="0612345678",
+                         texte="test", cree_a=LUNDI_9H, artisan_id="art-dupont")
+    EnvoyeurOVH(lambda chemin, **corps: (vus.append(corps) or
+                                         {"ids": [1], "validReceivers": ["+33612345678"],
+                                          "invalidReceivers": [],
+                                          "totalCreditsRemoved": 1}),
+                "sms-ab12345-1").envoyer(msg, cfg_artisan_bavard)
+    if vus[0].get("sender") != "Zephyr":
+        print(f"   expéditeur envoyé : {vus[0].get('sender')!r}, attendu celui de la "
+              f"config produit — un artisan ne doit pas pouvoir imposer le sien")
+        return False
+
+    # (d) sans config produit, on REFUSE d'envoyer plutôt que de signer de rien, et l'échec
+    # est DÉFINITIF : aucun passage de worker ne réparera une config manquante.
+    try:
+        EnvoyeurOVH(lambda chemin, **corps: {}, "sms-ab12345-1").envoyer(
+            msg, {k: v for k, v in CFG.items() if k != "produit"})
+        print("   un SMS est parti sans config produit")
+        return False
+    except EchecDefinitif:
+        pass
+
+    # (e) les contraintes de la Charte AF2M, encodées plutôt que rappelées dans un
+    # document. Un nom qui ne passerait pas la déclaration doit être refusé AU DÉMARRAGE.
+    refuses = [
+        ("Douzecarac", "onze caractères max"),      # 10 → doit PASSER, cf. acceptes
+        ("Chantierpros", "12 caractères"),
+        ("Mon Produit", "espace"),
+        ("Réparo", "accent"),
+        ("Repar-o", "tiret"),
+        ("RDV", "terme générique"),
+        ("alerte", "terme générique"),
+        ("", "vide"),
+    ]
+    for nom, motif in refuses[1:]:
+        try:
+            prod.valider_expediteur(nom)
+        except prod.ConfigProduitInvalide:
+            continue
+        print(f"   expéditeur « {nom} » accepté alors qu'il viole : {motif}")
+        return False
+    for nom in ("Douzecarac", "Chantierpro", "Relais", "Zephyr42"):
+        try:
+            prod.valider_expediteur(nom)
+        except prod.ConfigProduitInvalide as exc:
+            print(f"   expéditeur « {nom} » refusé à tort : {exc}")
+            return False
+
+    # (f) le fichier réellement livré passe ses propres règles. Sans ça, le produit
+    # démarrerait avec un expéditeur que l'opérateur refusera.
+    try:
+        livre = prod.charger(_DOSSIER_CONFIG)
+    except prod.ConfigProduitInvalide as exc:
+        print(f"   config/produit.json invalide : {exc}")
+        return False
+    if livre["nom"] != nom_actuel:
+        print("   la config produit chargée ne correspond pas à celle des tests")
+        return False
+
+    # (g) l'artisan ne porte PLUS d'expéditeur : le laisser traîner dans sa config ferait
+    # croire qu'il est réglable, et le premier onboarding le remplirait pour rien.
+    if "expediteur" in (CFG.get("sms") or {}):
+        print("   sms.expediteur traîne encore dans la config artisan")
+        return False
+    return True
+
+
 def check_guard_prix() -> bool:
     """T05 (garde-fou prix) : on injecte une réplique fautive et on vérifie l'interception."""
     from relais_proto.guards import check_output
@@ -2649,6 +2777,15 @@ def run() -> int:
         print("   → code à 6 chiffres envoyé tout de suite et stocké en empreinte, "
               "essais comptés puis code tué, expiration, un seul code vivant, frein "
               "au renvoi, aucune énumération de numéro : ✅ PASS")
+    else:
+        print("   → ❌ FAIL")
+        echecs += 1
+
+    print(f"\n──── R29_config_produit ────")
+    if check_config_produit():
+        print("   → aucun nom de produit en dur, nom et expéditeur SMS lus dans la "
+              "config produit (un artisan ne peut pas imposer le sien), contraintes "
+              "AF2M refusées au démarrage : ✅ PASS")
     else:
         print("   → ❌ FAIL")
         echecs += 1

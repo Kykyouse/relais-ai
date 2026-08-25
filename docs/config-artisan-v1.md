@@ -124,11 +124,17 @@ Version 0.1 — 21/08/2026 · Compagnon de `script-conversation-v1.md`
   },
 
   "sms": {
-    "expediteur": "DupontChauf",              // 11 car. max (sender ID alphanumérique)
-                                              // ATTENTION : un sender alphanumérique ne
-                                              // REÇOIT PAS de réponse. Incompatible avec
-                                              // le SMS bidirectionnel exigé par la spec
-                                              // produit §3.5bis — arbitrage à trancher.
+    // PLUS D'EXPÉDITEUR ICI (retiré le 25/08). Décision : un expéditeur SMS UNIQUE,
+    // déclaré sous NOTRE société, dans `proto/config/produit.json`. Motifs : un seul
+    // Kbis à fournir au lieu d'un par artisan, une réputation qui se cumule chez les
+    // opérateurs, et l'honnêteté vis-à-vis d'eux — c'est nous qui émettons. Les SMS
+    // clients nomment l'artisan DANS le texte (« Bonjour, c'est {nom_entreprise} »),
+    // donc il reste identifiable.
+    //
+    // L'arbitrage « sender alphanumérique vs SMS bidirectionnel » qui figurait ici est
+    // TRANCHÉ depuis le 23/08 : le SMS est strictement sortant et le « Répondez OUI » de
+    // la spec §3.5bis est remplacé par un lien à un tap. Motif vérifié : les numéros
+    // mobiles FR sont interdits à l'A2P, et le bidirectionnel imposerait un numéro 09 3X.
     "plage_silence": { "de": "21:00", "a": "08:00" },  // aucun SMS CLIENT dans cette plage :
                                               // une échéance peut tomber à 3 h du matin
     "essais_max": 3,                          // au-delà : message en échec, visible en monitoring

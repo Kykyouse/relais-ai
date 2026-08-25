@@ -1,11 +1,14 @@
 #!/usr/bin/env python3
 """Exploration manuelle automatisée : je joue l'appelant sur les 6 cas non couverts."""
 import json, pathlib
+from relais_proto import produit
 from relais_proto.engine import Conversation
 from relais_proto.llm import MockLLM
 from relais_proto.scoring import build_lead
 
-CFG = json.loads(pathlib.Path("config/dupont.json").read_text(encoding="utf-8"))
+CFG = produit.appliquer(
+    json.loads(pathlib.Path("config/dupont.json").read_text(encoding="utf-8")),
+    produit.charger(pathlib.Path("config")))
 
 CAS = {
     "A_tout_d_un_coup": [

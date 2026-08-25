@@ -1,10 +1,11 @@
 """Messages sortants (SMS client, relance artisan) : catalogue fermé + file d'attente.
 
 Comme les consignes sécurité, **les textes sont écrits par nous**, pas par le LLM et pas
-par l'artisan (cf. docs/config-artisan-v1.md : `sms.templates_personnalises = null` en V1,
-l'artisan ne règle que son sender ID). Un SMS est une sortie de l'agent au même titre
-qu'une réplique au téléphone : il passe donc par `guards.check_output` avant d'entrer dans
-la file — règle n°2 du projet, étendue au canal écrit.
+par l'artisan (cf. docs/config-artisan-v1.md : `sms.templates_personnalises = null` en V1).
+Il ne règle pas non plus l'expéditeur : depuis le 25/08 c'est un expéditeur UNIQUE, déclaré
+sous notre société, qui vit dans la config produit (`produit.py`). Un SMS est une sortie de
+l'agent au même titre qu'une réplique au téléphone : il passe donc par `guards.check_output`
+avant d'entrer dans la file — règle n°2 du projet, étendue au canal écrit.
 
 Ce module NE parle à aucun fournisseur. Il produit des brouillons ; l'envoi réel (et la
 plage de non-envoi 21 h–08 h, décidée pour plus tard) viendront avec l'adaptateur SMS.
@@ -15,7 +16,7 @@ import datetime as dt
 from dataclasses import dataclass
 from enum import Enum
 
-from . import temps
+from . import produit, temps
 from .guards import check_output
 
 
@@ -133,12 +134,12 @@ TEMPLATES = {
     # tient en quelques caractères et vaut mieux qu'un rappel de sécurité par ailleurs :
     # c'est au moment où il lit le code que l'artisan peut se faire manipuler.
     "code_connexion_artisan": (
-        "Relais : votre code de connexion est {code}. Valable {minutes} minutes. "
+        "{produit} : votre code de connexion est {code}. Valable {minutes} minutes. "
         "Ne le communiquez à personne."),
     "confirmation_artisan": (
-        "Relais : {client} a validé le créneau {creneau}. C'est dans votre agenda."),
+        "{produit} : {client} a validé le créneau {creneau}. C'est dans votre agenda."),
     "expiration_artisan": (
-        "Relais : RDV expiré sans validation - {creneau}, {client} ({commune}). "
+        "{produit} : RDV expiré sans validation - {creneau}, {client} ({commune}). "
         "Créneau libéré, client prévenu. Rappeler le {telephone}."),
 }
 
@@ -152,6 +153,12 @@ def _texte(cle: str, cfg: dict, *, rdv_valide: bool = False, **variables: str) -
     début et n'avait jamais servi : il était prévu exactement pour ce message, qui
     n'existait pas encore.
     """
+    # `{produit}` est fourni ici et jamais par l'appelant : le nom du produit vient de la
+    # config produit (`config/produit.json`), pas d'un argument que chaque constructeur
+    # pourrait oublier ou contredire. Il était écrit en dur dans trois gabarits jusqu'au
+    # 25/08, alors que le nom final n'est pas tranché et ne sera pas « Relais ».
+    if "{produit}" in TEMPLATES[cle]:
+        variables = {**variables, "produit": produit.de_config(cfg)["nom"]}
     texte = TEMPLATES[cle].format(**variables)
     # un SMS est une sortie de l'agent : même contrôle qu'une réplique au téléphone
     violations = check_output(texte, cfg, rdv_valide=rdv_valide)

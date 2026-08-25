@@ -10,7 +10,7 @@
                                                     # tests seulement, jamais le lien 1-tap
     python envoyer_un_sms.py 0612345678 --envoyer --expediteur Relais
                                                     # force l'expediteur, sans toucher
-                                                    # sms.expediteur de dupont.json
+                                                    # config/produit.json
 
 Par défaut ce script **n'envoie rien** : il affiche le corps exact de la requête. Il faut
 `--envoyer` pour qu'un SMS parte. Un script qui sort du système ne doit pas pouvoir le faire
@@ -40,10 +40,14 @@ import sys
 
 from dotenv import load_dotenv
 
+from relais_proto import produit
+
 RACINE = pathlib.Path(__file__).parent
 load_dotenv(RACINE.parent / ".env")
 
-CFG = json.loads((RACINE / "config" / "dupont.json").read_text(encoding="utf-8"))
+CFG = produit.appliquer(
+    json.loads((RACINE / "config" / "dupont.json").read_text(encoding="utf-8")),
+    produit.charger(RACINE / "config"))
 TEXTE = ("Bonjour Adélan, c'est un test technique Relais-ai. Aucun rendez-vous n'est concerne. "
          "Vous pouvez ignorer ce message.")
 
@@ -127,7 +131,9 @@ def run() -> int:
         return 2
 
     if expediteur_force:
-        CFG.setdefault("sms", {})["expediteur"] = expediteur_force
+        # ecrase l'expediteur PRODUIT le temps de ce test, sans toucher au fichier :
+        # depuis le 25/08 il ne vient plus de la config artisan (expediteur unique)
+        CFG["produit"] = {**CFG["produit"], "expediteur_sms": expediteur_force}
 
     from relais_proto import temps
     message = MessageSortant(
@@ -140,7 +146,7 @@ def run() -> int:
         print("expéditeur   : NUMÉRO COURT OVH (senderForResponse) — mode TEST")
         print("               les SMS contenant une URL sont bloqués dans ce mode")
     else:
-        print(f"expéditeur   : {CFG['sms']['expediteur']}")
+        print(f"expéditeur   : {CFG['produit']['expediteur_sms']}")
     print(f"compte SMS   : {compte or '(absent)'}")
     print(f"texte        : {TEXTE}")
     print(f"longueur     : {len(TEXTE)} caractères")

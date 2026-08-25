@@ -20,7 +20,7 @@ import pathlib
 import secrets
 from dataclasses import dataclass
 
-from . import temps
+from . import produit, temps
 
 
 def empreinte(secret: str) -> str:
@@ -75,11 +75,13 @@ class Registre:
         utile pour démarrer sans Postgres et pour semer la table la première fois."""
         brut = json.loads(chemin.read_text(encoding="utf-8"))
         base = chemin.parent
+        p = produit.charger(base)
         artisans = [
             Artisan(id=a["id"], numero_relais=a["numero_relais"],
                     token_sha256=a["token_sha256"],
                     telephone=a.get("telephone"), config_fichier=a["config"],
-                    config=json.loads((base / a["config"]).read_text(encoding="utf-8")))
+                    config=produit.appliquer(
+                        json.loads((base / a["config"]).read_text(encoding="utf-8")), p))
             for a in brut["artisans"]]
         return cls(artisans, empreinte(secret_webhook))
 
@@ -97,6 +99,10 @@ class Registre:
         La config reste un fichier : c'est son historique git qui répond à « qu'est-ce que
         l'agent savait le jour de cet appel ? ».
         """
+        # chargée UNE fois, et avant tout le reste : une config produit invalide (nom
+        # vide, expéditeur non conforme AF2M) doit empêcher le démarrage, pas produire
+        # des SMS que l'opérateur refusera
+        p = produit.charger(dossier_config)
         artisans, ignores = [], []
         for ligne in depot.artisans():
             if not ligne.utilisable():
@@ -113,7 +119,8 @@ class Registre:
                 token_sha256=ligne.token_sha256 or "",
                 telephone=ligne.telephone, etat_abonnement=ligne.etat_abonnement,
                 config_fichier=ligne.config_fichier,
-                config=json.loads(chemin.read_text(encoding="utf-8"))))
+                config=produit.appliquer(
+                    json.loads(chemin.read_text(encoding="utf-8")), p)))
         return cls(artisans, empreinte(secret_webhook)), ignores
 
     @classmethod
