@@ -61,10 +61,11 @@ python run_llm_eval.py [--mock] [--n 3]             # éval appelant-simulé
   webhooks qu'elle appellera. **Le spike vocal ne s'ouvre pas seul** : session dédiée avec
   Claude (Cowork) avant tout engagement.
 - **Envoi SMS** : la chaîne sort réellement (premier SMS réel le 24/08, réf.
-  `ovh:802084252`), en mode **numéro court**. Seule limite du numéro court : les **URL sont
-  bloquées**, ce qui ne concerne qu'**un seul gabarit du catalogue**, `reproposition_client`.
-  Tout le reste passe dès aujourd'hui. `EnvoyeurJournal` reste le défaut
+  `ovh:802084252`), en mode **numéro court**. `EnvoyeurJournal` reste le défaut
   (`RELAIS_SMS=journal`), donc un cron mal configuré n'écrit à personne.
+- **Réception SMS** : n'existe pas. C'est le pendant entrant du worker sortant, rendu
+  nécessaire par la révision OUI/NON du 25/08. Trois questions à poser à OVH avant d'écrire
+  la moindre ligne (coût des entrants, traitement du STOP, polling ou callback).
 - **`CalendarStub`** : applique les vraies règles d'agenda sans être relié à un calendrier.
   Ce n'est **pas un cas dégradé** — c'est le cas de l'artisan sans agenda numérique, sans
   doute le cas courant. Le calendrier externe sera un anti-double-réservation, pas une
@@ -83,7 +84,16 @@ python run_llm_eval.py [--mock] [--n 3]             # éval appelant-simulé
 - **L'échéance fait foi, pas le passage du worker.**
 - **Un horodatage est un INSTANT en UTC ; une heure de config est une heure de PENDULE**
   (`temps.py`, règle n°7).
-- **SMS strictement sortant, lien à un tap plutôt que « Répondez OUI ».**
+- **SMS strictement sortant — CIRCONSCRIT le 25/08, pas annulé.** Le dialogue libre par
+  SMS et le parsing de texte libre restent interdits. Mais la confirmation client passe
+  désormais par une **réponse à vocabulaire fermé** (OUI/NON, liste blanche, une seule
+  proposition active par numéro), qui n'est pas un dialogue. Le lien à un tap reste dans le
+  code et redeviendra le chemin de confort quand un Sender ID existera : le canal devient un
+  point de config (`sms_oui_non | lien`, défaut `sms_oui_non`).
+- **Conséquence : le Sender ID ne bloque plus AUCUNE fonctionnalité.** Il ne reste que du
+  confort de marque. ⚠ Mais le Kbis qu'il demandait **reparaît côté VOIX** : un numéro
+  français exige un bundle réglementaire ARCEP (Kbis + pièce d'identité du dirigeant).
+  Reporter l'administratif déplace le mur, il ne le supprime pas.
 - **Deux portes d'authentification distinctes** (secret webhook / jeton porteur).
 - **L'API ne décide jamais** : corollaire backend de la règle n°1.
 - **Expéditeur SMS UNIQUE, déclaré sous NOTRE société** — pas sous celle de chaque artisan
@@ -135,8 +145,17 @@ python run_llm_eval.py [--mock] [--n 3]             # éval appelant-simulé
 
 ## Prochaine étape
 
-Le nom est tranché et le code n'attend plus rien : les démarches externes (INPI, domaine,
-Kbis, Sender ID) courent en parallèle sans bloquer une ligne.
+**Cap acté : la VOIX**, le point d'entrée du produit. État des lieux structuré dans
+`docs/etat-des-lieux-voix.md` — il part en arbitrage avec Claude (Cowork), **rien n'est
+décidé et rien ne doit être implémenté avant**.
+
+Ce qu'il faut retenir pour l'arbitrage : la latence d'un tour du contrôleur est **mesurée**
+à 3,4 s (Sonnet 5) / 1,9 s (Haiku) hors STT et TTS, contre un budget conversationnel de 0,5
+à 1 s ; le premier spike proposé se fait sur un **numéro non français**, qui n'exige pas de
+Kbis.
+
+En parallèle, à préparer sans coder : la brique de **réception SMS** (révision OUI/NON), une
+fois les trois questions OVH tranchées.
 
 Candidats sans dépendance externe, par valeur décroissante :
 
@@ -2104,3 +2123,95 @@ la garde du hold n'était jamais atteinte par ce chemin. Le test l'éprouve dés
 direct, et le dit plutôt que de faire semblant.
 
 Suite : **37 PASS** en mock, **42/42** en éval LLM réelle, contrat Postgres vert.
+
+## Session du 25/08/2026 (fin) — la reproposition passe par OUI/NON, et le cap devient la voix
+
+**Deux décisions**, consignées avant tout code : une révision produit sur la confirmation
+client, et le cap du prochain gros chantier.
+
+### Révision : la reproposition client sans lien
+
+**Ce qui la déclenche.** Le Sender ID est reporté *sine die* — décision de principe : pas
+d'administratif tant que le produit n'a pas prouvé sa valeur. Or le lien à un tap était la
+**seule** fonctionnalité qui en dépendait, puisque les numéros courts bloquent les URL.
+Plutôt que de laisser la reproposition en otage d'un dossier, elle passe par une **réponse
+SMS à vocabulaire fermé** :
+
+> « {Entreprise} vous propose plutôt {créneau}. Répondez OUI pour confirmer ou NON pour
+> annuler. »
+
+Zéro URL, donc **numéro court dès aujourd'hui**. Le mode `senderForResponse` qu'on utilise
+déjà est prévu pour ça : les réponses arrivent dans le compte SMS OVH.
+
+**Périmètre EXACT de la révision — ce point compte plus que le reste.** La décision du 23/08
+« SMS strictement sortant » n'est **pas annulée, elle est circonscrite**. Ce qu'elle
+interdisait reste interdit : le dialogue libre par SMS, le parsing de texte libre, un état
+conversationnel côté client. Une réponse binaire à vocabulaire fermé n'est pas un dialogue.
+
+- **Liste blanche** : oui / OUI / Oui / ok — non / NON / Non. Tout le reste → **un unique**
+  SMS rappelant le format, puis silence. Pas de NLP.
+- **UNE seule proposition active par numéro de client à la fois.** C'est ce qui rend « OUI »
+  non ambigu — à contraindre dans la machine à états, pas seulement à espérer.
+- Rattachement par **numéro E.164 + proposition active**. Réponse hors fenêtre → SMS
+  « cette proposition a expiré, {entreprise} vous recontactera » (à formuler, sans URL).
+- **Le lien à un tap n'est PAS supprimé du code.** Il redeviendra le chemin de confort le
+  jour où un Sender ID existera. Le canal de confirmation client devient un point de
+  **config** : `sms_oui_non | lien`, défaut `sms_oui_non`.
+
+**Conséquence stratégique :** le Sender ID ne bloque désormais **aucune fonctionnalité**. Il
+ne reste que du confort de marque — un SMS signé « nelyo » plutôt qu'un numéro court.
+
+### À vérifier chez OVH AVANT d'implémenter
+
+Trois questions ouvertes, à documenter dès qu'on a les réponses. Aucune ligne de code avant.
+
+1. **Coût des SMS entrants** en numéro court : consomment-ils des crédits ?
+2. **Le STOP** : intercepté par OVH, ou reçu par nous ? S'il nous parvient, c'est une
+   obligation légale à traiter — liste noire locale et plus aucun envoi ensuite.
+3. **Mécanique de réception** : polling `GET /sms/{service}/incoming` ou callback HTTP ?
+   Avec quelle latence réaliste ? Un « OUI » qui met dix minutes à nous parvenir change le
+   produit.
+
+### Conséquences code, préparées et non écrites
+
+- **Une brique « réception »** : le pendant entrant du worker sortant. Elle n'existe pas.
+- **Deux nouveaux gabarits** (reproposition OUI/NON, expiration de proposition), à mesurer
+  au pire cas dans R23 — l'invariant « 1 segment par gabarit client » doit tenir aux bornes,
+  comme pour les autres.
+- **Machine à états** : « réponse client OUI/NON » devient une nouvelle entrée. Aujourd'hui
+  seul le tap sur la page produisait cet événement (`confirmer_par_client`), et il venait
+  avec un jeton qui prouvait l'identité. Un SMS entrant ne prouve que le numéro : c'est une
+  autorité plus faible, à traiter comme telle.
+
+### Cap : la voix
+
+Le prochain gros chantier est le **point d'entrée du produit** — sans lui, rien n'existe.
+État des lieux structuré produit avant toute implémentation : **`docs/etat-des-lieux-voix.md`**.
+Il part en arbitrage avec Claude (Cowork) ; rien n'est décidé ici.
+
+Trois choses qu'il a fait apparaître et qui méritent d'être dans le journal :
+
+1. **Un numéro français exige un Kbis et une pièce d'identité du dirigeant** (bundle
+   réglementaire ARCEP). Reporter l'administratif a bien libéré le SMS — **mais le même
+   Kbis reparaît immédiatement côté voix**. La décision « pas d'administratif pour l'instant »
+   ne supprime pas le mur, elle le déplace du SMS vers la voix. D'où la proposition de faire
+   le premier spike sur un **numéro non français**, qui n'en demande pas.
+
+2. **La latence, mesurée et non supposée.** Un tour complet du contrôleur, hors STT et hors
+   TTS : **3,42 s de médiane en Sonnet 5, 1,93 s en Haiku** (minimum 0,67 s sur les tours
+   verbatim). Une conversation naturelle supporte 0,5 à 1 s de blanc. Le seul traitement
+   texte consomme donc déjà deux à trois fois le budget.
+   Et la cause est structurelle : le LLM extrait, **puis** le contrôleur décide, **puis** le
+   LLM formule. Deux allers-retours par tour, c'est le prix de la règle n°1. Ce n'est pas une
+   inefficacité à corriger, c'est un invariant à assumer — ou à contourner autrement (son
+   d'attente, chemins verbatim étendus, Haiku).
+
+3. **`numero_appelant` est reçu par le webhook et jeté.** Le champ existe dans le contrat et
+   n'est utilisé nulle part, alors que la machine à états consacre deux à trois tours à
+   demander, répéter et confirmer le numéro — la partie du parcours où l'on perd le plus
+   d'appels. À étudier au raccordement, avec la nuance qu'un numéro présenté n'est pas
+   toujours celui où le client veut être rappelé, et qu'il peut être masqué.
+
+Signalé aussi : le bloc `telephonie` de la spec (`numero_artisan`, `numero_agent`,
+`renvoi_verifie`) **n'existe pas** dans `config/dupont.json`. Le renvoi conditionnel — le
+mécanisme même qui amène l'appel jusqu'à nous — n'est modélisé nulle part.
