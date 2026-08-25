@@ -145,9 +145,18 @@ python run_llm_eval.py [--mock] [--n 3]             # éval appelant-simulé
 
 ## Prochaine étape
 
-**Cap acté : la VOIX**, le point d'entrée du produit. État des lieux structuré dans
-`docs/etat-des-lieux-voix.md` — il part en arbitrage avec Claude (Cowork), **rien n'est
-décidé et rien ne doit être implémenté avant**.
+**SPIKE VOIX en cours.** Arbitrage rendu le 25/08 sur `docs/etat-des-lieux-voix.md` :
+plateforme **managée (Vapi)**, numéro **non français**, agent en **Haiku**, et — décision
+d'invariant définitive pour cette phase — **pas de streaming des sorties gardées** : la
+latence se traite par des phrases-tampons pré-approuvées, jamais en contournant
+`guards.check_output`.
+
+Prérequis Haiku **RENDU le 25/08 : 42/42**, à parité avec Sonnet, après correction de trois
+défauts produit que Sonnet masquait. Latence du tour ramenée de 3,42 s à 1,93 s de médiane.
+
+Reste avant d'appeler un vrai numéro : le garde-fou emoji, la ligne `RELAIS_MODEL` du `.env`,
+et l'étape 0 du spike (journaliser la charge utile brute de Vapi avant d'écrire l'adaptateur
+— on ne sait pas encore si elle porte un identifiant d'appel).
 
 Ce qu'il faut retenir pour l'arbitrage : la latence d'un tour du contrôleur est **mesurée**
 à 3,4 s (Sonnet 5) / 1,9 s (Haiku) hors STT et TTS, contre un budget conversationnel de 0,5
@@ -2215,3 +2224,235 @@ Trois choses qu'il a fait apparaître et qui méritent d'être dans le journal :
 Signalé aussi : le bloc `telephonie` de la spec (`numero_artisan`, `numero_agent`,
 `renvoi_verifie`) **n'existe pas** dans `config/dupont.json`. Le renvoi conditionnel — le
 mécanisme même qui amène l'appel jusqu'à nous — n'est modélisé nulle part.
+
+## Session du 25/08/2026 — arbitrage voix rendu : GO spike
+
+Arbitrage rendu avec Claude (Cowork) sur `docs/etat-des-lieux-voix.md`. Décisions actées,
+périmètre verrouillé.
+
+### Les décisions
+
+1. **Plateforme managée pour le spike.** Raison qui vaut d'être retenue : le spike doit
+   mesurer le **plafond**. Si même un pipeline optimisé par un fournisseur est intenable
+   avec nos ~2 s de traitement, l'auto-hébergé ne sauvera rien. Le verrouillage ne compte
+   pas pour un spike ; la décision d'architecture viendra après, **avec les chiffres**.
+2. **Numéro non français** (US ou UK) : pas de bundle ARCEP, pas de Kbis. L'agent parle
+   français dessus, seul Geoffrey appelle. En parallèle et hors code : vérifier qu'un
+   **SIREN de micro-entreprise** suffirait pour un bundle FR — la troisième voie entre
+   « reporter l'administratif » et « monter une société ».
+3. **Haiku d'office** pour l'agent, avec un **prérequis bloquant** : rejouer les 42 évals
+   en Haiku. Si ce n'est pas 42/42, on en parle avant d'aller plus loin — c'est une donnée
+   d'arbitrage, pas un détail d'implémentation.
+4. **PAS de streaming des sorties gardées. Décision d'invariant, définitive pour cette
+   phase.** Toute sortie passe par `guards.check_output` AVANT d'être prononcée, sans
+   exception. La tension que l'état des lieux signalait (règle n°2 contre la latence) est
+   donc tranchée **en faveur de la règle**. La réponse à la latence sera : Haiku +
+   **phrases-tampons pré-approuvées** (catalogue fermé, prononcées immédiatement pendant le
+   calcul du tour) + extension des chemins verbatim. Si le streaming devient un jour
+   indispensable, ce sera un chantier « gardes streamables » à part entière, **pas une
+   concession arrachée par la latence**.
+5. **Le SMS reste chez OVH**, quelle que soit la plateforme voix. Le port `Envoyeur` existe
+   pour que cette question ne soit jamais urgente — et c'est la première fois qu'il sert à
+   ça, deux jours après avoir été écrit.
+6. **`numero_appelant` : gardé pour APRÈS le spike.** Ne toucher ni S4 ni les évals
+   maintenant. La trouvaille est valide, mais elle changerait le parcours mesuré.
+
+### Plateforme retenue : Vapi
+
+Motivée sur le seul critère demandé — la facilité d'adaptation à nos webhooks existants — et
+la différence est nette :
+
+| | Vapi | Retell |
+|---|---|---|
+| Contrat attendu | `POST /chat/completions` compatible OpenAI | **WebSocket exclusivement** |
+| Streaming obligatoire ? | **Non** : le JSON simple est accepté autant que le SSE | Oui, protocole de messages propre (`response_required`…) |
+| État par appel | Aucun côté serveur | **Une connexion ouverte par appel** |
+
+Trois raisons, dans l'ordre :
+
+1. **Le JSON non streamé est accepté.** L'adaptateur reste un simple endpoint HTTP qui
+   traduit une requête en forme OpenAI vers nos deux webhooks et rend une réponse JSON.
+   Aucun SSE, aucun WebSocket.
+2. **Ça colle à la décision n°4.** Un fournisseur qui n'impose pas le streaming n'exerce
+   aucune pression sur l'invariant des garde-fous.
+3. **Retell rouvrirait une question d'architecture déjà tranchée.** Une connexion par appel
+   réintroduit de l'état de process par appel — précisément ce que « un tour = une requête,
+   l'état vit en base » a supprimé, et ce que R19 vérifie. On ne défait pas ça pour un spike.
+
+**Le point de conception de l'adaptateur** (à confirmer sur leur documentation au montage) :
+la forme OpenAI transporte l'historique complet des messages, tandis que nos webhooks sont
+adressés par `appel_id` avec l'état en base. L'adaptateur doit donc faire correspondre un
+appel Vapi à un `appel_id` — c'est là que se joue tout son travail, et c'est aussi la réponse
+attendue au verdict §1.1.
+
+### Ce que le spike mesurera
+
+Les quatre mesures de l'état des lieux, plus une : le **verdict sur l'hypothèse §1.1**
+(webhook JSON tour-par-tour accepté, ou custom LLM streaming exigé), avec la description
+précise de ce que l'adaptateur a dû faire. Et la latence ressentie **avec et sans**
+phrase-tampon — c'est la seule façon de savoir si les tampons sont une solution ou un
+pansement.
+
+Ce que le spike ne prétend pas mesurer, et ne dira pas : robustesse au bruit, tenue sur la
+durée, comportement en panne LLM.
+
+### Une correction de harnais au passage
+
+`run_llm_eval.py` charge le `.env` avec `override=True` — délibéré pour la clé API, mais qui
+rendait impossible de choisir le modèle de l'agent en ligne de commande : le `.env` du dépôt
+force `claude-sonnet-5` et écrasait toute variable d'environnement. Un drapeau `--modele`
+écrit la valeur APRÈS le chargement. Comparer deux modèles à énoncé constant est tout
+l'intérêt de l'éval ; l'appelant simulé, lui, garde sa propre variable et ne bouge pas.
+
+### Prérequis Haiku : NON RENDU — crédit API épuisé en cours de passage
+
+Le passage des 42 évals en Haiku s'est arrêté sur `Your credit balance is too low` à partir
+du 13ᵉ persona. **30 conversations perdues**, pour une cause qui n'a rien à voir avec
+l'agent.
+
+Ce qui est mesuré valablement, sur les 12 conversations jouées avant l'épuisement :
+
+| Persona | Haiku |
+|---|---|
+| T01_urgence_fuite | **1/3** — deux échecs, score 4 au lieu de 5 |
+| T02_hors_zone | 3/3 |
+| T03_entretien_samedi_prix | 3/3 |
+| T05_chasse_au_prix | 3/3 |
+
+**La cause de l'échec T01 est identifiée et instructive.** Haiku classe « une fuite sous
+l'évier de la cuisine, ça goutte dans le placard » en `robinetterie` là où Sonnet lit
+`fuite`. Or `robinetterie` n'est pas dans `URGENT_PRESTATIONS` : l'`intent` devient
+`devis_travaux` au lieu de `urgence`, et le score du lead tombe de 5 à 4. Une erreur de
+taxonomie qui cascade jusqu'à la valeur commerciale du lead.
+
+Ce n'est pas un défaut de formulation mais **d'extraction** — et cela suggère une piste que
+l'arbitrage n'avait pas envisagée : **les deux appels LLM d'un tour n'ont pas les mêmes
+exigences.** L'extraction demande de la justesse, la formulation demande de la vitesse.
+Elles utilisent aujourd'hui le même modèle. Un modèle par rôle est une option à mesurer
+(sans illusion sur la latence : les deux appels restent séquentiels).
+
+**Le verdict n'est pas rendu** : dix personas sur quatorze n'ont jamais tourné. Rien ne
+sera engagé côté Vapi avant un passage complet — d'autant que le spike facturerait les
+tokens sur la même clé, et échouerait donc immédiatement de la même façon.
+
+**Ce que cet incident valide au passage** : la résilience du harnais, écrite ce matin après
+qu'une coupure réseau avait détruit un passage entier. Les 30 échecs sont marqués
+`erreur_harnais`, comptés à part et signalés comme tels — « à ne pas confondre avec un
+défaut de l'agent ». Sans cela, l'exception aurait emporté le passage **et** la trouvaille
+sur T01.
+
+### Une trouvaille non liée, pertinente pour la voix
+
+En Haiku, l'agent a répondu « Bonjour Mme Garcia ! 😊 ». **Un emoji, dans un appel
+téléphonique.** `guards.check_output` filtre les prix hors liste blanche, les « c'est
+confirmé » prématurés et les diagnostics improvisés — **rien n'interdit un emoji**, qui
+partirait tel quel au TTS. R23 vérifie l'alphabet GSM-7 des SMS, pas celui de la parole.
+À traiter avant le spike : c'est une sortie que le garde-fou laisse passer et que la voix
+rendra audible.
+
+### 25/08 — pendant l'attente : contrat Vapi et questions OVH
+
+Travail de documentation mené pendant le passage du prérequis Haiku, sans toucher au code.
+
+#### Contrat Vapi — ce qui est ÉTABLI
+
+D'après leur exemple serveur officiel (`server-side-example-python-flask`) :
+
+- **`POST` sur un chemin finissant par `/chat/completions`**, l'URL étant configurée sur
+  l'assistant depuis leur tableau de bord (un tunnel suffit en dév — d'où le besoin d'une
+  URL HTTPS publique pour le spike).
+- Corps **en forme OpenAI**, avec `messages` (l'historique complet) et un booléen `stream`.
+- **Le JSON non streamé est bel et bien accepté** : leur propre exemple « basic » rend un
+  objet `chat.completion` ordinaire. **C'est le fait qui valide la décision d'invariant n°4**
+  — aucune pression du fournisseur sur `guards.check_output`.
+
+#### Contrat Vapi — ce qui reste OUVERT, et qui change le montage
+
+**Leur exemple n'extrait AUCUN identifiant d'appel**, et je n'ai pas pu confirmer dans la
+documentation publique que la requête en transporte un. Or nos webhooks sont adressés par
+`appel_id` : c'est exactement le point de conception de l'adaptateur signalé dans l'état des
+lieux, et il n'est pas tranchable depuis un fauteuil.
+
+**Conséquence : le spike gagne une étape 0** — journaliser la charge utile brute du premier
+appel réel, avant d'écrire une ligne d'adaptateur. Deux montages en découlent :
+
+- **s'il y a un identifiant d'appel** : une correspondance `id externe → appel_id`, et
+  l'adaptateur reste sans état ;
+- **s'il n'y en a pas** : il faut dériver la continuité de l'historique `messages` lui-même,
+  ce qui est plus fragile et mérite d'être su AVANT de concevoir.
+
+Écrire l'adaptateur sur une hypothèse serait du travail à refaire. Dix lignes de
+journalisation valent mieux qu'une supposition.
+
+#### Questions OVH : deux réponses sur trois
+
+**3. Mécanique de réception — RÉPONDU, et les deux existent.**
+- *Pull* : `GET /sms/{serviceName}/incoming`.
+- *Push* : un callback configurable via `PUT /sms/{serviceName}`, annoncé comme temps réel.
+
+C'est le **callback** qu'il faudra pour un « OUI » : un pull par cron ferait dépendre la
+confirmation du client de la période du cron, exactement le défaut qu'on a corrigé pour le
+code de connexion (« un code qui arrive au prochain passage du cron n'est pas un code »).
+
+**2. Le STOP — partiellement répondu, et il soulève un point de conformité que je n'avais
+pas vu.** La mention STOP est ajoutée par défaut aux messages SORTANTS, et `noStopClause` la
+supprime — c'est ce que notre adaptateur fait déjà (verrouillé par R22). Reste ouvert : un
+client qui RÉPOND « STOP », son message arrive-t-il dans `/incoming`, ou OVH l'intercepte-t-il ?
+
+**Ce que la révision OUI/NON change ici, et c'est important** : jusqu'à présent le SMS était
+strictement sortant et personne n'était invité à répondre. Désormais **on demande une
+réponse** — donc on recevra des STOP, et pas par accident. Le traitement du STOP passe d'une
+éventualité théorique à une obligation opérationnelle, à traiter dans la brique de réception
+dès sa conception : liste noire locale, et plus aucun envoi ensuite.
+
+**1. Coût des SMS entrants en numéro court — TOUJOURS OUVERT.** Ne se lit pas dans la
+documentation publique ; à vérifier dans l'espace client ou auprès du support.
+
+### 25/08 — prérequis Haiku RENDU : 42/42, au prix de trois défauts produit
+
+Trois passages ont été nécessaires. Le premier a été tué par l'épuisement du crédit API, les
+deux suivants ont chacun livré des défauts — **tous masqués par Sonnet**, aucun n'étant à
+proprement parler une faiblesse de Haiku.
+
+**Verdict : 42/42 en Haiku**, à parité avec Sonnet, et la latence du tour passe de 3,42 s à
+1,93 s de médiane. Le prérequis de l'arbitrage est levé.
+
+| | Défaut | Ce que Sonnet masquait |
+|---|---|---|
+| 1 | L'`intent` était dérivé de la SEULE prestation : `urgence_reelle` était ignorée | Il classait « fuite sous l'évier » en `fuite` ; Haiku dit `robinetterie`, ce qui est défendable — mais hors de `URGENT_PRESTATIONS`, donc le lead plafonnait à 4 |
+| 2 | `commune` et `code_postal` pouvaient divergert (« Nogent-sur-Marne / 94000 ») | Il posait `confirme: false` sur les corrections, donc la re-dérivation du CP partait |
+| 3 | Une contrainte de dispo TARDIVE faisait sauter des créneaux jamais vus | Rien : ce défaut était indépendant du modèle, il attendait le bon persona |
+
+**Le troisième est le plus grave, et pas pour la raison évidente.** « Je ne suis disponible
+que le samedi matin », annoncé après deux créneaux de semaine, faisait sauter les samedis
+29/08 et 05/09 pour offrir le 12/09. L'appelant refusait. Mais surtout **l'agent lui laissait
+entendre qu'il n'y avait rien le samedi matin**, alors que la config ouvre `sam 09:00–13:00`.
+Ce n'est pas un rendez-vous manqué, c'est une information fausse donnée au client sur les
+disponibilités de l'artisan.
+
+**Les correctifs, et ce qu'ils disent de la règle n°1.**
+
+- Une **urgence déclarée** promeut l'intent, quelle que soit la prestation — c'est l'appelant
+  qui sait si ça coule, pas la nomenclature. Exception : un `devis_*` n'est pas promu, sans
+  quoi « un devis PAC, c'est urgent » consommerait la fenêtre d'urgence d'une vraie fuite.
+- **`commune` ne s'écrit plus jamais seule** : sans code postal, un nom ne remplit plus le
+  slot, il ne sert qu'à la résolution. Les deux valeurs ne s'écrivent que par PAIRE — même
+  discipline que « le LLM ne devine jamais un code postal », appliquée à sa réciproque.
+- Le **signal de correction** passe du `confirme` du LLM à une détection dans le texte.
+  C'était une règle produit confiée à un jugement subtil du modèle : exactement ce que la
+  règle n°1 interdit, et un modèle plus faible l'a démontré.
+- Le **saut de créneaux** est remis à zéro quand les contraintes changent. `tours_creneaux`
+  continue de compter : l'invariant n°6 est intact.
+
+**Deux fois où mes propres tests ont menti**, révélés par mutation et non par relecture :
+
+- le contrôle de cohérence commune/CP donnait un **laissez-passer** au cas qu'il testait —
+  avec une commune absente de la table, il n'avait « rien à vérifier » ;
+- mon correctif contenait **du code mort**. J'avais placé la promotion d'urgence dans `_s3`
+  en croyant couvrir « l'urgence déclarée plus tard ». Or `_s3` ne pose la question d'urgence
+  que si l'intent est DÉJÀ « urgence » : l'appel ne pouvait rien faire. Une mutation a
+  survécu à un code sans effet — c'est ainsi qu'on l'a su.
+
+**Reste avant d'appeler un vrai numéro** : le garde-fou emoji (`check_output` laisse passer
+un 😊 qui partirait au TTS), la ligne `RELAIS_MODEL` du `.env` à retirer, et l'étape 0 du
+spike — journaliser la charge utile brute de Vapi avant d'écrire l'adaptateur.

@@ -90,6 +90,13 @@ class Conversation:
         for k, v in extracted.items():
             if k not in self.slots or v in (None, ""):
                 continue
+            # `commune` ne s'écrit JAMAIS seule : elle forme une paire avec `code_postal`,
+            # et un nom sans code postal produisait un lead qui se contredisait
+            # (« Nogent-sur-Marne / 94000 », soit Créteil — trouvé le 25/08 sur T10).
+            # Le nom que l'appelant prononce sert à la RÉSOLUTION (`_resoudre_commune`
+            # balaie la phrase entière), pas à remplir le slot directement.
+            if k == "commune" and not extracted.get("code_postal"):
+                continue
             if self.slots[k] is None or (k in self.OVERWRITABLE and self.flags["hold"] is None):
                 self.slots[k] = v
         if extracted.get("prestation") and not self.slots["intent"]:
@@ -97,6 +104,31 @@ class Conversation:
             self.slots["intent"] = ("urgence" if p in URGENT_PRESTATIONS
                                     else "entretien" if p == "entretien_chaudiere"
                                     else "devis_travaux")
+        self._promouvoir_urgence()
+
+    def _promouvoir_urgence(self) -> None:
+        """Une urgence DÉCLARÉE par l'appelant rend le lead urgent, quelle que soit la
+        prestation retenue.
+
+        L'`intent` était dérivé de la SEULE prestation, via `URGENT_PRESTATIONS` — le
+        second signal disponible, `urgence_reelle`, était ignoré. Un appelant qui disait
+        « ça coule, c'est urgent » d'un robinet obtenait `devis_travaux`, et son lead
+        plafonnait à 4 (le score 5 exige `urgence_reelle` ET `intent == "urgence"`).
+
+        Trouvé le 25/08 par le prérequis Haiku : les six échecs avaient tous
+        `urgence_reelle = True` avec `intent = devis_travaux`. Ce n'était pas une faiblesse
+        de modèle — Haiku lisait « fuite au robinet » comme `robinetterie`, ce qui est
+        défendable. **Sonnet masquait le défaut en tombant du bon côté de la taxonomie.**
+        C'est l'appelant qui sait si ça coule, pas la nomenclature.
+
+        Exception : un DEVIS reste un devis. « Un devis pour une PAC, c'est urgent » ne
+        doit pas consommer une fenêtre d'urgence réservée — la place d'une vraie fuite.
+        """
+        if not self.slots["urgence_reelle"] or self.slots["intent"] == "urgence":
+            return
+        if (self.slots["prestation"] or "").startswith("devis_"):
+            return
+        self.slots["intent"] = "urgence"
 
     # ------------------------------------------------------- sérialisation
     # En prod, chaque tour d'appel arrivera comme un webhook HTTP, potentiellement sur
@@ -311,15 +343,33 @@ class Conversation:
         self.flags["questions_prix"] = self.flags.get("questions_prix", 0) + 1
         return self.flags["questions_prix"] <= 2
 
-    @staticmethod
-    def _signal_de_correction(ex: dict | None) -> bool:
+    # Marqueurs de correction, cherchés DANS LE TEXTE. Volontairement explicites : pas de
+    # « pas » nu, qui abonde dans « je ne peux pas venir ». Ils ne comptent que si une
+    # commune est par ailleurs reconnue dans la même phrase — sans quoi il n'y a rien à
+    # corriger.
+    MARQUEURS_CORRECTION = (
+        "non", "pardon", "excusez", "plutot", "en fait", "c est pas", "au lieu",
+        "je me suis trompe", "je me suis trompee", "erreur", "je confondais",
+        "je confonds", "attendez",
+    )
+
+    def _signal_de_correction(self, texte: str, ex: dict | None) -> bool:
         """L'appelant est-il en train de SE CORRIGER dans cette phrase ?
 
-        Deux signaux, et seulement deux : une négation (« non… pardon, c'est plutôt… »),
-        ou un code postal prononcé — cinq chiffres ne sont jamais un homonyme.
+        **Détecté dans le TEXTE, pas confié au LLM.** La première version lisait
+        `ex["confirme"] is False` — c'est-à-dire qu'elle confiait une règle produit à un
+        jugement subtil du modèle. Haiku ne posait pas `confirme: false` sur « c'est pas
+        Créteil, c'est Nogent-sur-Marne », et la correction passait à la trappe deux fois
+        sur trois (prérequis du 25/08, persona T10). Le contrôleur décide, le LLM extrait :
+        c'est la règle n°1, et elle valait aussi pour ce cas-là.
+
+        Un code postal prononcé reste un signal : cinq chiffres ne sont jamais un homonyme.
         """
-        ex = ex or {}
-        return ex.get("confirme") is False or bool(ex.get("code_postal"))
+        if bool((ex or {}).get("code_postal")):
+            return True
+        phrase = " " + self._normalise(texte) + " "
+        return any(" " + m + " " in phrase or phrase.startswith(" " + m + " ")
+                   for m in self.MARQUEURS_CORRECTION)
 
     def _resoudre_commune(self, texte: str, ex: dict | None = None) -> None:
         """Reconnaît une commune citée dans la phrase et en déduit le CP — l'appelant
@@ -346,7 +396,7 @@ class Conversation:
         if self.flags["hold"] is not None:
             return
         if self.slots["code_postal"] is not None \
-                and not self._signal_de_correction(ex):
+                and not self._signal_de_correction(texte, ex):
             return
         phrase = " " + self._normalise(texte) + " "
 
@@ -447,6 +497,12 @@ class Conversation:
                 return self._say("C'est en cours en ce moment, ou ça peut attendre un peu ?")
             # réponse au tour précédent : on interprète, et on ne redemande JAMAIS
             self.slots["urgence_reelle"] = bool(ex.get("confirme", ex.get("urgence_reelle", False)))
+            # Pas de promotion d'urgence ici : elle serait DU CODE MORT. Cette branche ne
+            # s'exécute que si l'intent est DÉJÀ « urgence » (voir la condition ci-dessus),
+            # auquel cas il n'y a rien à promouvoir. La promotion vit dans `_merge`, qui
+            # voit passer toutes les extractions — y compris une urgence déclarée à un
+            # tour ultérieur. Constaté par mutation le 25/08 : l'appel placé ici ne
+            # pouvait pas être tué par un test, parce qu'il ne pouvait rien faire.
         self.state = State.S4_IDENTITE
         return self._s4({})
 
@@ -562,10 +618,27 @@ class Conversation:
         urgent = bool(self.slots["urgence_reelle"]) and self.slots["intent"] == "urgence"
         # respecter les disponibilités exprimées ("que le samedi matin" — bug T03-LLM)
         jours, moment = self._contraintes_dispo()
-        # 2e tour = créneaux SUIVANTS, jamais les mêmes reproposés
+        # 2e tour = créneaux SUIVANTS, jamais les mêmes reproposés.
+        #
+        # SAUF si les contraintes ont CHANGÉ entre-temps. Le saut sert à ne pas resservir
+        # ce que l'appelant vient de refuser ; il n'a aucun sens quand il vient d'ajouter
+        # une contrainte, car les créneaux déjà proposés l'ont été sous d'autres règles —
+        # il ne les a jamais vus dans ce cadre, donc jamais refusés.
+        #
+        # Le 25/08 (persona T03) : « je ne suis disponible que le samedi matin », annoncé
+        # après deux créneaux de semaine, faisait sauter les samedis 29/08 et 05/09 pour
+        # offrir le 12/09. L'appelant refusait, et l'appel se concluait sans RDV. Pire, il
+        # s'entendait dire qu'il n'y avait rien le samedi matin — alors que la config
+        # ouvre `sam 09:00–13:00`.
+        #
+        # `tours_creneaux`, lui, continue de compter : l'invariant n°6 (deux tours max)
+        # n'est pas touché.
+        contraintes = [sorted(jours) if jours else None, moment]
+        saut = (0 if self.flags.get("contraintes_proposees") != contraintes
+                else 2 * self.flags["tours_creneaux"])
+        self.flags["contraintes_proposees"] = contraintes
         self._proposes = self.cal.get_slots(self.slots["prestation"], urgent, n=2,
-                                            skip=2 * self.flags["tours_creneaux"],
-                                            jours=jours, moment=moment)
+                                            skip=saut, jours=jours, moment=moment)
         self.flags["tours_creneaux"] += 1
         if not self._proposes:
             return self._sans_rdv()

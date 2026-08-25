@@ -321,7 +321,17 @@ def main() -> int:
     ap.add_argument("--n", type=int, default=1, help="répétitions par persona")
     ap.add_argument("--only", help="ne jouer qu'un persona (préfixe accepté, ex. T05)")
     ap.add_argument("--mock", action="store_true", help="plomberie sans clé API")
+    ap.add_argument("--modele", help="modèle de l'AGENT pour ce passage "
+                                     "(ex. claude-haiku-4-5). Prime sur le .env.")
     args = ap.parse_args()
+    if args.modele:
+        # Écrit APRÈS `load_dotenv(override=True)`, sinon le .env gagnerait. Cet override
+        # est délibéré pour la clé API (le .env du repo fait foi), mais il rendait le choix
+        # du modèle impossible en ligne de commande — or comparer deux modèles à énoncé
+        # constant est tout l'intérêt de l'éval. L'appelant simulé, lui, reste sur sa
+        # propre variable et ne bouge pas.
+        import os
+        os.environ["RELAIS_MODEL"] = args.modele
 
     cibles = {k: v for k, v in PERSONAS.items()
               if not args.only or k.startswith(args.only)}

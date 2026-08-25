@@ -3086,6 +3086,269 @@ def check_prestation_refusee() -> bool:
     return True
 
 
+def check_urgence_declaree() -> bool:
+    """R34 : une urgence DÉCLARÉE par l'appelant rend le lead urgent, quelle que soit la
+    prestation retenue.
+
+    Trouvé le 25/08 par le prérequis Haiku (36/42). Les SIX échecs avaient la même
+    signature : `urgence_reelle = True` **et** `intent = devis_travaux`. L'appelant disait
+    que ça coulait, l'extracteur le captait correctement, et le moteur classait quand même
+    en devis — parce que l'`intent` était dérivé de la SEULE prestation, via
+    `URGENT_PRESTATIONS`. Le second signal disponible était ignoré.
+
+    Ce n'était pas une faiblesse de modèle. Haiku classait « une fuite au robinet de la
+    salle de bain » en `robinetterie` là où Sonnet disait `fuite` — et pour cette phrase-là,
+    `robinetterie` est sans doute plus juste. **Sonnet masquait le défaut en tombant du bon
+    côté de la taxonomie.** C'est l'appelant qui sait si ça coule, pas la nomenclature.
+
+    Conséquence chiffrée : le score 5 exige `urgence_reelle AND intent == "urgence"`
+    (cf. `scoring._score`). Un lead d'urgence réelle plafonnait donc à 4.
+    """
+    from relais_proto.engine import Conversation
+
+    def conversation():
+        return Conversation(CFG, MockLLM(), CalendarStub(CFG, now=LUNDI_9H))
+
+    # (a) prestation NON urgente + urgence déclarée → intent urgence, et le score suit
+    convo = conversation()
+    convo.open()
+    convo.process("J'ai une fuite au robinet de la cuisine, c'est urgent, ça coule")
+    if convo.slots["prestation"] != "robinetterie":
+        print(f"   prestation attendue robinetterie (le cas du bug) : "
+              f"{convo.slots['prestation']!r}")
+        return False
+    if not convo.slots["urgence_reelle"]:
+        print("   urgence_reelle non captée : le cas n'est pas celui du bug")
+        return False
+    if convo.slots["intent"] != "urgence":
+        print(f"   urgence déclarée mais intent={convo.slots['intent']!r} : "
+              f"le lead plafonnera à 4")
+        return False
+    convo.process("Nogent 94130")
+    convo.process("Garcia, 06 12 34 56 78")
+    convo.process("Oui c'est bien ça")
+    convo.process("Le premier")
+    lead = build_lead(convo)
+    if lead["score"] != 5:
+        print(f"   score {lead['score']} sur une urgence réelle avec RDV et téléphone, "
+              f"attendu 5 — raisons : {lead['raisons']}")
+        return False
+    if "URGENCE réelle" not in lead["raisons"]:
+        print(f"   l'urgence n'apparaît pas dans les raisons : {lead['raisons']}")
+        return False
+
+    # (b) MAIS un DEVIS ne devient pas une urgence, même dit urgent. Il consommerait une
+    # fenêtre d'urgence réservée pour une visite de devis — la place d'une vraie fuite.
+    convo = conversation()
+    convo.open()
+    convo.process("Je voudrais un devis pour une pompe à chaleur, c'est urgent")
+    if convo.slots["prestation"] != "devis_pac":
+        print(f"   prestation attendue devis_pac : {convo.slots['prestation']!r}")
+        return False
+    if convo.slots["intent"] == "urgence":
+        print("   un devis dit « urgent » est promu en urgence : il prendrait un créneau "
+              "d'urgence réservé")
+        return False
+
+    # (c) l'urgence peut être déclarée PLUS TARD, à un tour ultérieur : la promotion doit
+    # jouer là aussi, sinon elle ne servirait que dans la première phrase.
+    #
+    # Le chemin éprouvé est celui de l'EXTRACTION, pas celui de S3 : S3 ne pose la question
+    # d'urgence que si l'intent est DÉJÀ « urgence », donc il ne peut rien promouvoir — une
+    # mutation l'a montré le 25/08 en survivant à un appel qui ne pouvait rien faire.
+    convo = conversation()
+    convo.open()
+    convo.process("J'ai un souci avec un robinet qui goutte")
+    if convo.slots["intent"] == "urgence":
+        print("   intent urgence sans que rien ne le déclare")
+        return False
+    convo.process("Ah et en fait c'est urgent, ça déborde partout")
+    if not convo.slots["urgence_reelle"]:
+        print("   urgence déclarée au tour 2 non captée : le cas n'est pas celui du bug")
+        return False
+    if convo.slots["intent"] != "urgence":
+        print(f"   urgence déclarée au tour 2 non promue : "
+              f"intent={convo.slots['intent']!r}")
+        return False
+    return True
+
+
+def check_commune_cp_coherents() -> bool:
+    """R35 : la commune et le code postal ne divergent JAMAIS.
+
+    Trouvé le 25/08 par le prérequis Haiku, sur T10. Le lead finissait avec
+    `commune = "Nogent-sur-Marne"` et `code_postal = 94000` — Créteil. **Le lead se
+    contredisait lui-même** : l'artisan lit Nogent, la logique de zone utilise Créteil.
+
+    Deux écritures concurrentes en étaient la cause : le NOM venait de l'extraction LLM
+    (`commune` est dans `OVERWRITABLE`), le CP n'était re-dérivé que par
+    `_resoudre_commune`. Quand la seconde ne se déclenchait pas, la première passait seule.
+
+    La règle retenue : **les deux slots ne s'écrivent que par PAIRE.** C'est la même
+    discipline que « le LLM ne devine jamais un code postal » — appliquée à sa réciproque.
+    """
+    from relais_proto.engine import Conversation
+
+    def conversation():
+        return Conversation(CFG, MockLLM(), CalendarStub(CFG, now=LUNDI_9H))
+
+    def coherent(convo) -> bool:
+        """Le CP, s'il existe, doit être un des CP de la commune nommée."""
+        nom, cp = convo.slots["commune"], convo.slots["code_postal"]
+        if nom is None or cp is None:
+            return True                      # rien à contredire
+        table = {**convo.cfg["zone"].get("communes", {}),
+                 **Conversation._communes_idf()}
+        cps = table.get(Conversation._normalise(nom))
+        if cps is None:
+            return True                      # commune hors table : rien à vérifier
+        return cp in (cps if isinstance(cps, list) else [cps])
+
+    # (a) une correction par le NOM déplace les DEUX slots, pas un seul
+    convo = conversation()
+    convo.open()
+    convo.process("Une fuite au robinet de la salle de bain")
+    convo.process("Je suis à Créteil")
+    if convo.slots["code_postal"] != "94000" or not coherent(convo):
+        print(f"   état initial incohérent : {convo.slots['commune']!r} / "
+              f"{convo.slots['code_postal']!r}")
+        return False
+    convo.process("Ah non pardon, c'est pas Créteil, c'est Nogent-sur-Marne")
+    if not coherent(convo):
+        print(f"   commune et CP divergent après correction : "
+              f"{convo.slots['commune']!r} / {convo.slots['code_postal']!r}")
+        return False
+    if convo.slots["code_postal"] != "94130":
+        print(f"   correction non appliquée : {convo.slots['code_postal']!r}")
+        return False
+
+    # (b) LE SIGNAL DE CORRECTION EST DÉTERMINISTE. Il reposait sur le `confirme` du LLM —
+    # Haiku ne le posait pas sur « c'est pas Créteil, c'est Nogent », et la correction
+    # passait à la trappe. Une règle produit ne doit pas dépendre d'un jugement subtil du
+    # modèle : c'est le contrôleur qui décide (règle n°1).
+    for phrase in ("Ah non pardon, c'est pas Créteil, c'est Nogent-sur-Marne",
+                   "En fait je me suis trompée, c'est Nogent-sur-Marne",
+                   "Excusez-moi, plutôt Nogent-sur-Marne"):
+        c = conversation()
+        c.open()
+        c.process("Une fuite au robinet")
+        c.process("Je suis à Créteil")
+        # extraction VIDE : aucun `confirme`, aucun code postal — seul le texte parle
+        c._resoudre_commune(phrase, {})
+        if c.slots["code_postal"] != "94130":
+            print(f"   « {phrase} » non reconnue comme correction "
+                  f"(CP={c.slots['code_postal']!r})")
+            return False
+        if not coherent(c):
+            print(f"   incohérence après « {phrase} »")
+            return False
+
+    # (c) un NOM de commune extrait par le LLM, SANS code postal, ne doit pas poser un CP
+    # incohérent — ni écraser une commune déjà résolue avec son CP.
+    convo = conversation()
+    convo.open()
+    convo.process("Une fuite au robinet")
+    convo.process("Je suis à Nogent-sur-Marne")
+    avant = (convo.slots["commune"], convo.slots["code_postal"])
+    # une commune PRÉSENTE dans la table, et d'un autre CP : avec un nom inconnu, le
+    # contrôle de cohérence n'aurait rien à vérifier et laisserait passer le défaut.
+    convo._merge({"commune": "Créteil"})
+    if convo.slots["code_postal"] != avant[1] or not coherent(convo):
+        print(f"   un nom de commune seul a cassé la paire : {convo.slots['commune']!r} / "
+              f"{convo.slots['code_postal']!r} (était {avant})")
+        return False
+
+    # (d) et sur TOUS les scénarios scriptés, la paire reste cohérente de bout en bout
+    for nom_sc in SCENARIOS:
+        c = Conversation(CFG, MockLLM(), CalendarStub(CFG, now=LUNDI_9H))
+        c.open()
+        for ligne in SCENARIOS[nom_sc]["lignes"]:
+            if c.state.value in ("S11", "FIN"):
+                break
+            c.process(ligne)
+        if not coherent(c):
+            print(f"   {nom_sc} : {c.slots['commune']!r} / {c.slots['code_postal']!r}")
+            return False
+    return True
+
+
+def check_contrainte_tardive() -> bool:
+    """R36 : une contrainte de disponibilité annoncée APRÈS la première proposition ne doit
+    pas faire sauter des créneaux que l'appelant n'a jamais vus.
+
+    Trouvé le 25/08 par le prérequis Haiku, sur T03. L'appelant annonce « je ne suis
+    disponible que le samedi matin » seulement après avoir entendu deux créneaux de
+    semaine. Le second tour repropose alors avec `skip = 2 × tours_creneaux`, donc **il
+    écarte les deux premiers samedis** — le 29/08 et le 05/09 — pour offrir le 12/09, deux
+    semaines plus loin que nécessaire. L'appelant refuse, et l'appel se conclut sans RDV.
+
+    Le saut a un sens quand on repropose SOUS LA MÊME contrainte : il évite de resservir
+    les mêmes créneaux. Il n'en a aucun quand la contrainte change — les créneaux déjà
+    proposés l'ont été sous d'autres règles, l'appelant ne les a jamais refusés puisqu'il
+    ne les a jamais vus dans ce cadre-là.
+
+    Corollaire côté client, plus grave que le RDV manqué : l'agent lui a laissé entendre
+    qu'il n'y avait rien le samedi matin, alors que la config ouvre `sam 09:00–13:00`.
+    """
+    from relais_proto.engine import Conversation
+
+    def jusqu_aux_creneaux(lignes):
+        """Mène une conversation jusqu'à la première proposition de créneaux."""
+        convo = Conversation(CFG, MockLLM(), CalendarStub(CFG, now=LUNDI_9H))
+        convo.open()
+        for l in lignes:
+            convo.process(l)
+        return convo
+
+    # (a) contrainte TARDIVE : le premier samedi proposé doit être le plus proche
+    convo = jusqu_aux_creneaux(["Je veux un entretien de chaudière", "Nogent 94130",
+                                "Diallo, 07 88 11 22 33", "Oui c'est bien ça"])
+    if not convo._proposes:
+        print("   aucune proposition initiale")
+        return False
+    reponse = convo.process("Ah non, je ne suis disponible que le samedi matin")
+    labels = [s["label"] for s in convo._proposes]
+    if not labels:
+        print(f"   plus aucun créneau après la contrainte tardive : « {reponse} »")
+        return False
+    if "29/08" not in labels[0]:
+        print(f"   le samedi le plus proche n'est pas proposé : {labels} — des créneaux "
+              f"que l'appelant n'a jamais vus ont été sautés")
+        return False
+    if "samedi" not in labels[0]:
+        print(f"   la contrainte samedi n'est pas respectée : {labels}")
+        return False
+
+    # et le RDV se prend
+    convo.process("Oui, celui-là c'est parfait")
+    if convo.flags["categorie"] != "rdv_reserve":
+        print(f"   RDV perdu malgré un créneau conforme : "
+              f"{convo.flags['categorie']!r}")
+        return False
+
+    # (b) SANS changement de contrainte, le saut garde son rôle : un second tour ne
+    # repropose pas les mêmes créneaux, sinon l'appelant s'entend répéter un refus.
+    convo2 = jusqu_aux_creneaux(["J'ai une fuite sous l'évier, c'est urgent",
+                                 "Nogent 94130", "Garcia, 06 12 34 56 78",
+                                 "Oui c'est bien ça"])
+    premiers = [s["label"] for s in convo2._proposes]
+    convo2.process("Non, aucun des deux ne me convient")
+    seconds = [s["label"] for s in convo2._proposes]
+    if not seconds:
+        print("   plus aucun créneau au second tour sans changement de contrainte")
+        return False
+    if set(premiers) & set(seconds):
+        print(f"   créneaux resservis au second tour : {premiers} puis {seconds}")
+        return False
+
+    # (c) l'invariant n°6 tient toujours : deux tours de proposition, pas plus.
+    convo2.process("Non, toujours pas")
+    if convo2.flags["categorie"] == "rdv_reserve":
+        print("   des refus répétés aboutissent quand même à un RDV")
+        return False
+    return True
+
+
 def check_guard_prix() -> bool:
     """T05 (garde-fou prix) : on injecte une réplique fautive et on vérifie l'interception."""
     from relais_proto.guards import check_output
@@ -3313,6 +3576,31 @@ def run() -> int:
         print("   → l'extracteur connaît les prestations refusées, une demande "
               "hors périmètre est déclinée sans RDV, et un WC ordinaire reste "
               "couvert : ✅ PASS")
+    else:
+        print("   → ❌ FAIL")
+        echecs += 1
+
+    print(f"\n──── R34_urgence_declaree ────")
+    if check_urgence_declaree():
+        print("   → une urgence déclarée rend le lead urgent quelle que soit la "
+              "prestation (mais pas un devis), y compris déclarée plus tard : ✅ PASS")
+    else:
+        print("   → ❌ FAIL")
+        echecs += 1
+
+    print(f"\n──── R35_commune_cp_coherents ────")
+    if check_commune_cp_coherents():
+        print("   → commune et code postal ne s'écrivent que par paire, signal de "
+              "correction déterministe, cohérence vérifiée sur tous les scénarios : ✅ PASS")
+    else:
+        print("   → ❌ FAIL")
+        echecs += 1
+
+    print(f"\n──── R36_contrainte_tardive ────")
+    if check_contrainte_tardive():
+        print("   → une contrainte annoncée après la première proposition ne fait "
+              "plus sauter les créneaux jamais vus, et le saut garde son rôle "
+              "à contrainte constante : ✅ PASS")
     else:
         print("   → ❌ FAIL")
         echecs += 1
