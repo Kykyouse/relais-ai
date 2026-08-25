@@ -184,17 +184,22 @@ On y cherche `identifiants_candidats` : si un champ stable y figure, l'adaptateu
 (dérivée du couple appelant/appelé, ou table de correspondance) — un montage plus lourd, avec
 ses propres modes de panne. **Ne pas écrire l'adaptateur avant d'avoir lu ce fichier.**
 
-### Faits d'étape 0 déjà acquis (25/08, premier appel réel)
+### ÉTAPE 0 TERMINÉE — récolte du 25/08 (`sonde-vapi.jsonl`, requête de 21:02)
 
-- **La plomberie fonctionne** : Vapi → tunnel → serveur, requête reçue et journalisée.
-- **Vapi appelle `POST <url>/chat/completions`** — le suffixe de la convention OpenAI, pas
-  l'URL nue. Avoir déclaré les DEUX chemins a évité un 404 et un tunnel à remonter.
-- **Vapi n'envoie AUCUN en-tête personnalisé.** Il envoie le contenu de son champ
-  « API Key » en `Authorization: Bearer`. C'est le canal d'auth naturel vers un custom LLM
-  — à confirmer, mais c'est le fait mesuré. La sonde accepte désormais les deux canaux ;
-  on met `RELAIS_WEBHOOK_SECRET` dans le champ API Key de Vapi.
-- **Encore inconnu** : l'identifiant d'appel. C'est la question qui commande la forme de
-  l'adaptateur, et elle attend le prochain appel — celui qui passera l'authentification.
+| Fait | Conséquence pour l'adaptateur |
+|---|---|
+| **`call.id`** : UUID à la racine de l'objet `call`, stable sur tout l'appel | ✅ **La clé existe.** L'adaptateur est une traduction de formats vers `/webhooks/appel/{id}/tour`. Rien à fabriquer. |
+| `"stream": true` — **une réponse d'un bloc reçoit 200 et n'est JAMAIS prononcée** | SSE obligatoire. Gardes sur le texte **entier**, puis un seul morceau + `[DONE]`. |
+| `Authorization: Bearer` (confirmé en réel), aucun en-tête personnalisé | Mettre `RELAIS_WEBHOOK_SECRET` dans le champ « API Key » de Vapi. |
+| Vapi appelle `POST <url>/chat/completions` | Déclarer le suffixe, pas l'URL nue. |
+| **Tout l'historique est renvoyé à chaque tour**, message système compris (celui de l'assistant par défaut de Vapi) | **L'ignorer entièrement.** Notre état vit dans le dépôt, indexé par `call.id` ; le prompt vient de notre moteur. |
+| `metadata.assistantTurnInterrupted` | Détection du barge-in disponible — matière pour les phrases-tampons. |
+| `startSpeakingPlan.waitSeconds = 0.4` | Le budget de silence toléré avant que l'agent reprenne la parole. |
+
+**Ce que le silence a coûté et rapporté.** Le 200 muet est le meilleur argument de toute la
+session pour la sonde : côté serveur, tout était vert. Aucun test d'intégration, aucun
+contrat, aucune relecture n'aurait signalé quoi que ce soit. Il fallait un vrai appel et
+une vraie oreille.
 
 Ce qu'il faut retenir pour l'arbitrage : la latence d'un tour du contrôleur est **mesurée**
 à 3,4 s (Sonnet 5) / 1,9 s (Haiku) hors STT et TTS, contre un budget conversationnel de 0,5
@@ -321,8 +326,49 @@ d'authentification.
 
 R40 étendu, mutations **7/7** en plus des 13/13. Suite : 44 PASS.
 
-**Reste à savoir** : l'identifiant d'appel. Le prochain appel — le premier qui passera
-l'authentification — le dira.
+### Deuxième appel réel : 200, et un silence
+
+L'authentification passe, la sonde répond, Vapi renvoie 200 — et **rien n'est prononcé**.
+C'est le meilleur argument de toute la session pour avoir fait une sonde plutôt qu'un
+adaptateur : côté serveur, tout était vert. Aucun test d'intégration, aucun contrat, aucune
+relecture n'aurait signalé quoi que ce soit. Il fallait un vrai appel et une vraie oreille.
+
+Vapi envoie `"stream": true` et n'accepte pas une réponse d'un seul bloc.
+
+**La décision d'arbitrage n°4 n'est pas entamée — elle est précisée.** « Pas de streaming »
+voulait dire : aucune sortie prononcée avant d'avoir été vérifiée entière. Cela ne dit rien
+du TRANSPORT. La sonde émet donc en SSE, mais le texte part **entier, en un seul morceau de
+contenu** :
+
+> le flux est un mode de transport, jamais un mode de génération.
+
+La raison n'est pas esthétique. Tout ce qui sort passe par `guards.check_output` (règle
+n°2), et des garde-fous ne peuvent rien contre un fragment de phrase : un prix hors liste
+blanche, un « c'est confirmé » prématuré ou un diagnostic improvisé ne se reconnaissent que
+sur la phrase complète. Émettre au fil des jetons, ce serait prononcer d'abord et vérifier
+ensuite.
+
+**Ce n'est pas confié au commentaire** : R40 compte les morceaux de contenu et exige qu'il
+n'y en ait qu'un. La mutation qui diffuse au fil des mots est tuée avec le bon message
+(« 23 morceaux de contenu au lieu d'un seul »). Le jour où quelqu'un voudra streamer les
+jetons, le test l'arrêtera.
+
+Coût assumé, écrit dans le code : le premier son sort quand la phrase entière est prête.
+C'est ce que les **phrases-tampons pré-approuvées** doivent couvrir — pas le streaming.
+
+**Récolte complète de l'étape 0** : tableau dans le bloc ÉTAT en tête. Le fait qui débloque
+tout est `call.id`, un UUID stable à la racine de l'objet `call` : la clé existe, donc
+l'adaptateur est une traduction de formats et non un montage à fabriquer une clé.
+
+R40 étendu (test écrit et vu échouer avant), mutations **8/8** en plus des 13/13 et 7/7.
+Suite : 44 PASS.
+
+**Un défaut de mes propres données de test** : la charge utile de base portait déjà
+`stream: true`, si bien que les six contrôles d'authentification recevaient du SSE et que
+`r.json()` tombait. Deux charges distinctes depuis — celle en flux est explicite.
+
+**Prochaine étape** : la contre-épreuve à l'oreille (rappeler, vérifier que la phrase est
+bien prononcée), **puis** l'adaptateur.
 
 ---
 

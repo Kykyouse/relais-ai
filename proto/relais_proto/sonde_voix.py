@@ -12,10 +12,26 @@ elle n'en fournit pas, il faut la fabriquer (dériver du couple appelant/appelé
 une correspondance) — un montage nettement plus lourd, avec ses propres modes de panne.
 Les deux sont trop différents pour être écrits sur une hypothèse.
 
-**Premier fait d'étape 0, acquis le 25/08** : Vapi appelle `POST <url>/chat/completions`
-et n'envoie **aucun en-tête personnalisé** — le contenu de son champ « API Key » part en
-`Authorization: Bearer`. La sonde accepte donc le secret par les deux canaux. Reste à
-confirmer que c'est bien le canal d'authentification retenu pour l'adaptateur.
+**Faits d'étape 0 acquis le 25/08**, par deux appels réels :
+
+- Vapi appelle `POST <url>/chat/completions` et n'envoie **aucun en-tête personnalisé** —
+  le contenu de son champ « API Key » part en `Authorization: Bearer`. La sonde accepte
+  donc le secret par les deux canaux.
+- Vapi envoie `"stream": true` et **n'accepte pas une réponse d'un seul bloc** : la nôtre
+  a reçu un 200 et n'a **jamais été prononcée**. Silence à l'oreille, aucune erreur nulle
+  part. Aucun test d'intégration n'aurait dit cela — côté serveur, tout était vert. Il
+  fallait un vrai appel et une vraie oreille.
+- **RÉPONSE À LA QUESTION QUI A FAIT NAÎTRE CE MODULE : oui, `call.id` existe** — un UUID
+  à la racine de l'objet `call`, stable sur toute la durée de l'appel. L'adaptateur se
+  réduit donc à une traduction de formats vers `/webhooks/appel/{id}/tour` ; il n'y a pas
+  de clé à fabriquer. Le montage lourd est écarté.
+- Vapi **renvoie tout l'historique des messages à chaque tour**, système compris — et son
+  message système est celui de son assistant par défaut. L'adaptateur doit l'**ignorer
+  entièrement** : notre état vit dans le dépôt, indexé par `call.id`, et le prompt vient
+  de notre moteur. Règle n°1 : le LLM ne décide jamais, et un prompt étranger encore moins.
+
+Ce module a répondu à ce pour quoi il a été écrit. Il reste comme outil de diagnostic —
+la prochaine plateforme, ou la prochaine version de celle-ci, reposera les mêmes questions.
 
 La sonde répond en un appel réel, et donne trois choses au passage :
   1. la charge utile brute, conservée pour écrire l'adaptateur ensuite ;
@@ -126,9 +142,9 @@ def journaliser(entree: dict, chemin: pathlib.Path) -> None:
 def reponse_openai(texte: str, modele: str, instant: dt.datetime) -> dict:
     """Réponse au format `chat.completion`, d'un seul bloc.
 
-    Pas de diffusion en flux : décision d'arbitrage n°4, et de toute façon la sonde n'a
-    rien à diffuser. Une réponse d'un seul bloc acceptée par la plateforme est justement
-    l'une des choses qu'on veut vérifier ici plutôt que de la croire sur parole.
+    Conservée alors que Vapi exige du flux : c'est ce que d'autres plateformes attendent,
+    et c'est la forme qu'on relit le plus facilement en diagnostic. Ce qui a changé le
+    25/08, c'est qu'elle ne suffit pas — voir `evenements_sse`.
     """
     return {
         "id": "sonde-relais",
@@ -142,3 +158,44 @@ def reponse_openai(texte: str, modele: str, instant: dt.datetime) -> dict:
         }],
         "usage": {"prompt_tokens": 0, "completion_tokens": 0, "total_tokens": 0},
     }
+
+
+def evenements_sse(texte: str, modele: str, instant: dt.datetime):
+    """Rend le texte en `text/event-stream`, au format des morceaux OpenAI.
+
+    ⚠️ LIRE AVANT DE MODIFIER — c'est ici que se joue la décision d'arbitrage n°4.
+
+    Le texte arrive ENTIER et part en **un seul morceau de contenu**. Le flux est un mode
+    de TRANSPORT, jamais un mode de génération. La raison n'est pas esthétique : tout ce
+    qui sort de l'agent passe par `guards.check_output` (règle n°2), et des garde-fous ne
+    peuvent rien contre un fragment de phrase. Un prix interdit, un « c'est confirmé »
+    prématuré ou un diagnostic improvisé se reconnaissent sur la phrase complète ; émettre
+    au fil des jetons reviendrait à prononcer d'abord et vérifier ensuite.
+
+    Le découpage est donc interdit, et R40 le vérifie explicitement plutôt que de le
+    confier au commentaire ci-dessus.
+
+    Pourquoi du flux malgré tout : mesuré le 25/08 à 21:02, Vapi envoie `"stream": true`
+    et une réponse d'un seul bloc lui vaut un 200 **et un silence**. Le flux n'est pas un
+    choix de conception, c'est une exigence du transport — d'où la séparation stricte
+    entre les deux.
+
+    Conséquence pour la latence, à ne pas se cacher : émettre d'un bloc signifie que le
+    premier son sort quand la phrase entière est prête. C'est le coût assumé de l'invariant,
+    et c'est ce que les phrases-tampons pré-approuvées doivent couvrir — pas le streaming.
+    """
+    base = {"id": "sonde-relais", "object": "chat.completion.chunk",
+            "created": int(instant.timestamp()), "model": modele or "relais-sonde"}
+    # premier morceau : le rôle ET tout le texte. Certains clients exigent que `role`
+    # figure dans le premier delta.
+    yield "data: " + json.dumps(
+        {**base, "choices": [{"index": 0,
+                              "delta": {"role": "assistant", "content": texte},
+                              "finish_reason": None}]},
+        ensure_ascii=False) + "\n\n"
+    # second morceau : la fin, delta vide. Séparer la fin du contenu évite qu'un client
+    # qui s'arrête au premier `finish_reason` tronque la phrase.
+    yield "data: " + json.dumps(
+        {**base, "choices": [{"index": 0, "delta": {}, "finish_reason": "stop"}]},
+        ensure_ascii=False) + "\n\n"
+    yield "data: [DONE]\n\n"

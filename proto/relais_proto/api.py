@@ -15,7 +15,8 @@ import datetime as dt
 import pathlib
 
 from fastapi import Cookie, Depends, FastAPI, Form, Header, HTTPException, Request
-from fastapi.responses import HTMLResponse, JSONResponse, RedirectResponse
+from fastapi.responses import (HTMLResponse, JSONResponse, RedirectResponse,
+                               StreamingResponse)
 from pydantic import BaseModel, Field
 
 import secrets
@@ -195,7 +196,7 @@ def creer_app(depot, registre: Registre, fabrique_llm, horloge=None,
         # rendrait 404 parce qu'on a mal deviné le suffixe ne mesurerait rien.
         @app.post("/voix/sonde")
         @app.post("/voix/sonde/chat/completions")
-        async def sonde_etape_zero(requete: Request) -> JSONResponse:
+        async def sonde_etape_zero(requete: Request):
             """Journalise la charge utile de la plateforme vocale et répond une phrase fixe.
 
             Aucun métier, aucune persistance dans le dépôt, aucune conversation : voir
@@ -241,6 +242,17 @@ def creer_app(depot, registre: Registre, fabrique_llm, horloge=None,
                     "utf-8", "replace")}
             _sonde.journaliser(_sonde.resume(corps, entetes, t, voie_auth), chemin_sonde)
             modele = corps.get("model") if isinstance(corps, dict) else None
+            # Vapi envoie `stream: true` et ne prononce PAS une réponse d'un seul bloc :
+            # 200 côté serveur, silence à l'oreille (mesuré le 25/08 à 21:02). D'où le
+            # flux — un mode de TRANSPORT. La phrase, elle, part entière et d'un seul
+            # morceau : voir `sonde_voix.evenements_sse`, où la raison est écrite.
+            if isinstance(corps, dict) and corps.get("stream"):
+                return StreamingResponse(
+                    _sonde.evenements_sse(_sonde.PHRASE_SONDE, modele or "", t),
+                    media_type="text/event-stream",
+                    # la plateforme lit au fil de l'eau : un proxy qui met en tampon
+                    # rendrait la mesure de latence fausse
+                    headers={"Cache-Control": "no-cache", "X-Accel-Buffering": "no"})
             return JSONResponse(
                 _sonde.reponse_openai(_sonde.PHRASE_SONDE, modele or "", t))
 

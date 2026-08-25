@@ -3575,6 +3575,17 @@ def check_sonde_voix() -> bool:
     celui de l'autre porte (`artisan_authentifie`), et la règle du projet est que les deux
     portes ne se substituent jamais l'une à l'autre. Sans ce contrôle, la sonde serait le
     trou par lequel elles communiquent.
+
+    **Diffusion SSE, fait d'étape 0 du 25/08 (21:02).** Vapi envoie `"stream": true` et
+    n'accepte pas une réponse d'un seul bloc : la nôtre a été acceptée (200) mais **jamais
+    prononcée** — silence à l'oreille, sans aucune erreur. C'est exactement ce qu'aucun
+    test d'intégration n'aurait dit : côté serveur, tout était vert.
+
+    Ce que ce test verrouille, et qui EST la décision d'arbitrage n°4 rendue mécanique :
+    **le texte est garanti ENTIER avant la première émission, et part en UN SEUL morceau
+    de contenu.** Le flux est un mode de TRANSPORT, jamais un mode de génération. Un jour
+    où quelqu'un voudra diffuser au fil des jetons, ce test l'arrêtera — parce que les
+    garde-fous ne peuvent rien contre un fragment de phrase.
     """
     try:
         from fastapi.testclient import TestClient
@@ -3589,8 +3600,8 @@ def check_sonde_voix() -> bool:
     from relais_proto.api import creer_app
     from relais_proto.guards import check_output
     from relais_proto.registre import Artisan, Registre, empreinte as emp_token
-    from relais_proto.sonde_voix import (PHRASE_SONDE, identifiants_candidats,
-                                         reponse_openai)
+    from relais_proto.sonde_voix import (PHRASE_SONDE, evenements_sse,
+                                         identifiants_candidats, reponse_openai)
 
     SECRET = "secret-voix"
     # sentinelles improbables, et non des mots comme « faux » : le message de refus écrit
@@ -3630,7 +3641,11 @@ def check_sonde_voix() -> bool:
         app = creer_app(DepotMemoire(), registre, MockLLM, lambda: LUNDI_9H,
                         base_url="https://relais.test", cookie_secure=False,
                         sonde_voix=journal)
-        charge = {"model": "gpt-4", "stream": True,
+        # PAS de `stream` ici : la sonde rend alors du JSON d'un bloc, ce que les
+        # contrôles d'authentification ci-dessous relisent avec `r.json()`. La variante en
+        # flux est `charge_flux`, plus bas. (Les deux étaient confondues au premier
+        # passage, et les six contrôles d'auth recevaient du SSE.)
+        charge = {"model": "gpt-4",
                   "messages": [{"role": "system", "content": "tu es un assistant"},
                                {"role": "user", "content": "allo"}],
                   "call": {"id": "call-abc123",
@@ -3691,6 +3706,77 @@ def check_sonde_voix() -> bool:
                         print(f"   la sonde ne dit pas sa phrase : « {dit} »")
                         return False
 
+            # (d-bis) `stream: true` — ce que Vapi envoie réellement. Une réponse d'un
+            # seul bloc lui vaut un 200 et un SILENCE : il faut du SSE.
+            charge_flux = {**charge, "stream": True}
+            r = c.post("/voix/sonde/chat/completions",
+                       json=charge_flux,
+                       headers={"Authorization": f"Bearer {SECRET}"})
+            if r.status_code != 200:
+                print(f"   flux SSE : {r.status_code}")
+                return False
+            ctype = r.headers.get("content-type", "")
+            if "text/event-stream" not in ctype:
+                print(f"   `stream: true` ne rend pas un flux SSE : content-type "
+                      f"{ctype!r} — Vapi répondra 200 puis restera muet")
+                return False
+            corps_sse = r.text
+            if not corps_sse.rstrip().endswith("data: [DONE]"):
+                print(f"   flux non terminé par [DONE] : {corps_sse[-60:]!r}")
+                return False
+            evts = [l[len("data: "):] for l in corps_sse.split("\n\n")
+                    if l.startswith("data: ")]
+            if evts[-1] != "[DONE]":
+                print(f"   dernier événement inattendu : {evts[-1]!r}")
+                return False
+            morceaux = [json.loads(e) for e in evts[:-1]]
+            if any(m.get("object") != "chat.completion.chunk" for m in morceaux):
+                print(f"   morceau hors format OpenAI : "
+                      f"{[m.get('object') for m in morceaux]}")
+                return False
+            contenus = [m["choices"][0].get("delta", {}).get("content")
+                        for m in morceaux]
+            contenus = [c for c in contenus if c]
+            # LA propriété : un SEUL morceau de contenu, portant la phrase ENTIÈRE. Le
+            # flux transporte, il ne génère pas. Des garde-fous ne peuvent rien contre un
+            # fragment de phrase — c'est la décision d'arbitrage n°4 rendue mécanique.
+            if len(contenus) != 1:
+                print(f"   {len(contenus)} morceaux de contenu au lieu d'un seul : le "
+                      f"texte est découpé avant d'avoir été garanti entier — {contenus}")
+                return False
+            if contenus[0] != PHRASE_SONDE:
+                print(f"   le flux ne porte pas la phrase entière : « {contenus[0]} »")
+                return False
+            if not any(m["choices"][0].get("finish_reason") == "stop"
+                       for m in morceaux):
+                print("   aucun morceau ne porte finish_reason=stop")
+                return False
+
+            # (d-ter) sans `stream`, la réponse d'un bloc reste servie : c'est ce que
+            # d'autres plateformes attendent, et le test (d) ci-dessus en dépend.
+            r = c.post("/voix/sonde/chat/completions", json=charge,
+                       headers={"Authorization": f"Bearer {SECRET}"})
+            if "application/json" not in r.headers.get("content-type", ""):
+                print(f"   sans `stream`, la réponse n'est plus du JSON : "
+                      f"{r.headers.get('content-type')!r}")
+                return False
+
+        # (d-quater) le constructeur d'événements, isolément : il produit du SSE bien
+        # formé, et surtout il n'accepte AUCUN découpage.
+        evts = list(evenements_sse("Bonjour vous.", "m", LUNDI_9H))
+        if not all(e.startswith("data: ") and e.endswith("\n\n") for e in evts):
+            print(f"   événements SSE mal formés : {evts!r}")
+            return False
+        blocs = [json.loads(e[len("data: "):].strip()) for e in evts
+                 if not e.startswith("data: [DONE]")]
+        textes = [b["choices"][0].get("delta", {}).get("content") for b in blocs]
+        if [t for t in textes if t] != ["Bonjour vous."]:
+            print(f"   le texte n'est pas émis d'un seul tenant : {textes}")
+            return False
+        if blocs[0]["choices"][0]["delta"].get("role") != "assistant":
+            print("   le premier morceau ne déclare pas le rôle assistant")
+            return False
+
         # Aucun secret dans le journal, sur AUCUN des deux chemins. Le vrai secret est
         # inclus parce que ce sont les requêtes ACCEPTÉES qui le portent : sans lui, une
         # sonde qui journaliserait ses en-têtes en clair passerait inaperçue (mutation
@@ -3706,8 +3792,13 @@ def check_sonde_voix() -> bool:
         lignes = [json.loads(l) for l in
                   journal.read_text(encoding="utf-8").splitlines() if l.strip()]
         acceptes = [l for l in lignes if "refuse" not in l]
-        if len(acceptes) != 6:                       # 2 chemins × 3 voies
-            print(f"   {len(acceptes)} requête(s) acceptée(s) journalisée(s), attendu 6")
+        if len(acceptes) != 8:            # 2 chemins × 3 voies, + le flux, + le non-flux
+            print(f"   {len(acceptes)} requête(s) acceptée(s) journalisée(s), attendu 8")
+            return False
+        # le flux est journalisé comme le reste : une requête qu'on ne voit pas dans le
+        # fichier est une requête qu'on ne pourra pas relire pour écrire l'adaptateur
+        if not any(l.get("stream_demande") for l in acceptes):
+            print("   la requête en flux n'apparaît pas dans le journal")
             return False
         # La VOIE qui a authentifié est journalisée : c'est un fait d'étape 0, et si Vapi
         # change de canal un jour, on veut le lire dans le journal, pas le deviner.
@@ -3720,8 +3811,8 @@ def check_sonde_voix() -> bool:
             print(f"   identifiant d'appel non repéré : "
                   f"{entree['identifiants_candidats']}")
             return False
-        if entree.get("stream_demande") is not True:
-            print(f"   demande de diffusion en flux non signalée : {entree!r}")
+        if entree.get("stream_demande") is not False:
+            print(f"   une requête SANS flux est signalée comme telle : {entree!r}")
             return False
         if entree.get("charge_utile") != charge:
             print("   la charge utile brute n'est pas conservée : on ne pourra pas "
