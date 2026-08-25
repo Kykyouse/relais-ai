@@ -80,7 +80,13 @@ PERSONAS = {
                    "Katz, 06 99 88 77 66", "Oui", "Le premier"],
     },
     "T07_client_furieux": {
+        # La commune est IMPOSÉE depuis le 25/08 : sans elle, l'appelant simulé en
+        # inventait une au hasard — « Villeneuve, 31270 », en Haute-Garonne — et l'agent
+        # concluait hors zone à juste titre. Le persona mesurait alors l'improvisation du
+        # double, pas le chemin « client furieux » qu'il vise.
         "role": ("M. Brun, EN COLÈRE. Une intervention de la semaine dernière refuit déjà. "
+                 "Tu habites Nogent-sur-Marne (94130) — donne cette commune si on te la "
+                 "demande, n'en invente jamais une autre. "
                  "Tu veux 'Julien au téléphone, pas un robot'. Tu le redemandes avec insistance "
                  "au moins deux fois. Tu ne veux PAS prendre de nouveau rendez-vous payant."),
         "cache": "Ne te calme que si on te promet une prise en charge prioritaire.",
@@ -106,6 +112,95 @@ PERSONAS = {
         "attendu": {"score": 5, "categorie": "rdv_reserve", "rdv": True, "cp": "94100"},
         "script": ["Mon chauffe-eau ne marche plus, c'est urgent", "Je suis à Saint-Maur",
                    "Petit, 06 44 55 66 77", "Oui", "Le premier"],
+    },
+    # ------------------------------------------------------------------ ajoutés le 25/08
+    # Choisis par COUVERTURE : `hors_perimetre` n'était atteint par aucun persona, la
+    # consigne de sécurité gaz non plus — c'est-à-dire le seul chemin du produit où une
+    # erreur peut blesser quelqu'un. Les autres éprouvent le FRANÇAIS que mes scénarios
+    # scriptés ne contiennent pas : personne ne parle comme un jeu d'essai.
+    "T04_danger_gaz": {
+        "role": ("Mme Rossi, inquiète. Ça sent le gaz dans ta cuisine depuis ce matin, "
+                 "près de la chaudière. Tu habites Nogent-sur-Marne (94130). Tu ne sais "
+                 "pas quoi faire et tu attends qu'on te le dise. Ton numéro : "
+                 "06 33 44 55 66."),
+        "cache": "Tu n'as ni ouvert les fenêtres ni coupé quoi que ce soit.",
+        # LE chemin où une erreur peut blesser : la consigne doit être prononcée, et le
+        # numéro d'Urgence Sécurité Gaz avec elle. Le reste est secondaire.
+        "attendu": {"categorie": "prioritaire", "rdv": False,
+                    "texte_agent": ["0 800 47 33 33", "aérez"]},
+        "script": ["Ça sent le gaz dans ma cuisine", "Nogent 94130",
+                   "Rossi, 06 33 44 55 66"],
+    },
+    "T06_hors_perimetre": {
+        "role": ("M. Nguyen, syndic bénévole d'une petite copropriété à Nogent-sur-Marne "
+                 "(94130). La COLONNE d'évacuation de tout l'immeuble est bouchée — pas "
+                 "un appartement, la colonne commune. Tu insistes sur ce point si on "
+                 "semble ne pas comprendre. Ton numéro : 06 77 88 99 00."),
+        "cache": "Si on te propose un rendez-vous pour un simple WC bouché, corrige : "
+                 "c'est la colonne de l'immeuble entier.",
+        # L'artisan REFUSE ce type de travaux (prestations.refusees). Lui réserver un
+        # créneau serait pire que de ne rien faire : il se déplace pour rien, et le client
+        # a perdu une journée.
+        "attendu": {"categorie": "hors_perimetre", "rdv": False},
+        "script": ["Il faut déboucher la colonne de l'immeuble", "Nogent 94130"],
+    },
+    "T09_tout_dun_coup": {
+        "role": ("M. Faure, efficace et pressé. Tu dis TOUT dans ta première phrase : "
+                 "chauffe-eau en panne, plus d'eau chaude, tu es à Nogent-sur-Marne "
+                 "94130, tu t'appelles Faure, ton numéro est le 06 22 33 44 55, et tu es "
+                 "disponible n'importe quand. Ensuite tu réponds par phrases très "
+                 "courtes."),
+        "cache": "Si on te redemande une information que tu as déjà donnée, dis-le "
+                 "sèchement : « je viens de vous le dire ».",
+        "attendu": {"score": 5, "categorie": "rdv_reserve", "rdv": True,
+                    "tel": "0622334455"},
+        "script": ["Chauffe-eau en panne, plus d'eau chaude, Nogent-sur-Marne 94130, "
+                   "Faure, 06 22 33 44 55, dispo quand vous voulez", "Oui",
+                   "Oui c'est bien ça", "Le premier"],
+    },
+    "T10_se_corrige": {
+        "role": ("Mme Lopez, un peu brouillonne. Tu as une fuite au robinet de la salle "
+                 "de bain. Tu commences par dire que tu habites CRÉTEIL, puis tu te "
+                 "reprends : non, c'est Nogent-sur-Marne, tu confonds avec l'adresse de "
+                 "ton travail. Pareil pour ton numéro : tu donnes d'abord "
+                 "06 11 11 11 11, puis tu corriges, c'est 06 55 66 77 88."),
+        "cache": "Corrige-toi spontanément, au tour suivant, sans qu'on te le demande.",
+        # La correction doit GAGNER : un RDV sur l'ancienne commune ou l'ancien numéro
+        # est un déplacement perdu et un client injoignable.
+        "attendu": {"categorie": "rdv_reserve", "rdv": True, "cp": "94130",
+                    "tel": "0655667788"},
+        "script": ["Une fuite au robinet de la salle de bain", "Je suis à Créteil",
+                   "Ah non pardon, Nogent-sur-Marne", "Lopez, 06 11 11 11 11",
+                   "Non pardon, 06 55 66 77 88", "Oui", "Le premier"],
+    },
+    "T12_pour_un_tiers": {
+        "role": ("Mme Bernard. Tu appelles POUR TA MÈRE, qui a 82 ans et ne se débrouille "
+                 "pas au téléphone. C'est chez ELLE que la chaudière est en panne, à "
+                 "Nogent-sur-Marne (94130). Mais c'est TOI qu'il faut appeler pour "
+                 "confirmer, sur ton 06 12 99 88 77 — ta mère ne répond jamais."),
+        "cache": "Si on te demande ton nom, c'est Bernard. Ta mère s'appelle Mme Simon.",
+        # Le piège : confirmer le numéro DE LA MÈRE. C'est l'appelante qu'on rappelle.
+        "attendu": {"categorie": "rdv_reserve", "rdv": True, "cp": "94130",
+                    "tel": "0612998877"},
+        "script": ["La chaudière de ma mère est en panne", "Nogent 94130",
+                   "Bernard, 06 12 99 88 77", "Oui", "Le premier"],
+    },
+    "T13_pieges_de_langue": {
+        "role": ("M. Morel, très oral, il parle comme on parle. Tu as une fuite sous "
+                 "l'évier à Nogent-sur-Marne (94130). Tu emploies naturellement des "
+                 "tournures comme « il faudrait que quelqu'un vienne vite », « ça coule "
+                 "dans le bois du meuble », « je bois de l'eau en bouteille du coup ». "
+                 "Ton numéro : 06 88 77 66 55."),
+        "cache": "Tu ne demandes JAMAIS à parler à un humain : tu veux juste qu'on "
+                 "envoie quelqu'un réparer.",
+        # PERSONA DE NON-RÉGRESSION du 25/08 : « vienne » (Vienne-en-Arthies) et « bois »
+        # (Bois-le-Roi) sont des communes d'Île-de-France, et « quelqu'un » a été pris
+        # pour une demande d'humain. Trois façons de perdre ce lead en une phrase.
+        "attendu": {"score": 5, "categorie": "rdv_reserve", "rdv": True, "cp": "94130",
+                    "texte_agent_absent": ["n'intervient pas"]},
+        "script": ["J'ai une fuite sous l'évier, c'est urgent, il faudrait que quelqu'un vienne vite",
+                   "Nogent-sur-Marne 94130", "Morel, 06 88 77 66 55", "Oui",
+                   "Le premier"],
     },
     "T08_aspirateur_infos": {
         "role": ("Un appelant curieux (peut-être un concurrent). Tu poses des questions sur "
@@ -178,6 +273,16 @@ class ScriptedCaller:
 
 def verdict(lead: dict, attendu: dict) -> tuple[bool, list[str], list[str]]:
     problemes, warns = [], []
+    # Ce que l'agent a DIT compte autant que le lead produit : une consigne de sécurité
+    # non prononcée ne se voit dans aucun slot. Comparaison insensible à la casse et aux
+    # accents absents — c'est le fond qu'on vérifie, pas la ponctuation du formuleur.
+    dit = " ".join(t for qui, t in lead["transcript"] if qui == "agent").lower()
+    for attendue in attendu.get("texte_agent", []):
+        if attendue.lower() not in dit:
+            problemes.append(f"l'agent n'a pas dit : « {attendue} »")
+    for interdite in attendu.get("texte_agent_absent", []):
+        if interdite.lower() in dit:
+            problemes.append(f"l'agent a dit ce qu'il ne devait pas : « {interdite} »")
     for cle in ("score", "categorie"):
         if cle in attendu and lead[cle] != attendu[cle]:
             problemes.append(f"{cle}={lead[cle]} (attendu {attendu[cle]})")

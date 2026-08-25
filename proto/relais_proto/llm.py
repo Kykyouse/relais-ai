@@ -123,16 +123,28 @@ class MockLLM:
         "devis_chaudiere": ["nouvelle chaudière", "remplacer la chaudière", "changer de chaudière"],
         "devis_sdb": ["salle de bain"],
         "entretien_chaudiere": ["entretien", "révision"],
+        # Prestations que l'artisan REFUSE. Elles doivent être NOMMABLES, sinon le
+        # contrôleur ne peut pas les décliner et l'agent réserve un créneau pour des
+        # travaux exclus (cf. R33). Leur position dans ce dictionnaire n'a pas
+        # d'importance : c'est le mot-clé le plus SPÉCIFIQUE qui gagne, voir `extract`.
+        "debouchage_colonne_immeuble": ["colonne de l'immeuble", "colonne d'immeuble",
+                                        "colonne commune"],
+        "gaz_installation_neuve": ["installation gaz neuve", "installation de gaz neuve",
+                                   "créer une arrivée de gaz"],
     }
 
     def extract(self, utterance: str, context: dict) -> dict:
         u = utterance.lower()
         out: dict = {}
-        for prest, kws in self.PRESTATION_KEYWORDS.items():
-            if any(k in u for k in kws):
-                out["prestation"] = prest
-                out["probleme"] = utterance.strip()[:80]
-                break
+        # LE PLUS SPÉCIFIQUE gagne, pas le premier trouvé. « Il faut déboucher la colonne
+        # de l'immeuble, c'est bouché » contient « bouché » (wc_evacuation, couvert) ET
+        # « colonne de l'immeuble » (refusé) : s'arrêter au premier match faisait dépendre
+        # la réponse de l'ordre du dictionnaire, et l'agent acceptait des travaux exclus.
+        trouves = [(k, prest) for prest, kws in self.PRESTATION_KEYWORDS.items()
+                   for k in kws if k in u]
+        if trouves:
+            out["prestation"] = max(trouves, key=lambda t: len(t[0]))[1]
+            out["probleme"] = utterance.strip()[:80]
         if m := re.search(r"\b(\d{5})\b", u):
             out["code_postal"] = m.group(1)
         if m := re.search(r"\b(0\d(?:[\s.\-]?\d{2}){4})\b", utterance):

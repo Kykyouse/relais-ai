@@ -2701,6 +2701,21 @@ def check_commune_homonyme() -> bool:
         print("   Nogent classé hors zone")
         return False
 
+    # (a bis) « ma mère » n'est pas Méré (78490). Beaucoup d'appels sont passés POUR
+    # quelqu'un d'autre — « c'est pour la chaudière de ma mère » est une des phrases les
+    # plus banales du métier. Trouvé le 25/08 par l'éval réelle, trois fois sur trois.
+    convo = conversation()
+    convo.open()
+    reponse = convo.process("C'est pour la chaudière de ma mère, elle est en panne")
+    # On vérifie le COMPORTEMENT, pas les slots : si « mère » résolvait Méré, la
+    # confirmation de (b) se déclencherait et viderait justement les slots — un test qui
+    # les regarde passerait sans rien prouver. L'agent doit simplement demander la
+    # commune, comme pour n'importe quel appel qui n'en a pas donné.
+    if "quelle commune" not in reponse.lower():
+        print(f"   « ma mère » n'est pas traité comme une phrase sans commune : "
+              f"« {reponse} »")
+        return False
+
     # (b) une commune HORS ZONE détectée au passage ne raccroche pas : on CONFIRME d'abord.
     # « Sucy » est un alias légitime (Sucy-en-Brie, 94370) — hors de la zone de Dupont.
     convo = conversation()
@@ -2895,6 +2910,178 @@ def check_question_prix_creneau() -> bool:
     if convo3.flags["tours_creneaux"] <= tours_depart:
         print(f"   les questions de prix ne rendent jamais la main "
               f"(tours_creneaux figé à {tours_depart})")
+        return False
+    return True
+
+
+def check_corrections_appelant() -> bool:
+    """R32 : l'appelant se corrige, et sa correction doit GAGNER.
+
+    Deux défauts trouvés le 25/08 en élargissant les personas d'éval (T09, T10) :
+
+    1. **Une correction de commune par le NOM était ignorée.** `_resoudre_commune` sortait
+       dès qu'un code postal existait. « Je suis à Créteil… ah non pardon,
+       Nogent-sur-Marne » réservait donc à Créteil : l'artisan se déplace dans la mauvaise
+       ville. La correction du NUMÉRO, elle, fonctionnait déjà — d'où l'asymétrie qui
+       rendait le défaut invisible à la relecture.
+
+    2. **La confirmation du numéro bouclait sans borne.** Une réponse qui n'est ni oui ni
+       non faisait reposer la même question, indéfiniment. `tentatives_tel` borne la
+       demande du numéro, pas sa confirmation. Un appelant qui répond à côté deux fois
+       tuait l'appel sans produire le moindre lead.
+
+    L'invariant reste intouchable : pas de RDV sans téléphone confirmé. Sortir de la boucle
+    ne veut donc pas dire réserver quand même — mais rendre un lead exploitable.
+    """
+    from relais_proto.engine import Conversation
+
+    def conversation():
+        return Conversation(CFG, MockLLM(), CalendarStub(CFG, now=LUNDI_9H))
+
+    # (a) correction de commune par le NOM, au tour suivant
+    convo = conversation()
+    convo.open()
+    convo.process("Une fuite au robinet de la salle de bain")
+    convo.process("Je suis à Créteil")
+    if convo.slots["code_postal"] != "94000":
+        print(f"   Créteil non résolu : {convo.slots['code_postal']!r}")
+        return False
+    convo.process("Ah non pardon, Nogent-sur-Marne")
+    if convo.slots["code_postal"] != "94130":
+        print(f"   correction de commune ignorée : {convo.slots['code_postal']!r} "
+              f"(commune={convo.slots['commune']!r}) — l'artisan irait à Créteil")
+        return False
+
+    # (a bis) MAIS une commune ÉTABLIE ne se réécrit pas sur une simple mention. Autoriser
+    # la relecture à chaque tour, sans condition, est allé trop loin : l'éval du 25/08 a
+    # montré « ne notez pas le numéro de ma mère », trois tours après coup, remplaçant une
+    # commune déjà confirmée. Un nom de commune est ambigu par nature — il ne remplace
+    # l'existant que si l'appelant se CORRIGE (négation, ou code postal prononcé).
+    #
+    # Conversation à part : ces tours-là font avancer la machine à états, et les mêler au
+    # parcours nominal ci-dessous ferait échouer le test pour une raison sans rapport.
+    incident = conversation()
+    incident.open()
+    incident.process("Une fuite sous l'évier")
+    incident.process("Je suis à Nogent-sur-Marne")
+    etabli = incident.slots["code_postal"]
+    if etabli != "94130":
+        print(f"   Nogent non établi : {etabli!r}")
+        return False
+    for mention in ("Ma fille habite à Massy mais moi je bouge pas",
+                    "C'est pour la chaudière de ma mère",
+                    "Je travaille du côté de Chelles la semaine"):
+        incident.process(mention)
+        if incident.slots["code_postal"] != etabli:
+            print(f"   « {mention} » a déplacé le rendez-vous : "
+                  f"{incident.slots['code_postal']!r} au lieu de {etabli!r}")
+            return False
+
+    # (b) mais une fois le RDV RÉSERVÉ, plus rien ne bouge : le créneau est bloqué et
+    # l'artisan prévenu. C'est la règle déjà portée par OVERWRITABLE (`hold is None`).
+    #
+    # La garde est éprouvée EN DIRECT et non par `process()` : aujourd'hui la réservation
+    # clôt l'appel dans le même tour, donc `process()` court-circuite avant même
+    # d'atteindre le résolveur — un test qui passerait par lui ne prouverait rien. La
+    # garde reste utile le jour où l'appel continuera après réservation (rappel de
+    # créneau, seconde demande), et ce test la tient d'ici là.
+    convo.process("Lopez, 06 55 66 77 88")
+    convo.process("Oui c'est bien ça")
+    convo.process("Le premier")
+    if not convo.flags["hold"]:
+        print("   pas de RDV réservé après un parcours nominal")
+        return False
+    fige = convo.slots["code_postal"]
+    # avec un signal de CORRECTION explicite, pour que seule la borne du hold puisse
+    # arrêter la réécriture — sinon c'est l'autre garde qu'on éprouverait
+    convo._resoudre_commune("Non, finalement c'est à Champigny-sur-Marne",
+                            {"confirme": False})
+    if convo.slots["code_postal"] != fige:
+        print(f"   la commune a changé APRÈS réservation : {convo.slots['code_postal']!r}")
+        return False
+
+    # (c) la confirmation du numéro est BORNÉE. On répond systématiquement à côté : la
+    # question ne doit pas se reposer indéfiniment.
+    convo2 = conversation()
+    convo2.open()
+    convo2.process("Une fuite sous l'évier")
+    convo2.process("Nogent 94130")
+    convo2.process("Lopez, 06 55 66 77 88")
+    questions = 0
+    for _ in range(6):
+        r = convo2.process("Le premier créneau plutôt")     # ni oui ni non
+        if "je répète votre numéro" in r.lower():
+            questions += 1
+    if questions >= 5:
+        print(f"   la confirmation du numéro se repose {questions} fois : boucle sans "
+              f"borne, l'appel meurt sans lead")
+        return False
+
+    # ... et l'invariant tient : sans confirmation, PAS de RDV.
+    if convo2.flags["hold"]:
+        print("   RDV réservé sans téléphone confirmé — invariant produit violé")
+        return False
+    # ... mais l'appel produit quand même un lead utile, avec le numéro entendu
+    lead = build_lead(convo2)
+    if lead["categorie"] == "rdv_reserve":
+        print(f"   catégorie {lead['categorie']!r} sans confirmation")
+        return False
+    if lead["slots"].get("telephone_rappel") != "0655667788":
+        print(f"   le numéro entendu est perdu : "
+              f"{lead['slots'].get('telephone_rappel')!r}")
+        return False
+    return True
+
+
+def check_prestation_refusee() -> bool:
+    """R33 : une prestation que l'artisan REFUSE ne doit pas aboutir à un rendez-vous.
+
+    `prestations.refusees` existe dans la config depuis le 21/08 et `_hors_perimetre` est
+    écrit dans le moteur… mais le chemin était **injoignable**. L'extracteur ne reçoit que
+    les prestations COUVERTES (`_ctx["prestations"]`), donc il ne pouvait jamais nommer une
+    prestation refusée : « déboucher la colonne de l'immeuble » était rapproché de
+    `wc_evacuation`, et l'agent réservait un créneau pour des travaux que l'artisan a
+    explicitement exclus. Il se déplace pour rien, le client perd une journée.
+
+    Trouvé le 25/08 en cherchant quels chemins du moteur AUCUN persona n'empruntait —
+    `hors_perimetre` et `appel_muet` étaient les deux seules catégories jamais atteintes.
+    """
+    from relais_proto.engine import Conversation
+
+    refusees = CFG["prestations"]["refusees"]
+    if not refusees:
+        print("   la config de test n'a plus de prestation refusée : R33 est à réécrire")
+        return False
+
+    # (a) l'extracteur DOIT connaître les prestations refusées, sinon il ne peut pas les
+    # nommer et le contrôleur ne peut pas les refuser. C'est le contrôleur qui tranche —
+    # le LLM ne fait que dire ce qu'il entend (règle n°1).
+    convo = Conversation(CFG, MockLLM(), CalendarStub(CFG, now=LUNDI_9H))
+    vues = convo._ctx["prestations"]
+    for p in refusees:
+        if p not in vues:
+            print(f"   l'extracteur ne voit pas la prestation refusée « {p} » : "
+                  f"il ne pourra jamais la nommer")
+            return False
+
+    # (b) et de bout en bout : la demande est déclinée, aucun RDV
+    convo.open()
+    reponse = convo.process("Il faut déboucher la colonne de l'immeuble, c'est bouché")
+    if convo.flags["categorie"] != "hors_perimetre":
+        print(f"   colonne d'immeuble : catégorie {convo.flags['categorie']!r}, "
+              f"attendu hors_perimetre — « {reponse} »")
+        return False
+    if convo.flags["hold"]:
+        print("   un RDV a été réservé pour des travaux refusés")
+        return False
+
+    # (c) et l'inverse ne casse pas : un WC bouché ORDINAIRE reste couvert. Confondre les
+    # deux dans l'autre sens ferait perdre de vrais leads.
+    convo2 = Conversation(CFG, MockLLM(), CalendarStub(CFG, now=LUNDI_9H))
+    convo2.open()
+    convo2.process("Mes WC sont bouchés chez moi")
+    if convo2.flags["categorie"] == "hors_perimetre":
+        print("   un WC bouché ordinaire est refusé à tort")
         return False
     return True
 
@@ -3108,6 +3295,24 @@ def run() -> int:
         print("   → une question de prix ne consomme plus un tour de créneaux, "
               "reçoit la réponse de la liste blanche et rappelle les créneaux "
               "déjà proposés ; l'invariant n°6 tient toujours : ✅ PASS")
+    else:
+        print("   → ❌ FAIL")
+        echecs += 1
+
+    print(f"\n──── R32_corrections_appelant ────")
+    if check_corrections_appelant():
+        print("   → une correction de commune par le nom gagne (mais plus après "
+              "réservation), et la confirmation du numéro ne boucle plus sans "
+              "borne : ✅ PASS")
+    else:
+        print("   → ❌ FAIL")
+        echecs += 1
+
+    print(f"\n──── R33_prestation_refusee ────")
+    if check_prestation_refusee():
+        print("   → l'extracteur connaît les prestations refusées, une demande "
+              "hors périmètre est déclinée sans RDV, et un WC ordinaire reste "
+              "couvert : ✅ PASS")
     else:
         print("   → ❌ FAIL")
         echecs += 1

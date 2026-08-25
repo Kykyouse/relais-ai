@@ -13,8 +13,8 @@
 ## En une phrase
 
 Le produit s'appelle **NELYO**. Le backend de la phase 1 est fonctionnel, vérifié contre
-un vrai Postgres, et l'agent conversationnel passe désormais **24/24** en éval LLM réelle
-(19/24 avant les correctifs du 25/08). L'artisan se connecte par code SMS et valide en
+un vrai Postgres, et l'agent conversationnel passe désormais **42/42** en éval LLM réelle
+sur **14 personas** (19/24 sur 8 personas en début de journée). L'artisan se connecte par code SMS et valide en
 1 tap ; le client est prévenu sur toutes les issues. **Il ne manque que la voix** — le
 point d'entrée du produit. Plus rien d'autre n'est bloqué côté code.
 
@@ -22,7 +22,7 @@ point d'entrée du produit. Plus rien d'autre n'est bloqué côté code.
 
 ```bash
 cd proto
-python run_scenario.py                              # 35 tests, ~3 s, sans clé ni base
+python run_scenario.py                              # 37 tests, ~3 s, sans clé ni base
 python semer_artisans.py [--ecrire]                 # amorce la table `artisan`
 python run_depot_pg.py [--migrer]                   # contrat du port contre Supabase
 uvicorn serveur:app --port 8000                     # API HTTP
@@ -47,7 +47,9 @@ python run_llm_eval.py [--mock] [--n 3]             # éval appelant-simulé
 | Nom de produit et expéditeur en config (R29) | ✅ | mock, mutations 7/7 |
 | Homonymes de communes, commune confirmée (R30) | ✅ | mock, mutations 6/6 |
 | Question de prix ≠ refus de créneau (R31) | ✅ | mock, mutations 4/4 |
-| **Éval LLM réelle, 8 personas × 3** | ✅ **24/24** | agent + appelant Sonnet 5 |
+| Homonymes, corrections, boucles bornées (R32) | ✅ | mock, mutations 6/6 |
+| Prestation refusée déclinée (R33) | ✅ | mock, mutations 6/6 |
+| **Éval LLM réelle, 14 personas × 3** | ✅ **42/42** | agent + appelant Sonnet 5 |
 | SMS de confirmation au client, chemin nominal (R27) | ✅ | mock, mutations 5/5 |
 | Table `artisan` + FK sur 5 tables (migration 008) | ✅ | **Supabase réel**, contrat du port |
 | Connexion artisan par code SMS (R28) | ✅ | mock, mutations 7/8 (1 défense en profondeur) |
@@ -138,12 +140,14 @@ Kbis, Sender ID) courent en parallèle sans bloquer une ligne.
 
 Candidats sans dépendance externe, par valeur décroissante :
 
-1. **Élargir les personas d'éval.** 24/24 sur huit personas ne veut pas dire que l'agent
-   est bon — il veut dire que ces huit-là ne trouvent plus rien. Les trois bugs du 25/08
-   ont été révélés par UNE tournure à laquelle personne n'avait pensé ; d'autres attendent
-   dans le français qu'on n'a pas encore écrit. Personas à ajouter : accents régionaux,
-   appelants qui donnent tout d'un coup, qui se corrigent, qui parlent d'un tiers
-   (« c'est pour ma mère »), qui coupent l'agent.
+1. **Couvrir `appel_muet` (S9)** — la dernière des six issues du moteur que personne
+   n'emprunte. Le harnais lit une réplique vide comme une fin d'appel : un persona
+   silencieux est aujourd'hui indistinguable d'un persona qui raccroche. Il faut que
+   l'appelant simulé puisse rendre un silence EXPLICITE.
+   Et continuer d'élargir : 42/42 ne veut pas dire que l'agent est bon, mais que ces
+   quatorze-là ne trouvent plus rien. Cinq des six bugs du 25/08 sont venus de tournures
+   auxquelles personne n'avait pensé. Restent à écrire : les accents régionaux, l'appelant
+   qui coupe l'agent, celui qui répond à côté, le bruit de chantier.
 2. **Un vrai parcours d'onboarding** pour remplacer `semer_artisans.py`.
 3. **Un worker de rattrapage** pour les RDV décidés dont le SMS n'a pas été mis en file
    (l'écriture et la mise en file ne sont pas atomiques — point laissé ouvert le 25/08).
@@ -1982,3 +1986,121 @@ Plus rien de tout cela ne bloque le code :
 
 Et la boucle nominale n'attend même pas ce dernier maillon : seul `reproposition_client`
 porte une URL, donc seul lui est bloqué par le numéro court.
+
+### 25/08 (suite) — élargir les personas : deux chemins morts, deux boucles, et ma propre régression
+
+**Fait.** Le jeu d'éval passe de 8 à **14 personas**. Les six nouveaux sont choisis par
+**couverture du moteur**, pas par intuition. Résultat : **38/42** au premier passage, puis
+**42/42** après correctifs (42 conversations, 14 personas × 3).
+
+### La méthode : quels chemins AUCUN persona n'empruntait
+
+Le moteur a six issues possibles (`categorie`) : `rdv_reserve`, `hors_zone`, `prioritaire`,
+`a_rappeler`, `hors_perimetre`, `appel_muet`. Les huit personas d'origine en couvraient
+**quatre**. Les deux manquantes n'étaient pas des cas exotiques — les travaux refusés, et le
+répondeur. Choisir par couverture plutôt qu'au jugé a payé immédiatement.
+
+### Bug 1 — `_hors_perimetre` était injoignable
+
+`_ctx["prestations"]` ne donnait à l'extracteur que les prestations **couvertes**. Il ne
+pouvait donc jamais nommer une prestation refusée : « déboucher la colonne de l'immeuble »
+était rapproché de `wc_evacuation`, et **l'agent réservait un créneau pour des travaux que
+l'artisan a explicitement exclus**. Il se déplace pour rien, le client perd une journée, et
+la config `refusees` — écrite le 21/08 — ne servait à rien.
+
+L'extracteur reçoit maintenant les deux listes. Il NOMME, le contrôleur DÉCLINE : la règle
+n°1 est respectée, et c'est même elle qui rendait le correctif évident.
+
+Au passage, `MockLLM` s'arrêtait au **premier** mot-clé trouvé : « déboucher la colonne de
+l'immeuble, c'est bouché » contient `bouché` (couvert) et `colonne de l'immeuble` (refusé),
+et la réponse dépendait de l'ordre du dictionnaire. C'est le mot-clé **le plus spécifique**
+qui gagne désormais.
+
+### Bug 2 — une correction de commune par le NOM était ignorée
+
+« Je suis à Créteil… ah non pardon, Nogent-sur-Marne » : l'agent gardait Créteil et
+**réservait dans la mauvaise ville**. `_resoudre_commune` sortait dès qu'un code postal
+existait. Ce qui a caché le défaut : la correction du **numéro** fonctionnait, elle — une
+asymétrie qu'aucune relecture n'attrape, il fallait un appelant qui se corrige.
+
+### Bug 3 — la confirmation du numéro bouclait sans borne
+
+Une réponse ni oui ni non faisait reposer la même question, **indéfiniment**.
+`tentatives_tel` borne la DEMANDE du numéro, pas sa confirmation : deux boucles jumelles,
+une seule protégée. Un appelant qui répond à côté deux fois tuait l'appel sans produire le
+moindre lead.
+
+Deux détails qui ont demandé un second essai : la **première** répétition est normale et
+non un échec de compréhension (mon premier compteur la comptait, et cassait R01, le
+scénario canonique de correction de numéro) ; et le compteur repart à zéro à chaque
+**nouveau** numéro, une correction relançant une confirmation neuve. Au-delà, on conclut
+avec un lead exploitable au lieu de mourir — l'invariant tient : pas de RDV sans téléphone
+confirmé.
+
+### Bug 4 — « ma mère » n'est pas Méré (78490)
+
+Le persona qui visait les appels **passés pour un tiers** a trouvé un homonyme : « c'est
+pour la chaudière de ma mère » résolvait Méré, dans les Yvelines. Trois fois sur trois. Une
+des phrases les plus banales du métier — beaucoup d'appels sont passés pour quelqu'un
+d'autre.
+
+Le garde-fou du matin (R30) a bien joué : l'agent a demandé « c'est bien à Mère, la
+commune ? » et la cliente a corrigé. Mais c'est un tour perdu sur une question absurde, et
+`mere` rejoint donc `vienne`, `bois`, `champs` et `bourg`.
+
+### Bug 5 — ma propre régression, trouvée le jour même
+
+En corrigeant le bug 2, j'avais fait relire la commune **à chaque tour, sans condition**.
+Conséquence, visible dans le même passage d'éval : « ne notez pas le numéro de **ma mère** »,
+prononcé trois tours après coup, **réécrivait une commune déjà confirmée**. Le rendez-vous
+changeait de ville en silence.
+
+La règle qui en sort, et qui vaut mieux que les deux extrêmes :
+
+> **Cinq chiffres ne sont jamais un homonyme ; un nom, si.** Un code postal prononcé corrige
+> à tout moment. Un nom de commune ne remplace une commune ÉTABLIE que si l'appelant se
+> corrige explicitement — négation, ou code postal dans la même phrase. Tant qu'aucune
+> commune n'est établie, tout ce qui est nommé est bon à prendre.
+
+Deux bornes, donc : le signal de correction, et le hold (une fois le créneau bloqué, plus
+rien ne bouge).
+
+### Un échec qui n'en était pas un
+
+`T07_client_furieux` a échoué une fois sur trois avec `hors_zone`. Ce n'était **pas** un
+défaut produit : le rôle du persona ne fixait aucune commune, l'appelant simulé en a donc
+inventé une — « Villeneuve, 31270 », en Haute-Garonne — et l'agent a correctement conclu
+hors zone. Le persona mesurait l'improvisation du double, pas le chemin qu'il visait. La
+commune y est maintenant imposée. **Un persona sous-spécifié produit un faux défaut**, et
+c'est aussi coûteux qu'un vrai qu'on ne voit pas.
+
+### Les six personas
+
+| Persona | Ce qu'il éprouve |
+|---|---|
+| `T04_danger_gaz` | **La consigne de sécurité** — le seul chemin où une erreur peut blesser. Vérifie que le 0 800 47 33 33 est prononcé |
+| `T06_hors_perimetre` | Travaux refusés (colonne d'immeuble) — la catégorie jamais atteinte |
+| `T09_tout_dun_coup` | Tout donné dans la première phrase : remplissage opportuniste, aucune question redondante |
+| `T10_se_corrige` | Se trompe de commune ET de numéro, puis se reprend |
+| `T12_pour_un_tiers` | Appelle **pour sa mère** : l'intervention est chez elle, le rappel est pour l'appelante |
+| `T13_pieges_de_langue` | Non-régression du matin : « vienne », « bois », « quelqu'un » dans une seule conversation |
+
+Le harnais sait maintenant vérifier **ce que l'agent a dit** (`texte_agent`,
+`texte_agent_absent`) et pas seulement le lead produit : une consigne de sécurité non
+prononcée ne se voit dans aucun slot.
+
+### Ce qui reste découvert, et pourquoi
+
+**`appel_muet` (S9)** n'est toujours pas couvert : le harnais interprète une réplique vide
+comme une fin d'appel, donc un persona silencieux est indistinguable d'un persona qui
+raccroche. Il faudrait que l'appelant simulé puisse rendre un « silence » explicite. Noté,
+pas fait.
+
+**Mutation : 6/6 sur R32 et R33, 6/6 sur les deux bornes de la relecture de commune.**
+Trois de mes propres tests ont d'abord laissé passer des mutations — ils assertaient sur des
+symptômes (les slots, une chaîne accentuée) plutôt que sur le comportement. Un cas en
+particulier était **inerte** : `process()` court-circuite en clôture après réservation, donc
+la garde du hold n'était jamais atteinte par ce chemin. Le test l'éprouve désormais en
+direct, et le dit plutôt que de faire semblant.
+
+Suite : **37 PASS** en mock, **42/42** en éval LLM réelle, contrat Postgres vert.

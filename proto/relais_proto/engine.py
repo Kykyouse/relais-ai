@@ -40,7 +40,15 @@ class Conversation:
         return {
             "metier": self.cfg["entreprise"]["metier"],
             "nom_entreprise": self.cfg["entreprise"]["nom"],
-            "prestations": self.cfg["prestations"]["couvertes"],
+            # COUVERTES **ET** REFUSÉES. L'extracteur doit pouvoir NOMMER ce qu'il entend,
+            # y compris ce que l'artisan ne fait pas — sinon « déboucher la colonne de
+            # l'immeuble » se rapproche de `wc_evacuation` et l'agent réserve un créneau
+            # pour des travaux explicitement exclus. C'est le contrôleur qui décline
+            # (`_hors_perimetre`), pas le LLM : lui ne fait que dire ce qu'il entend.
+            # Jusqu'au 25/08 il ne voyait que les couvertes, et ce chemin du moteur était
+            # donc injoignable en production.
+            "prestations": (list(self.cfg["prestations"]["couvertes"])
+                            + list(self.cfg["prestations"].get("refusees") or [])),
             "dernier_tour": self.transcript[-1][1] if self.transcript else "",
             # contexte pour l'EXTRACTEUR : sans ça, il ne peut pas comprendre
             # "le matin entre 8h et 10h" comme le choix de la proposition n°1 (bug R09-LLM)
@@ -168,7 +176,9 @@ class Conversation:
 
         extracted = self.llm.extract(user_text, self._ctx)
         self._merge(extracted)
-        self._resoudre_commune(user_text)  # "je suis à Saint-Maur" → CP sans redemander
+        # `extracted` est passé : c'est lui qui porte le signal de correction
+        # (négation, code postal prononcé) qui autorise à réécrire une commune établie.
+        self._resoudre_commune(user_text, extracted)  # "je suis à Saint-Maur" → CP
 
         # correction de commune en cours d'appel : revalider la zone immédiatement
         if extracted.get("code_postal") and self.flags["zone"] is not None:
@@ -256,6 +266,10 @@ class Conversation:
         "bois",     # « je bois », « le bois », « sous le bois »
         "champs",   # « les champs »
         "bourg",    # « le bourg »
+        # Méré (78490). « C'est pour la chaudière de ma mère » est une des phrases les
+        # plus courantes du métier — beaucoup d'appels sont passés POUR quelqu'un d'autre.
+        # Trouvé le 25/08 par le persona T12, qui visait tout autre chose.
+        "mere",
     })
 
     @classmethod
@@ -297,14 +311,42 @@ class Conversation:
         self.flags["questions_prix"] = self.flags.get("questions_prix", 0) + 1
         return self.flags["questions_prix"] <= 2
 
-    def _resoudre_commune(self, texte: str) -> None:
+    @staticmethod
+    def _signal_de_correction(ex: dict | None) -> bool:
+        """L'appelant est-il en train de SE CORRIGER dans cette phrase ?
+
+        Deux signaux, et seulement deux : une négation (« non… pardon, c'est plutôt… »),
+        ou un code postal prononcé — cinq chiffres ne sont jamais un homonyme.
+        """
+        ex = ex or {}
+        return ex.get("confirme") is False or bool(ex.get("code_postal"))
+
+    def _resoudre_commune(self, texte: str, ex: dict | None = None) -> None:
         """Reconnaît une commune citée dans la phrase et en déduit le CP — l'appelant
         donne sa ville, pas son code postal. Deux tables : celle de la zone artisan
         (avec ses alias configurés), puis la base Île-de-France complète (1 500 entrées,
         base officielle des codes postaux) — une commune IdF hors zone est ainsi
         classée hors_zone immédiatement, sans demander le CP.
         Déterministe, dans le contrôleur : le LLM n'a JAMAIS le droit de deviner un CP."""
-        if self.slots["code_postal"] is not None:
+        # Une commune DÉJÀ connue ne bloque plus la relecture : « je suis à Créteil… ah
+        # non pardon, Nogent-sur-Marne » doit gagner. Sortir dès qu'un CP existait rendait
+        # toute correction PAR LE NOM impossible, et l'artisan partait dans la mauvaise
+        # ville — alors que la correction du NUMÉRO, elle, marchait déjà. C'est cette
+        # asymétrie qui a caché le défaut jusqu'au 25/08 (persona T10).
+        #
+        # MAIS relire à chaque tour sans condition est allé trop loin, et l'éval l'a
+        # montré le jour même : « ne notez pas le numéro de ma mère », prononcé trois
+        # tours après coup, réécrivait une commune déjà confirmée (persona T12). Un nom
+        # de commune est ambigu par nature ; il ne remplace donc une commune ÉTABLIE que
+        # si l'appelant se corrige explicitement. Tant qu'aucune n'est établie, tout ce
+        # qui est nommé est bon à prendre.
+        #
+        # Deux bornes, donc : le hold (une fois le créneau bloqué, plus rien ne bouge) et
+        # le signal de correction.
+        if self.flags["hold"] is not None:
+            return
+        if self.slots["code_postal"] is not None \
+                and not self._signal_de_correction(ex):
             return
         phrase = " " + self._normalise(texte) + " "
 
@@ -452,8 +494,28 @@ class Conversation:
                 self.slots["telephone_rappel"] = None
                 return self._say("Au temps pour moi — redonnez-moi le bon numéro ?")
             else:
+                # Ni oui ni non. On repose la question — mais PAS indéfiniment : cette
+                # boucle-ci n'était bornée par rien (`tentatives_tel` borne la DEMANDE du
+                # numéro, pas sa confirmation), et un appelant qui répond à côté deux fois
+                # tuait l'appel sans produire le moindre lead (persona T09, 25/08).
+                # Le compteur repart à zéro à CHAQUE nouveau numéro : une correction
+                # (« non… c'est plutôt le 07… ») relance une confirmation neuve, elle ne
+                # doit pas être pénalisée par les tours passés sur le numéro précédent.
+                en_cours = self.slots["telephone_rappel"]
+                if self.flags.get("tel_repete_pour") != en_cours:
+                    self.flags["tel_repete_pour"] = en_cours
+                    self.flags["confirmations_tel"] = 0
+                self.flags["confirmations_tel"] += 1
+                # 1 = la répétition normale, 2 = la relance « oui ou non », au-delà on
+                # arrête : l'appelant ne répond pas à CETTE question-là.
+                if self.flags["confirmations_tel"] > 2:
+                    # L'invariant reste intouchable : pas de RDV sans téléphone confirmé.
+                    # On ne réserve donc pas — on conclut avec un lead exploitable, le
+                    # numéro entendu inclus, et c'est l'artisan qui rappellera.
+                    return self._sans_rdv()
                 return self._say(f"Je répète votre numéro : {self._tel_espace()}. "
-                                 f"C'est bien ça ?", verbatim=True)  # chiffres jamais réécrits
+                                 f"C'est bien ça ? Répondez simplement oui ou non.",
+                                 verbatim=True)  # chiffres jamais réécrits
         self.state = State.S5_CRENEAU
         return self._s5({})
 
