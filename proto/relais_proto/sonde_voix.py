@@ -12,7 +12,12 @@ elle n'en fournit pas, il faut la fabriquer (dériver du couple appelant/appelé
 une correspondance) — un montage nettement plus lourd, avec ses propres modes de panne.
 Les deux sont trop différents pour être écrits sur une hypothèse.
 
-La sonde répond donc en un appel réel, et donne trois choses au passage :
+**Premier fait d'étape 0, acquis le 25/08** : Vapi appelle `POST <url>/chat/completions`
+et n'envoie **aucun en-tête personnalisé** — le contenu de son champ « API Key » part en
+`Authorization: Bearer`. La sonde accepte donc le secret par les deux canaux. Reste à
+confirmer que c'est bien le canal d'authentification retenu pour l'adaptateur.
+
+La sonde répond en un appel réel, et donne trois choses au passage :
   1. la charge utile brute, conservée pour écrire l'adaptateur ensuite ;
   2. les identifiants CANDIDATS, extraits et mis en évidence (`identifiants_candidats`) ;
   3. un premier aller-retour audible de bout en bout — réseau, transcription, notre
@@ -69,14 +74,22 @@ def identifiants_candidats(charge, prefixe: str = "") -> dict:
     return trouves
 
 
-def resume(charge: dict, entetes: dict, instant: dt.datetime) -> dict:
+def resume(charge: dict, entetes: dict, instant: dt.datetime,
+           voie_auth: str | None = None) -> dict:
     """Ce qu'on garde d'une requête. Les en-têtes sont réduits à leurs NOMS : ils portent
     le secret partagé, et une sonde n'a aucune raison d'écrire un secret dans un fichier.
     Les noms suffisent à diagnostiquer une authentification qui échoue.
+
+    `voie_auth` dit par QUEL en-tête le secret est arrivé. C'est un fait d'étape 0 au même
+    titre que l'identifiant d'appel : le 25/08, le premier appel réel a montré que Vapi
+    passe par `Authorization: Bearer` et n'envoie aucun en-tête personnalisé. Si la
+    plateforme change de canal, on doit le LIRE dans le journal, pas le redécouvrir par un
+    401 et un tunnel à remonter.
     """
     messages = charge.get("messages") if isinstance(charge, dict) else None
     return {
         "horodatage": instant.isoformat(),
+        "voie_auth": voie_auth,
         "entetes": sorted(entetes),
         # `stream` en évidence : l'arbitrage a tranché qu'on ne diffuserait PAS une sortie
         # passée aux garde-fous. Savoir si la plateforme le demande quand même, et si elle

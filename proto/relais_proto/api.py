@@ -203,11 +203,33 @@ def creer_app(depot, registre: Registre, fabrique_llm, horloge=None,
             """
             t = maintenant()
             entetes = dict(requete.headers)
-            if not registre.secret_webhook_valide(entetes.get("x-relais-secret", "")):
+            # DEUX voies pour le MÊME secret, appris du premier appel réel (25/08) : Vapi
+            # n'envoie pas d'en-tête personnalisé vers un custom LLM, il envoie le contenu
+            # de son champ « API Key » en `Authorization: Bearer`. La sonde accepte donc
+            # les deux plutôt que d'imposer à la plateforme une convention qu'elle n'a pas.
+            #
+            # Le préfixe `Bearer ` est retiré s'il est là, et toléré absent : plusieurs
+            # plateformes envoient la valeur nue. C'est une sonde — elle doit pouvoir se
+            # brancher sur ce qu'on lui présente.
+            #
+            # ⚠️ Ce que cet élargissement ne fait PAS : ouvrir la porte de l'artisan. Le
+            # secret webhook seul est accepté ici, et un jeton d'artisan présenté dans ce
+            # même format `Bearer` est refusé (R40). Les deux portes ne se substituent
+            # jamais l'une à l'autre — la sonde ne doit pas devenir le trou par lequel
+            # elles communiquent. Et cet élargissement vaut pour la SONDE seule :
+            # `webhook_authentifie`, la porte de production, n'y touche pas.
+            voie_auth = None
+            if registre.secret_webhook_valide(entetes.get("x-relais-secret", "")):
+                voie_auth = "x-relais-secret"
+            elif registre.secret_webhook_valide(
+                    entetes.get("authorization", "").removeprefix("Bearer ").strip()):
+                voie_auth = "authorization"
+            if voie_auth is None:
                 # On journalise l'échec, mais seulement les NOMS d'en-têtes (jamais leurs
                 # valeurs : le secret en est une). C'est ce qu'il faut pour voir ce que la
                 # plateforme a réellement envoyé et corriger sa configuration — sans faire
                 # de la sonde un dépotoir où n'importe qui écrirait ce qu'il veut.
+                # C'est CE journal-là qui a appris, le 25/08, quel canal Vapi utilise.
                 _sonde.journaliser(
                     {"horodatage": t.isoformat(), "refuse": "secret webhook absent ou faux",
                      "entetes": sorted(entetes)}, chemin_sonde)
@@ -217,7 +239,7 @@ def creer_app(depot, registre: Registre, fabrique_llm, horloge=None,
             except Exception:
                 corps = {"_corps_illisible": (await requete.body()).decode(
                     "utf-8", "replace")}
-            _sonde.journaliser(_sonde.resume(corps, entetes, t), chemin_sonde)
+            _sonde.journaliser(_sonde.resume(corps, entetes, t, voie_auth), chemin_sonde)
             modele = corps.get("model") if isinstance(corps, dict) else None
             return JSONResponse(
                 _sonde.reponse_openai(_sonde.PHRASE_SONDE, modele or "", t))

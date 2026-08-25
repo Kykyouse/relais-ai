@@ -3552,8 +3552,8 @@ def check_creneaux_verbatim() -> bool:
 
 
 def check_sonde_voix() -> bool:
-    """R40 : la sonde de l'étape 0 est ÉTEINTE par défaut, exige le secret webhook, et
-    ne peut pas écrire un secret dans son journal.
+    """R40 : la sonde de l'étape 0 est ÉTEINTE par défaut, exige le secret webhook — par
+    l'une OU l'autre de deux voies — et ne peut pas écrire un secret dans son journal.
 
     Ce n'est pas un correctif de défaut mais une brique nouvelle, et les trois propriétés
     ci-dessous sont exactement celles qu'on ne peut pas vérifier en la regardant tourner :
@@ -3564,6 +3564,17 @@ def check_sonde_voix() -> bool:
     n'a pas de config d'artisan (le numéro appelé fait partie de ce qu'elle vient
     découvrir), donc `check_output` n'aurait rien contre quoi vérifier une liste blanche de
     prix. Le contrôle a lieu au moment où la phrase peut changer — ici.
+
+    **Deux voies d'authentification, fait d'étape 0 du 25/08.** Le premier appel réel a
+    rendu 401 : Vapi n'envoie PAS d'en-tête personnalisé vers un custom LLM, il envoie le
+    contenu de son champ « API Key » en `Authorization: Bearer`. La sonde accepte donc les
+    deux — et c'est exactement le genre de chose que la sonde existe pour apprendre.
+
+    Ce que ce test verrouille en échange : le Bearer ne vaut **que** pour le secret
+    webhook. Un JETON D'ARTISAN présenté ici doit être refusé. Le format `Bearer` est
+    celui de l'autre porte (`artisan_authentifie`), et la règle du projet est que les deux
+    portes ne se substituent jamais l'une à l'autre. Sans ce contrôle, la sonde serait le
+    trou par lequel elles communiquent.
     """
     try:
         from fastapi.testclient import TestClient
@@ -3586,7 +3597,9 @@ def check_sonde_voix() -> bool:
     # par la sonde contient lui-même des mots ordinaires, et le test les prendrait pour la
     # fuite qu'il cherche (constaté au premier passage).
     MAUVAIS, JETON = "Zq7-secret-sentinelle", "Zq8-jeton-sentinelle"
-    registre = Registre([Artisan("art-dupont", "+33189701234", emp_token("tok"), CFG)],
+    TOKEN_ARTISAN = "Zq9-jeton-artisan-sentinelle"
+    registre = Registre([Artisan("art-dupont", "+33189701234",
+                                 emp_token(TOKEN_ARTISAN), CFG)],
                         emp_token(SECRET))
 
     # (a) la phrase de la sonde passe les garde-fous : elle sera prononcée au téléphone.
@@ -3634,6 +3647,19 @@ def check_sonde_voix() -> bool:
             if r.status_code != 401:
                 print(f"   sonde ouverte sans secret valide : {r.status_code}")
                 return False
+            # aucun en-tête du tout : le cas du premier appel réel (25/08), qui a rendu
+            # 401 et nous a appris ce qu'on cherchait
+            if c.post("/voix/sonde", json=charge).status_code != 401:
+                print("   sonde ouverte sans aucune authentification")
+                return False
+            # ET SURTOUT : un jeton d'ARTISAN, présenté dans le format que la sonde
+            # accepte désormais, reste refusé. Les deux portes ne se substituent jamais.
+            r = c.post("/voix/sonde", json=charge,
+                       headers={"Authorization": f"Bearer {TOKEN_ARTISAN}"})
+            if r.status_code != 401:
+                print(f"   un JETON D'ARTISAN ouvre la sonde : {r.status_code} — la "
+                      f"sonde fait communiquer les deux portes d'authentification")
+                return False
             if not journal.exists():
                 print("   un refus n'est pas journalisé : impossible de diagnostiquer "
                       "une plateforme mal configurée")
@@ -3645,27 +3671,32 @@ def check_sonde_voix() -> bool:
 
             # (d) avec le secret : réponse au format OpenAI, d'un seul bloc, portant la
             # phrase telle quelle.
+            voies = (("en-tête dédié", {"X-Relais-Secret": SECRET}),
+                     # la voie de Vapi : son champ « API Key » part en Authorization
+                     ("Bearer", {"Authorization": f"Bearer {SECRET}"}),
+                     # sans le préfixe : certaines plateformes envoient la valeur nue
+                     ("Authorization nu", {"Authorization": SECRET}))
             for chemin in ("/voix/sonde", "/voix/sonde/chat/completions"):
-                r = c.post(chemin, json=charge,
-                           headers={"X-Relais-Secret": SECRET})
-                if r.status_code != 200:
-                    print(f"   {chemin} avec le bon secret : {r.status_code}")
-                    return False
-                corps = r.json()
-                if corps.get("object") != "chat.completion":
-                    print(f"   réponse hors format OpenAI : {corps.get('object')!r}")
-                    return False
-                dit = corps["choices"][0]["message"]["content"]
-                if dit != PHRASE_SONDE:
-                    print(f"   la sonde ne dit pas sa phrase : « {dit} »")
-                    return False
+                for nom_voie, entetes_voie in voies:
+                    r = c.post(chemin, json=charge, headers=entetes_voie)
+                    if r.status_code != 200:
+                        print(f"   {chemin} par {nom_voie} : {r.status_code}")
+                        return False
+                    corps = r.json()
+                    if corps.get("object") != "chat.completion":
+                        print(f"   réponse hors format OpenAI : {corps.get('object')!r}")
+                        return False
+                    dit = corps["choices"][0]["message"]["content"]
+                    if dit != PHRASE_SONDE:
+                        print(f"   la sonde ne dit pas sa phrase : « {dit} »")
+                        return False
 
         # Aucun secret dans le journal, sur AUCUN des deux chemins. Le vrai secret est
         # inclus parce que ce sont les requêtes ACCEPTÉES qui le portent : sans lui, une
         # sonde qui journaliserait ses en-têtes en clair passerait inaperçue (mutation
         # survivante au premier passage).
         brut = journal.read_text(encoding="utf-8")
-        for fuite in (MAUVAIS, JETON, SECRET):
+        for fuite in (MAUVAIS, JETON, SECRET, TOKEN_ARTISAN):
             if fuite in brut:
                 print(f"   VALEUR d'en-tête écrite dans le journal : {fuite!r}")
                 return False
@@ -3675,8 +3706,14 @@ def check_sonde_voix() -> bool:
         lignes = [json.loads(l) for l in
                   journal.read_text(encoding="utf-8").splitlines() if l.strip()]
         acceptes = [l for l in lignes if "refuse" not in l]
-        if len(acceptes) != 2:
-            print(f"   {len(acceptes)} requête(s) acceptée(s) journalisée(s), attendu 2")
+        if len(acceptes) != 6:                       # 2 chemins × 3 voies
+            print(f"   {len(acceptes)} requête(s) acceptée(s) journalisée(s), attendu 6")
+            return False
+        # La VOIE qui a authentifié est journalisée : c'est un fait d'étape 0, et si Vapi
+        # change de canal un jour, on veut le lire dans le journal, pas le deviner.
+        voies_vues = {l.get("voie_auth") for l in acceptes}
+        if voies_vues != {"x-relais-secret", "authorization"}:
+            print(f"   voie d'authentification mal journalisée : {voies_vues}")
             return False
         entree = acceptes[0]
         if entree["identifiants_candidats"].get("call.id") != "call-abc123":
@@ -4061,7 +4098,8 @@ def run() -> int:
 
     print(f"\n──── R40_sonde_voix ────")
     if check_sonde_voix():
-        print("   → sonde de l'étape 0 éteinte par défaut, exigeant le secret webhook, "
+        print("   → sonde de l'étape 0 éteinte par défaut, exigeant le secret webhook "
+              "par l'une OU l'autre voie sans jamais accepter un jeton d'artisan, "
               "n'écrivant aucune valeur d'en-tête, et repérant l'identifiant d'appel "
               "dans la charge utile : ✅ PASS")
     else:

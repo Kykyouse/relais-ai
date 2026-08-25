@@ -57,7 +57,7 @@ python run_llm_eval.py [--mock] [--n 3]             # éval appelant-simulé
 | Sortie prononçable : emoji et markdown (R37) | ✅ | mock, mutations 5/5 |
 | Créneaux prononcés verbatim (R38) | ✅ | mock, mutations 2/2 |
 | Contrainte nouvelle > « rien de plus tôt » (R39) | ✅ | mock, mutations 2/2 |
-| **Sonde de l'étape 0, chantier voix (R40)** | ✅ | mock, mutations 13/13 — *jamais appelée pour de vrai* |
+| **Sonde de l'étape 0, chantier voix (R40)** | ✅ | mock, mutations 13/13 + 7/7 — **plomberie Vapi→serveur vérifiée le 25/08** |
 
 ## Ce qui est encore un double (et non un manque caché)
 
@@ -184,6 +184,18 @@ On y cherche `identifiants_candidats` : si un champ stable y figure, l'adaptateu
 (dérivée du couple appelant/appelé, ou table de correspondance) — un montage plus lourd, avec
 ses propres modes de panne. **Ne pas écrire l'adaptateur avant d'avoir lu ce fichier.**
 
+### Faits d'étape 0 déjà acquis (25/08, premier appel réel)
+
+- **La plomberie fonctionne** : Vapi → tunnel → serveur, requête reçue et journalisée.
+- **Vapi appelle `POST <url>/chat/completions`** — le suffixe de la convention OpenAI, pas
+  l'URL nue. Avoir déclaré les DEUX chemins a évité un 404 et un tunnel à remonter.
+- **Vapi n'envoie AUCUN en-tête personnalisé.** Il envoie le contenu de son champ
+  « API Key » en `Authorization: Bearer`. C'est le canal d'auth naturel vers un custom LLM
+  — à confirmer, mais c'est le fait mesuré. La sonde accepte désormais les deux canaux ;
+  on met `RELAIS_WEBHOOK_SECRET` dans le champ API Key de Vapi.
+- **Encore inconnu** : l'identifiant d'appel. C'est la question qui commande la forme de
+  l'adaptateur, et elle attend le prochain appel — celui qui passera l'authentification.
+
 Ce qu'il faut retenir pour l'arbitrage : la latence d'un tour du contrôleur est **mesurée**
 à 3,4 s (Sonnet 5) / 1,9 s (Haiku) hors STT et TTS, contre un budget conversationnel de 0,5
 à 1 s ; le premier spike proposé se fait sur un **numéro non français**, qui n'exige pas de
@@ -278,6 +290,39 @@ Elle n'est pas du produit et n'a pas vocation à le devenir.
 
 **Prochaine étape.** Jouer l'étape 0 (mode d'emploi dans le bloc ÉTAT en tête), lire
 `identifiants_candidats`, **puis** écrire l'adaptateur.
+
+### Premier appel réel, le soir même : la sonde a rendu 401, et c'est sa réussite
+
+Le 401 n'était pas une panne, c'était la mesure. Vapi **n'envoie aucun en-tête
+personnalisé** vers un custom LLM : le contenu de son champ « API Key » part en
+`Authorization: Bearer`. Le journal des NOMS d'en-têtes sur le chemin du refus — décidé
+« au cas où » quelques heures plus tôt — est précisément ce qui l'a dit. Sans lui, un 401
+muet n'aurait rien appris et il aurait fallu remonter le tunnel pour deviner.
+
+Deux autres faits acquis au passage : la plomberie fonctionne de bout en bout, et Vapi
+appelle bien `POST <url>/chat/completions`, pas l'URL nue — avoir déclaré les deux chemins
+a évité un aller-retour.
+
+**Correctif : la sonde accepte le secret webhook par l'une OU l'autre voie.** Le préfixe
+`Bearer ` est retiré s'il est là et toléré absent, plusieurs plateformes envoyant la valeur
+nue. La voie utilisée est **journalisée** (`voie_auth`) : si Vapi change de canal, on doit
+le lire dans le fichier, pas le redécouvrir par un 401.
+
+**Ce que l'élargissement ne fait PAS**, et qui est verrouillé par mutation : ouvrir la
+porte de l'artisan. `Bearer` est le format de l'AUTRE porte (`artisan_authentifie`), et la
+règle du projet est que les deux ne se substituent jamais l'une à l'autre. Un jeton
+d'artisan présenté à la sonde est refusé — la mutation qui remplace la vérification du
+secret par `registre.par_token` est tuée, avec le bon message. Sans ce contrôle, la sonde
+serait exactement le trou par lequel les deux portes communiquent.
+
+Et l'élargissement vaut pour la **sonde seule** : `webhook_authentifie`, la porte de
+production, n'y touche pas. Une commodité de diagnostic n'a pas à devenir une règle
+d'authentification.
+
+R40 étendu, mutations **7/7** en plus des 13/13. Suite : 44 PASS.
+
+**Reste à savoir** : l'identifiant d'appel. Le prochain appel — le premier qui passera
+l'authentification — le dira.
 
 ---
 
