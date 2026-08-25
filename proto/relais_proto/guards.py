@@ -61,7 +61,12 @@ _RE_MARKDOWN = re.compile(
     re.MULTILINE)
 
 
-def check_output(text: str, config: dict, rdv_valide: bool = False) -> list[str]:
+_RE_SALUTATION = re.compile(r"^\s*(bonjour|bonsoir|salut|re-?bonjour)\b",
+                            re.IGNORECASE)
+
+
+def check_output(text: str, config: dict, rdv_valide: bool = False,
+                 en_conversation: bool = False) -> list[str]:
     """Retourne la liste des violations détectées dans une réplique candidate."""
     violations: list[str] = []
 
@@ -89,6 +94,24 @@ def check_output(text: str, config: dict, rdv_valide: bool = False) -> list[str]
     muets = _non_prononcables(text)
     if muets:
         violations.append("caractere_non_prononcable:" + "".join(muets))
+
+    # 6. Re-salutation. On dit bonjour une fois par conversation, et l'accueil l'a déjà
+    # fait. Le formuleur resalue parce que chaque tour lui arrive comme un début — au
+    # téléphone le 26/08, l'agent a dit « Bonjour » au deuxième tour, juste après avoir
+    # dit bonjour. C'est l'un des tics qui font entendre qu'on parle à une machine, et
+    # aucun des garde-fous précédents ne pouvait l'attraper : ce n'est ni un prix, ni une
+    # promesse, ni un caractère imprononçable — juste une phrase déplacée.
+    #
+    # Seule la salutation EN TÊTE est visée : « dites-lui bonjour de ma part » reste une
+    # phrase légitime, et censurer le mot lui-même serait une autre faute.
+    #
+    # Et le drapeau est OPT-IN, pas opt-out. Premier essai fait à l'envers : la règle
+    # s'appliquait par défaut, et six tests sont tombés d'un coup — les gabarits de SMS et
+    # la phrase de la sonde commencent par « Bonjour », légitimement. Un SMS est un
+    # premier contact, pas un tour de conversation. Le défaut d'un garde-fou doit être de
+    # ne rien interdire à ceux qui ne l'ont pas demandé.
+    if en_conversation and _RE_SALUTATION.match(text or ""):
+        violations.append("resalutation")
 
     # 5. Mise en forme markdown : même finalité, autre mécanisme (ce sont des caractères
     # de ponctuation ordinaires, donc la catégorie Unicode ne les voit pas).

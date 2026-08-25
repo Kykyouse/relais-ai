@@ -3551,6 +3551,354 @@ def check_creneaux_verbatim() -> bool:
     return True
 
 
+def check_pas_de_resalutation() -> bool:
+    """R46 : l'agent ne dit « bonjour » qu'une fois, et ne coupe pas une phrase juste
+    après des chiffres.
+
+    Deux observations du 26/08, mineures à l'écrit et voyantes à l'oreille.
+
+    **La re-salutation.** Au deuxième tour de l'appel 1, l'agent a répondu « Bonjour, je
+    comprends, c'est urgent. Avant tout… » — alors qu'il venait de dire bonjour. Personne
+    ne salue deux fois dans une conversation ; c'est l'un des tics qui font entendre qu'on
+    parle à une machine. Le formuleur le fait parce que chaque tour lui arrive comme un
+    début. Aucun garde-fou ne pouvait l'attraper : ce n'est ni un prix, ni une promesse,
+    ni un caractère imprononçable — juste une phrase déplacée.
+
+    **La coupure après des chiffres.** L'agent a dit « Je répète votre numéro : 06 10 15
+    47 68. C'est bien ça ? ». Un point placé juste après un groupe de chiffres est lu par
+    la synthèse vocale comme une fin d'énoncé : elle marque un arrêt franc, et le « C'est
+    bien ça ? » arrive détaché, comme une seconde phrase sans rapport. Une virgule garde
+    la question dans le même souffle.
+
+    ⚠️ Honnêteté sur cette seconde partie : ce qu'on entend (« 06 10. 15 47 68. C'est.
+    Bien ça ? ») comporte AUSSI des coupures que nous n'écrivons pas — elles viennent du
+    découpage de la plateforme, pas de notre texte. Ce test ne corrige que ce qui nous
+    appartient : la ponctuation que nous émettons. Le reste demande une écoute, et un
+    test ne remplacera jamais une oreille.
+    """
+    import re as _re
+
+    from relais_proto.engine import Conversation
+
+    class FormuleurSalueur(MockLLM):
+        """Double : un formuleur qui ouvre chaque réplique par un bonjour, comme au
+        téléphone le 26/08."""
+        def reply(self, instruction, context):
+            return "Bonjour, " + instruction[0].lower() + instruction[1:]
+
+    convo = Conversation(CFG, FormuleurSalueur(), CalendarStub(CFG, now=LUNDI_9H))
+    accueil = convo.open()
+    if "bonjour" not in accueil.lower():
+        print(f"   l'accueil ne dit plus bonjour : « {accueil} »")
+        return False
+    if convo.flags["violations"]:
+        print(f"   l'accueil est signalé par les garde-fous : "
+              f"{convo.flags['violations']}")
+        return False
+
+    # L'accueil TRAVERSE les garde-fous (règle n°2 : aucune sortie ne les contourne). Il
+    # ne suffit pas de vérifier qu'il n'est pas signalé — il ne l'était pas non plus quand
+    # il les contournait. On le prouve donc avec une formule d'accueil fautive : si elle
+    # ressort sans violation, c'est que personne ne l'a regardée.
+    import copy
+    cfg_fautif = copy.deepcopy(CFG)
+    cfg_fautif["accueil"]["formule"] = "Bonjour 😊, je suis l'assistant vocal de Julien."
+    convo_f = Conversation(cfg_fautif, MockLLM(), CalendarStub(cfg_fautif, now=LUNDI_9H))
+    convo_f.open()
+    if not any(v.startswith("caractere_non_prononcable")
+               for v in convo_f.flags["violations"]):
+        print(f"   la formule d'accueil ne passe pas par les garde-fous : "
+              f"{convo_f.flags['violations']}")
+        return False
+    # ...et plus jamais ensuite
+    for ligne in ("J'ai une fuite d'eau dans la salle de bain", "Nogent-sur-Marne 94130"):
+        dit = convo.process(ligne)
+        if _re.match(r"\s*(bonjour|bonsoir|salut)\b", dit, _re.IGNORECASE):
+            print(f"   l'agent resalue en pleine conversation : « {dit} »")
+            return False
+
+    # un « bonjour » AILLEURS que juste après l'accueil est le seul cas visé : on ne
+    # censure pas le mot lui-même (« dites-lui bonjour de ma part » resterait légitime)
+    from relais_proto.guards import check_output
+    if check_output("Merci et bonjour à vous", CFG, en_conversation=True):
+        print("   le mot « bonjour » est censuré partout, pas seulement en tête")
+        return False
+    if not check_output("Bonjour, vous êtes où ?", CFG, en_conversation=True):
+        print("   une salutation en tête de réplique n'est pas signalée")
+        return False
+    # ...y compris précédée d'une espace : un formuleur rend souvent son texte avec un
+    # blanc en tête, et la règle ne doit pas s'évaporer pour si peu (mutation survivante
+    # au premier passage — `re.match` ancre en 0, mais `^\s*` fait le reste du travail).
+    if not check_output("  Bonjour, vous êtes où ?", CFG, en_conversation=True):
+        print("   une salutation précédée d'une espace échappe à la règle")
+        return False
+    if check_output("Bonjour, vous êtes bien chez Dupont Chauffage.", CFG):
+        print("   la salutation d'ACCUEIL est signalée à tort")
+        return False
+    # OPT-IN : ce qui ne se déclare pas « en conversation » n'est pas concerné. Un SMS
+    # commence par « Bonjour » et doit continuer de passer — c'est un premier contact.
+    if check_output("Bonjour, Julien vous confirme le rendez-vous.", CFG):
+        print("   un message écrit est traité comme un tour de conversation")
+        return False
+
+    # (b) pas de point juste après un groupe de chiffres dans les phrases qu'on ÉCRIT
+    convo2 = Conversation(CFG, MockLLM(), CalendarStub(CFG, now=LUNDI_9H))
+    convo2.open()
+    for ligne in ("J'ai une fuite d'eau dans la salle de bain", "Nogent-sur-Marne 94130",
+                  "Geoffrey"):
+        convo2.process(ligne)
+    repetition = convo2.process("06 12 34 56 78")
+    if "06 12 34 56 78" not in repetition:
+        print(f"   le numéro n'est plus répété verbatim : « {repetition} »")
+        return False
+    if _re.search(r"\d\s*\.", repetition):
+        print(f"   un point suit immédiatement des chiffres : « {repetition} »")
+        return False
+    if "c'est bien ça" not in repetition.lower():
+        print(f"   la question de confirmation a disparu : « {repetition} »")
+        return False
+    return True
+
+
+def check_cloture_verbatim() -> bool:
+    """R44 : après clôture, l'agent redit EXACTEMENT la même phrase, toujours.
+
+    Trouvé le 26/08 sur les deux appels vocaux réels. Après S11, chaque tour reçoit une
+    réplique de fin — et sur le premier appel, ce fut : « L'appel. L'appel est terminé. »
+    Le formuleur avait réécrit une phrase qui n'a rien à formuler, en la bégayant.
+
+    Deux raisons de la figer, et la seconde est la vraie :
+
+    1. Une phrase de fin n'a aucun contenu à reformuler. La laisser passer par le
+       formuleur, c'est payer un appel LLM pour prendre un risque sans contrepartie.
+    2. **C'est elle qui fait raccrocher.** Personne ne raccroche aujourd'hui : la
+       plateforme rejoue des tours jusqu'à ce que le CLIENT raccroche. Le mécanisme qui
+       coupe la ligne côté Vapi (`endCallPhrases`) compare ce que l'agent DIT à une liste
+       de phrases. Une phrase reformulée à chaque tour ne peut correspondre à rien. Rendre
+       la clôture déterministe est donc le préalable au raccrochage, pas un détail de
+       style.
+
+    Ce que ce test NE couvre pas, et qu'il faut dire : il ne fait pas raccrocher Vapi. Il
+    garantit seulement qu'une phrase stable existe, à laquelle accrocher `endCallPhrases`.
+    Le signal de fin par appel d'outil côté custom LLM n'est PAS écrit : on ne l'a pas
+    mesuré, et l'étape 0 a montré ce que valent les paris sur cette plateforme.
+    """
+    from relais_proto.engine import Conversation
+    from relais_proto.states import State
+
+    class FormuleurBavard:
+        """Double : un formuleur qui réécrit tout, comme celui qui a bégayé au téléphone."""
+        def extract(self, utterance, context):
+            return {}
+
+        def reply(self, instruction, context):
+            return "Alors. " + instruction + " Voilà."
+
+    convo = Conversation(CFG, FormuleurBavard(), CalendarStub(CFG, now=LUNDI_9H))
+    convo.open()
+    convo.state = State.S11_CLOTURE
+    dites = [convo.process(t) for t in ("Ok. Et là, tu raccroches ou pas ?",
+                                        "D'accord", "Au revoir", "…")]
+    if len(set(dites)) != 1:
+        print(f"   la phrase de fin varie d'un tour à l'autre : {set(dites)}")
+        return False
+    if "Alors." in dites[0] or "Voilà." in dites[0]:
+        print(f"   la phrase de fin passe encore par le formuleur : « {dites[0]} »")
+        return False
+    if "terminé" not in dites[0].lower():
+        print(f"   la phrase de fin ne dit plus que l'appel est terminé : « {dites[0]} »")
+        return False
+
+    # ...et elle est la MÊME quel que soit le chemin qui a mené à la fin : `endCallPhrases`
+    # ne peut accrocher qu'une phrase unique.
+    convo2 = Conversation(CFG, MockLLM(), CalendarStub(CFG, now=LUNDI_9H))
+    convo2.open()
+    convo2.state = State.FIN
+    if convo2.process("allô ?") != dites[0]:
+        print(f"   S11 et FIN ne disent pas la même chose : "
+              f"« {convo2.process('allô ?')} » vs « {dites[0]} »")
+        return False
+    return True
+
+
+def check_commune_canonique() -> bool:
+    """R45 : l'agent ne redit jamais une commune telle qu'il l'a ENTENDUE, mais telle
+    qu'elle est dans notre table.
+
+    Trouvé le 26/08 au second appel vocal réel. Le transcript est net sur qui fautait :
+
+        User      : Euh, Nogent-sur-Marne.
+        Assistant : Ah, d'accord, Nogènes-sur-Marne, c'est noté.
+
+    **L'appelant a été correctement transcrit.** C'est l'agent qui a prononcé un nom de
+    commune qui n'existe pas. Et la résolution avait parfaitement fonctionné : le lead en
+    base porte `Nogent-sur-marne / 94130`, zone `en_zone`.
+
+    Autrement dit : le contrôleur savait, la base sait, et c'est la seule chose que le
+    client ait entendue qui était fausse. Le formuleur a écrit un nom propre — précisément
+    ce qu'un modèle ne devrait jamais avoir à écrire.
+
+    Pourquoi ça compte plus qu'une coquille : c'est le moment où le client vérifie qu'on
+    l'a compris. S'il s'entend confirmer une commune qui n'existe pas, soit il corrige (un
+    tour perdu, sur une information déjà juste), soit il doute de tout le reste. Et le jour
+    où la résolution se trompera VRAIMENT, il n'aura aucun moyen de faire la différence.
+
+    Même remède que R38 : là où le fond compte, le contrôleur parle lui-même.
+    """
+    from relais_proto.engine import Conversation
+
+    class FormuleurDeformant(MockLLM):
+        """Double : l'extraction est JUSTE, et le formuleur écorche le nom propre.
+
+        C'est exactement la répartition observée le 26/08 — l'appelant bien transcrit, la
+        commune bien résolue, et l'agent qui prononce autre chose. Mettre l'extracteur en
+        défaut testerait un tout autre problème que celui qu'on a entendu.
+        """
+        def reply(self, instruction, context):
+            return "Ah d'accord, Nogènes-sur-Marne, c'est noté. " + instruction
+
+    convo = Conversation(CFG, FormuleurDeformant(), CalendarStub(CFG, now=LUNDI_9H))
+    convo.open()
+    convo.process("J'ai une fuite d'eau dans la salle de bain")
+    dit = convo.process("Nogent-sur-Marne")
+
+    if convo.slots["commune"] != "Nogent-sur-marne":
+        print(f"   la commune résolue n'est pas la forme canonique : "
+              f"{convo.slots['commune']!r}")
+        return False
+    if "Nogènes" in dit:
+        print(f"   l'agent redit la transcription brute : « {dit} »")
+        return False
+    if "Nogent-sur-marne" not in dit:
+        print(f"   l'agent ne confirme pas la commune de notre table : « {dit} »")
+        return False
+
+    # le reste de la conversation garde son formuleur : on ne fige que la ligne où la
+    # commune est acquittée
+    if "MARQUEUR" in dit:
+        return False
+    class FormuleurReconnaissable:
+        def extract(self, utterance, context):
+            return {}
+
+        def reply(self, instruction, context):
+            return "MARQUEUR " + instruction
+    convo2 = Conversation(CFG, FormuleurReconnaissable(),
+                          CalendarStub(CFG, now=LUNDI_9H))
+    convo2.open()
+    if "MARQUEUR" not in convo2.process("Bonjour, j'ai un souci"):
+        print("   une question ordinaire ne passe plus par le formuleur")
+        return False
+    return True
+
+
+def check_code_postal_dicte() -> bool:
+    """R43 : un code postal DICTÉ est reconnu, séparateur ou pas.
+
+    Trouvé le 26/08 au premier appel vocal réel. L'appelant dit :
+
+        « Non, je visite sur Orange. Je visite sur Orange. C'est le 91 260. »
+
+    Le code postal est là — et il est manqué. L'agent repose la question, l'appelant doit
+    répéter (« Dans le 91. 260. »), manqué une seconde fois. Un tour entier perdu sur un
+    slot qui était dans la phrase.
+
+    Cause : `\\b(\\d{5})\\b` exige cinq chiffres COLLÉS. À l'oral, la transcription pose un
+    séparateur au milieu — « 91 260 », « 91. 260 » — parce que c'est ainsi qu'on prononce
+    un code postal en français, en deux groupes.
+
+    Ce que cet appel a montré au passage, et qui vaut plus que le correctif : c'est le CODE
+    POSTAL qui a sauvé l'appel, là où le nom de commune a échoué deux fois — le STT
+    entendait « Orange » pour « Juvisy-sur-Orge ». Cinq chiffres résistent à la
+    transcription bien mieux qu'un nom propre. Faut-il inverser la question de S1 ? Ouvert,
+    consigné au journal, pas tranché ici.
+    """
+    from relais_proto.engine import Conversation
+
+    # (a) toutes les écritures d'un code postal dicté
+    for texte, attendu in (
+            ("Non, je visite sur Orange. Je visite sur Orange. C'est le 91 260.", "91260"),
+            ("Dans le 91. 260.", "91260"),
+            ("C'est le 91260", "91260"),
+            ("Nogent-sur-Marne 94130", "94130"),
+            ("je suis au 94 130", "94130"),
+            ("94-130", "94130")):
+        vu = MockLLM().extract(texte, {}).get("code_postal")
+        if vu != attendu:
+            print(f"   {texte!r} : code_postal={vu!r} au lieu de {attendu!r}")
+            return False
+
+    # (b) et RIEN d'autre ne doit devenir un code postal. Un numéro de téléphone est la
+    # collision qui compte : il est fait de paires de chiffres, comme un CP dicté.
+    for texte in ("06 12 34 56 78", "0612345678", "07-88-11-22-33",
+                  "06.12.34.56.78", "j'ai 25 ans", "il est 9 h 30",
+                  "ça fait 90 euros"):
+        vu = MockLLM().extract(texte, {}).get("code_postal")
+        if vu is not None:
+            print(f"   {texte!r} pris pour un code postal : {vu!r}")
+            return False
+    # ...et le téléphone reste extrait de son côté
+    if MockLLM().extract("06 12 34 56 78", {}).get("telephone_rappel") != "0612345678":
+        print("   le numéro n'est plus extrait")
+        return False
+
+    # (c) DE BOUT EN BOUT, le tour verbatim du 26/08 : l'appelant ne doit PAS avoir à
+    # répéter son code postal.
+    convo = Conversation(CFG, MockLLM(), CalendarStub(CFG, now=LUNDI_9H))
+    convo.open()
+    convo.process("Je viens de fuite chez moi, dans la salle de bain")
+    reponse = convo.process("Non, je visite sur Orange. Je visite sur Orange. "
+                            "C'est le 91 260.")
+    if convo.slots["code_postal"] != "91260":
+        print(f"   le code postal dicté n'est pas retenu : "
+              f"{convo.slots['code_postal']!r}")
+        return False
+    # 91260 = Juvisy-sur-Orge, réellement hors zone : le refus est la BONNE issue, et il
+    # doit tomber tout de suite plutôt qu'après une question de plus.
+    if "commune" in reponse.lower() and "code postal" in reponse.lower():
+        print(f"   la question est reposée alors que le CP a été donné : « {reponse} »")
+        return False
+    if convo.state.value not in ("S11", "FIN"):
+        print(f"   hors zone non conclu : état {convo.state.value}, « {reponse} »")
+        return False
+
+    # (d) le CP dicté en S4 ne doit pas être pris pour un numéro incomplet. C'est la
+    # collision créée par R42 : la branche « des chiffres, mais pas un numéro » compte
+    # désormais tout ce qui dépasse cinq chiffres.
+    convo2 = Conversation(CFG, MockLLM(), CalendarStub(CFG, now=LUNDI_9H))
+    convo2.open()
+    for ligne in ("J'ai une fuite d'eau dans la salle de bain", "Nogent-sur-Marne 94130",
+                  "Geoffrey"):
+        convo2.process(ligne)
+    dit = convo2.process("je suis au 94 130, et mon numéro c'est le 06 12 34 56 78")
+    if convo2.slots["telephone_rappel"] != "0612345678":
+        print(f"   un CP dicté dans le même tour fait perdre le numéro : "
+              f"{convo2.slots['telephone_rappel']!r} — « {dit} »")
+        return False
+
+    # (e) le cas qui atteint VRAIMENT la branche : un code postal SEUL, en réponse à la
+    # demande de numéro. Ses cinq chiffres ne doivent pas être pris pour un numéro
+    # incomplet — sinon l'agent répond « il vous manque des chiffres » à quelqu'un qui n'a
+    # pas donné de numéro du tout, et lui fait chercher une erreur inexistante.
+    # (En (d) le numéro est extrait, donc la branche n'est jamais atteinte : ce cas-là
+    # laissait survivre la mutation qui retire le retrait du CP.)
+    convo3 = Conversation(CFG, MockLLM(), CalendarStub(CFG, now=LUNDI_9H))
+    convo3.open()
+    # pas de tour « Geoffrey » ici : donner son nom sans numéro consomme déjà une des deux
+    # tentatives, et le tour suivant tomberait dans le repli sans RDV — on ne verrait plus
+    # la phrase qu'on veut vérifier.
+    for ligne in ("J'ai une fuite d'eau dans la salle de bain", "Nogent-sur-Marne 94130"):
+        convo3.process(ligne)
+    seul = convo3.process("je suis au 94 130")
+    if "incomplet" in seul.lower() or "dix chiffres" in seul.lower():
+        print(f"   un code postal seul est pris pour un numéro incomplet : « {seul} »")
+        return False
+    if "numéro" not in seul.lower():
+        print(f"   le numéro n'est plus redemandé : « {seul} »")
+        return False
+    return True
+
+
 def check_numero_jamais_tronque() -> bool:
     """R42 : un numéro qui n'est pas exactement un numéro FR à dix chiffres n'est JAMAIS
     retenu — et surtout jamais tronqué en silence.
@@ -4617,6 +4965,38 @@ def run() -> int:
         print("   → un numéro qui ne fait pas exactement dix chiffres est refusé "
               "par le CONTRÔLEUR, jamais tronqué en silence, et la boucle reste "
               "bornée : ✅ PASS")
+    else:
+        print("   → ❌ FAIL")
+        echecs += 1
+
+    print(f"\n──── R43_code_postal_dicte ────")
+    if check_code_postal_dicte():
+        print("   → un code postal dicté est reconnu avec ou sans séparateur, "
+              "sans qu'un numéro de téléphone soit jamais pris pour un CP : ✅ PASS")
+    else:
+        print("   → ❌ FAIL")
+        echecs += 1
+
+    print(f"\n──── R44_cloture_verbatim ────")
+    if check_cloture_verbatim():
+        print("   → la phrase de fin est identique à chaque tour et ne passe plus "
+              "par le formuleur : de quoi accrocher `endCallPhrases` : ✅ PASS")
+    else:
+        print("   → ❌ FAIL")
+        echecs += 1
+
+    print(f"\n──── R45_commune_canonique ────")
+    if check_commune_canonique():
+        print("   → la commune acquittée est celle de NOTRE table, jamais la "
+              "transcription entendue : ✅ PASS")
+    else:
+        print("   → ❌ FAIL")
+        echecs += 1
+
+    print(f"\n──── R46_pas_de_resalutation ────")
+    if check_pas_de_resalutation():
+        print("   → une seule salutation par appel, et aucune coupure de phrase "
+              "juste après des chiffres : ✅ PASS")
     else:
         print("   → ❌ FAIL")
         echecs += 1

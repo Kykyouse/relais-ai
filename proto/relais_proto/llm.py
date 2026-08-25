@@ -148,8 +148,20 @@ class MockLLM:
         if trouves:
             out["prestation"] = max(trouves, key=lambda t: len(t[0]))[1]
             out["probleme"] = utterance.strip()[:80]
-        if m := re.search(r"\b(\d{5})\b", u):
-            out["code_postal"] = m.group(1)
+        # Un code postal se PRONONCE en deux groupes (« quatre-vingt-onze, deux cent
+        # soixante »), et la transcription pose donc un séparateur au milieu : « 91 260 »,
+        # « 91. 260 ». Exiger cinq chiffres collés faisait manquer le slot alors qu'il
+        # était dans la phrase — trouvé au premier appel vocal réel du 26/08, où
+        # l'appelant a dû répéter, et où ce fut manqué une seconde fois.
+        #
+        # Le découpage est 2+3 et pas n'importe lequel : c'est celui de la prononciation,
+        # et surtout c'est celui qui ne peut PAS mordre sur un numéro de téléphone, fait
+        # de paires (« 06 12 34 56 78 » n'offre nulle part deux chiffres suivis de trois).
+        # `{0,2}` et non `?` : la transcription rend « Dans le 91. 260 », soit un point
+        # ET une espace. Un seul séparateur toléré laissait passer le cas réel — trouvé
+        # au deuxième essai, sur la deuxième dictée du même appel.
+        if m := re.search(r"\b(\d{2})[\s.\-]{0,2}(\d{3})\b", u):
+            out["code_postal"] = m.group(1) + m.group(2)
         # `(?![\s.\-]?\d)` : un chiffre de plus INVALIDE la capture au lieu de la
         # tronquer. Sans lui, « 06 10 15 47 68 79 » (douze chiffres dictés) rendait
         # « 0610154768 » : le `\b` tenait, un espace suivant. Trouvé au premier appel

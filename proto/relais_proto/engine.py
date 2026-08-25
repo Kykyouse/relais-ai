@@ -73,12 +73,17 @@ class Conversation:
         # verbatim : phrases critiques (réservation, promesse de rappel) prononcées
         # telles quelles — le formuleur n'a pas le droit de réécrire une date ou un engagement
         texte = instruction if verbatim else self.llm.reply(instruction, self._ctx)
-        violations = check_output(texte, self.cfg)
+        # `en_conversation` : l'accueil a le droit — et le devoir — de saluer. Il se
+        # reconnaît à ce que rien n'a encore été dit. Tous les tours suivants sont des
+        # tours de conversation, où une salutation est déplacée (R46).
+        en_conv = bool(self.transcript)
+        violations = check_output(texte, self.cfg, en_conversation=en_conv)
         if violations:
             self.flags["violations"].extend(violations)
             # repli = l'instruction du contrôleur elle-même (sûre par construction),
             # pas une phrase générique hors sujet — sauf si elle est elle-même fautive
-            texte = instruction if not check_output(instruction, self.cfg) \
+            texte = instruction \
+                if not check_output(instruction, self.cfg, en_conversation=en_conv) \
                 else safe_fallback(violations, self.cfg)
         self.transcript.append(("agent", texte))
         return texte
@@ -212,13 +217,32 @@ class Conversation:
             f"Je suis son assistant vocal — {self._prenom} est en intervention, "
             f"mais je peux tout organiser avec vous. Que se passe-t-il ?")
         self.state = State.S1_COMPRENDRE
-        self.transcript.append(("agent", formule))
-        return formule
+        # Passe par `_say` comme tout le reste (règle n°2 : aucune sortie ne contourne les
+        # garde-fous). Elle y échappait — l'accueil s'écrivait directement dans le
+        # transcript. Le risque était faible, la formule venant de la config, mais « faible
+        # » n'est pas « nul » : une config mal relue pouvait faire annoncer un prix, ou
+        # perdre l'annonce IA dans une formule maison. Trouvé par une mutation survivante
+        # de R46, qui ne pouvait pas être tuée parce que ce chemin-là n'existait pas.
+        #
+        # VERBATIM : l'annonce IA est non négociable (règle n°5), elle ne se reformule pas.
+        # Et c'est le seul tour où `en_conversation` vaut faux, donc le seul où saluer est
+        # permis — ce qui n'a de sens que si l'accueil passe bien par ici.
+        return self._say(formule, verbatim=True)
 
     # ------------------------------------------------------------- tour
     def process(self, user_text: str) -> str:
         if self.state in (State.S11_CLOTURE, State.FIN):
-            return self._say("L'appel est terminé. Bonne journée !")
+            # VERBATIM, et pour deux raisons dont la seconde est la vraie.
+            #
+            # 1. Une phrase de fin n'a rien à reformuler. La faire passer par le formuleur,
+            #    c'est payer un appel LLM pour prendre un risque sans contrepartie — et le
+            #    risque s'est réalisé le 26/08 : « L'appel. L'appel est terminé. »
+            # 2. C'EST ELLE QUI FAIT RACCROCHER. Personne ne raccroche aujourd'hui : la
+            #    plateforme rejoue des tours jusqu'à ce que le client raccroche lui-même.
+            #    Le mécanisme qui coupe la ligne (`endCallPhrases`) compare ce que l'agent
+            #    DIT à une liste de phrases ; une phrase reformulée à chaque tour ne peut
+            #    correspondre à rien. La déterminer est le préalable au raccrochage.
+            return self._say("L'appel est terminé. Bonne journée !", verbatim=True)
 
         user_text = user_text.strip()
         self.transcript.append(("client", user_text))
@@ -539,8 +563,23 @@ class Conversation:
     def _s4(self, ex: dict) -> str:
         if not self.flags.get("identite_demandee") and self.slots["telephone_rappel"] is None:
             self.flags["identite_demandee"] = True
-            return self._say("Très bien. À quel nom, et sur quel numéro "
-                             f"{self._prenom} peut vous confirmer le rendez-vous ?")
+            # C'est ICI que la commune est acquittée, et c'est le seul endroit où le
+            # client peut vérifier qu'on l'a compris. Le 26/08, le formuleur y a prononcé
+            # « Nogènes-sur-Marne » alors que la résolution avait trouvé Nogent-sur-Marne
+            # et que la base le prouve : la seule chose fausse de tout l'appel était la
+            # seule que le client ait entendue.
+            #
+            # Donc VERBATIM, avec le nom tel qu'il est dans NOTRE table. Le formuleur n'a
+            # aucune raison d'écrire un nom propre : il ne peut que l'écorcher. Et si la
+            # résolution se trompe un jour pour de bon, le client entendra une commune
+            # fausse qui vient de nous — donc reconnaissable, donc corrigeable.
+            #
+            # Même remède que R38 : là où le fond compte, le contrôleur parle lui-même.
+            lieu = (f"C'est noté pour {self.slots['commune']}. "
+                    if self.slots.get("commune") else "Très bien. ")
+            return self._say(f"{lieu}À quel nom, et sur quel numéro "
+                             f"{self._prenom} peut vous confirmer le rendez-vous ?",
+                             verbatim=True)
         if self.slots["telephone_rappel"] is None:
             # une QUESTION (prix...) n'est pas un REFUS : on y répond avec la liste
             # blanche et on redemande, sans consommer le quota (bug T05-LLM : Katz
@@ -551,10 +590,14 @@ class Conversation:
             # numéro incomplet ? (des chiffres, mais pas un numéro FR valide)
             # — en excluant un code postal donné dans la même phrase (bug B : "94000")
             import re as _re
-            texte = self._dernier_client()
+            digits = _re.sub(r"\D", "", self._dernier_client())
+            # Le code postal est retiré des CHIFFRES, pas du texte : depuis qu'il peut
+            # être dicté avec un séparateur (R43), la forme normalisée « 94130 » ne se
+            # retrouve pas telle quelle dans « je suis au 94 130 », et le retrait par le
+            # texte échouait en silence — cinq chiffres de trop, et un numéro parfaitement
+            # valide déclaré « incomplet ».
             if ex.get("code_postal"):
-                texte = texte.replace(ex["code_postal"], "")
-            digits = _re.sub(r"\D", "", texte)
+                digits = digits.replace(ex["code_postal"], "", 1)
             # Des chiffres, mais pas un numéro exploitable. Deux cas, deux phrases : trop
             # PEU (l'appelant s'est arrêté) et trop (il en a dit un de plus, ou le STT en
             # a inventé). Le second manquait, et c'est celui du 26/08 : douze chiffres
@@ -580,8 +623,12 @@ class Conversation:
             nouveau = self._numero_fr(ex.get("telephone_rappel"))
             if nouveau and nouveau != self.slots["telephone_rappel"]:
                 self.slots["telephone_rappel"] = nouveau
-                return self._say(f"Je répète votre numéro : {self._tel_espace()}. "
-                                 f"C'est bien ça ?", verbatim=True)  # chiffres jamais réécrits
+                # virgule et non point : un point placé juste après un groupe de
+                # chiffres est lu par la synthèse vocale comme une fin d'énoncé, et le
+                # « c'est bien ça ? » arrive détaché, comme une phrase sans rapport
+                # (entendu le 26/08). Une virgule garde la question dans le même souffle.
+                return self._say(f"Je répète votre numéro : {self._tel_espace()}, "
+                                 f"c'est bien ça ?", verbatim=True)  # chiffres jamais réécrits
             if ex.get("confirme") is True:
                 self.slots["tel_confirme"] = True
             elif ex.get("confirme") is False:
@@ -608,8 +655,8 @@ class Conversation:
                     # On ne réserve donc pas — on conclut avec un lead exploitable, le
                     # numéro entendu inclus, et c'est l'artisan qui rappellera.
                     return self._sans_rdv()
-                return self._say(f"Je répète votre numéro : {self._tel_espace()}. "
-                                 f"C'est bien ça ? Répondez simplement oui ou non.",
+                return self._say(f"Je répète votre numéro : {self._tel_espace()}, "
+                                 f"c'est bien ça ? Répondez simplement oui ou non.",
                                  verbatim=True)  # chiffres jamais réécrits
         self.state = State.S5_CRENEAU
         return self._s5({})

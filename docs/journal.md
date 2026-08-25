@@ -22,7 +22,7 @@ point d'entrée du produit. Plus rien d'autre n'est bloqué côté code.
 
 ```bash
 cd proto
-python run_scenario.py                              # 45 tests, ~3 s, sans clé ni base
+python run_scenario.py                              # 50 tests, ~3 s, sans clé ni base
 python semer_artisans.py [--ecrire]                 # amorce la table `artisan`
 python run_depot_pg.py [--migrer]                   # contrat du port contre Supabase
 uvicorn serveur:app --port 8000                     # API HTTP
@@ -58,7 +58,12 @@ python run_llm_eval.py [--mock] [--n 3]             # éval appelant-simulé
 | Créneaux prononcés verbatim (R38) | ✅ | mock, mutations 2/2 |
 | Contrainte nouvelle > « rien de plus tôt » (R39) | ✅ | mock, mutations 2/2 |
 | **Sonde de l'étape 0, chantier voix (R40)** | ✅ | mock, mutations 13/13 + 7/7 + 8/8 — **appel réel : la sonde PARLE** |
-| **Adaptateur de la plateforme vocale (R41)** | ✅ | mock, mutations 14/14 — *pas encore branché sur un appel réel* |
+| **Adaptateur de la plateforme vocale (R41)** | ✅ | mock, mutations 14/14 — **deux appels vocaux réels, scénarios complets** |
+| Numéro jamais tronqué (R42) | ✅ | mock, mutations 10/10 |
+| Code postal dicté avec séparateur (R43) | ✅ | mock, mutations 6/6 |
+| Clôture verbatim et stable (R44) | ✅ | mock, mutations 5/5 |
+| Commune canonique prononcée (R45) | ✅ | mock, *idem* |
+| Une seule salutation par appel (R46) | ✅ | mock, mutations 7/7 |
 | Identifiant d'appel imposé au dépôt (port) | ✅ | **contrat rejoué sur Supabase** |
 
 ## Ce qui est encore un double (et non un manque caché)
@@ -171,8 +176,19 @@ on le laissait faire. C'est un argument de plus pour le verbatim là où le fond
 Le garde-fou emoji est fait (R37). La **sonde de l'étape 0 est écrite** (R40) : il ne reste
 qu'à la jouer. Reste aussi la ligne `RELAIS_MODEL` du `.env` de Geoffrey.
 
-**L'étape 0 est TERMINÉE** (récolte ci-dessous) et **l'adaptateur est écrit** (R41).
-Ce qui reste est du branchement, pas de la conception :
+**LA VOIX MARCHE DE BOUT EN BOUT.** Deux appels vocaux réels le 26/08, scénarios
+complets : une sortie hors zone correcte, et **une réservation qui a produit un vrai RDV
+en base**, `en_attente_validation` chez art-dupont. La boucle voix → validation artisan
+est démontrable aujourd'hui.
+
+Six défauts en sont sortis, tous corrigés (R42–R46) — voir l'entrée datée. Le plus grave,
+R42, produisait un RDV d'apparence normale sur un numéro de téléphone faux.
+
+**Reste ouvert côté voix** : personne ne raccroche (la phrase de fin est désormais
+déterministe, il reste à brancher `endCallPhrases` côté Vapi), le barge-in à activer
+(`stopSpeakingPlan`), et la latence à mesurer sur un appel complet.
+
+Ce qui reste du branchement initial :
 
 ```bash
 # 1. l'assistant Vapi, créé proprement par l'API : STT/TTS français, custom LLM
@@ -401,6 +417,118 @@ Trois mesures d'oreille, consignées comme données d'arbitrage :
    courtes, mais **à activer** (`stopSpeakingPlan`) : les tours verbatim longs
    (récapitulatif de RDV, consignes de sécurité) sont exactement ceux qu'un appelant
    pressé voudra couper. Décision réversible, à trancher à l'oreille.
+
+---
+
+## Session du 26/08/2026 — DEUX APPELS VOCAUX RÉELS : six défauts, dont un grave
+
+**Fait.** Le produit a parlé au téléphone, deux fois, sur des scénarios COMPLETS — une
+sortie hors zone et une réservation. Un vrai RDV est en base, `en_attente_validation` chez
+art-dupont : **la boucle voix → validation artisan est démontrable**. Six défauts en sont
+sortis. R42 à R46, mutations 10/10, 6/6, 5/5, 7/7. Suite : **50 PASS**.
+
+### R42 — un numéro à peu près juste est pire qu'un numéro absent
+
+Douze chiffres dictés (« 06 10 15 47 68 79 »), dix répétés par l'agent sans rien signaler,
+« oui c'est bien ça », et un RDV réservé. Le lead en base le prouve :
+`telephone: '0610154768'`, `tel_confirme: True`.
+
+L'invariant « pas de RDV sans téléphone confirmé » était **syntaxiquement respecté et trahi
+en substance** : ce qui a été confirmé n'est pas ce qui a été dicté. C'est le défaut le plus
+grave trouvé jusqu'ici, parce qu'il produit un RDV parfaitement normal en apparence dont le
+seul moyen de rappel est faux. Sans numéro, l'invariant arrête la réservation et l'artisan
+rappelle ; avec un numéro faux, personne ne voit rien.
+
+Deux étages. La regex `0\d(?:[\s.\-]?\d{2}){4}\b` s'arrêtait après quatre paires — le
+`\b` tenait, un espace suivant. Et surtout : **le contrôleur faisait confiance à
+l'extracteur**. Corriger la seule regex n'aurait protégé que le mock ; le modèle réel peut
+rendre dix chiffres sur douze entendus. `_numero_fr` vit donc dans le CONTRÔLEUR, et
+`telephone_rappel` est le seul slot revérifié en entrée — le seul dont une valeur
+approximative produit un RDV d'apparence normale.
+
+### R43 — un code postal dicté n'était pas reconnu
+
+« C'est le 91 260 » : le slot était dans la phrase, et manqué. Puis manqué une seconde fois
+sur « Dans le 91. 260 ». Un code postal se PRONONCE en deux groupes, et la transcription
+pose un séparateur au milieu — parfois deux caractères (« . »). Exiger cinq chiffres collés
+faisait perdre un tour entier.
+
+**Leçon produit, plus grosse que le correctif** : c'est le CODE POSTAL qui a sauvé cet
+appel, là où le nom de commune a échoué deux fois — le STT entendait « Orange » pour
+« Juvisy-sur-Orge ». Cinq chiffres résistent à la transcription bien mieux qu'un nom propre.
+**Faut-il inverser la question de S1 (« votre code postal, ou votre commune ? ») ? Ouvert,
+non tranché** — c'est une décision produit, pas une correction.
+
+### R44 et R45 — deux fois la même leçon que R38
+
+**Personne ne raccroche.** Après S11, chaque tour reçoit une phrase de fin jusqu'à ce que le
+CLIENT raccroche. Et cette phrase, laissée au formuleur, est sortie bégayée : « L'appel.
+L'appel est terminé. » Elle est désormais **verbatim**, donc identique à chaque tour — ce
+qui n'est pas un détail de style : le mécanisme qui coupe la ligne côté Vapi
+(`endCallPhrases`) compare ce que l'agent DIT à une liste de phrases, et une phrase
+reformulée à chaque tour ne peut correspondre à rien. **Rendre la clôture déterministe est
+le préalable au raccrochage.** Le signal de fin par appel d'outil n'est PAS écrit : on ne
+l'a pas mesuré, et l'étape 0 a montré ce que valent les paris sur cette plateforme.
+
+**La commune prononcée n'était pas la nôtre.** Le transcript est net sur qui fautait :
+l'appelant dit « Nogent-sur-Marne » (bien transcrit), l'agent répond « Nogènes-sur-Marne ».
+La résolution avait parfaitement fonctionné — le lead porte `Nogent-sur-marne / 94130`,
+zone `en_zone`. **La seule chose fausse de tout l'appel était la seule que le client ait
+entendue.** Le formuleur écrivait un nom propre : précisément ce qu'un modèle ne devrait
+jamais avoir à écrire. Le contrôleur acquitte désormais la commune lui-même, verbatim, avec
+la forme de notre table.
+
+Troisième et quatrième fois que le même remède s'applique : **là où le fond compte, le
+contrôleur parle lui-même.**
+
+### R46 — une seule salutation, et pas de point après des chiffres
+
+L'agent a resalué au deuxième tour. C'est l'un des tics qui font entendre qu'on parle à une
+machine, et aucun garde-fou ne pouvait l'attraper : ni prix, ni promesse, ni caractère
+imprononçable — juste une phrase déplacée. Nouveau garde-fou, **opt-in** : mon premier essai
+l'appliquait par défaut et six tests sont tombés d'un coup, les SMS et la phrase de la sonde
+commençant légitimement par « Bonjour ». Un SMS est un premier contact, pas un tour de
+conversation. *Le défaut d'un garde-fou doit être de ne rien interdire à ceux qui ne l'ont
+pas demandé.*
+
+Et un point placé juste après un groupe de chiffres est lu par la synthèse vocale comme une
+fin d'énoncé : « 06 10 15 47 68. C'est bien ça ? » devient deux phrases sans rapport. Une
+virgule garde la question dans le même souffle. ⚠️ Ce qu'on entend comporte AUSSI des
+coupures qu'on n'écrit pas — elles viennent du découpage de la plateforme. Corrigé ce qui
+nous appartient ; le reste demande une oreille.
+
+### Une mutation survivante a trouvé un contournement de la règle n°2
+
+`open()` n'appelait pas `_say` : il écrivait l'accueil directement dans le transcript.
+**La ligne d'accueil échappait donc entièrement aux garde-fous** — celle qui porte l'annonce
+IA. Le risque était faible (la formule vient de la config) mais « faible » n'est pas
+« nul ». Corrigé, et R46 le vérifie avec une formule d'accueil délibérément fautive : si
+elle ressort sans violation, c'est que personne ne l'a regardée.
+
+### Un piège d'outillage qui fausse les mesures de mutation
+
+Une mutation qui conserve la TAILLE du fichier et s'écrit dans la même seconde que la
+restauration laisse Python servir un **.pyc périmé** (l'invalidation se fait sur mtime +
+taille). Remplacer « , » par « . » ne change pas un octet : le banc annonçait alors des
+résultats sans rapport avec le code testé — un 7/7 contaminé, redescendu à 6/7 une fois
+mesuré proprement. Tous les bancs purgent désormais le bytecode après chaque écriture.
+
+### Trois mesures d'oreille, consignées
+
+1. **Latence** : le plancher (réseau + STT + TTS + tunnel, zéro calcul) est confortable.
+   C'est un plancher, pas un verdict — le vrai test est plancher + contrôleur (~1,9 s en
+   Haiku). Les phrases-tampons restent au programme.
+2. **Fin de tour** : `startSpeakingPlan.waitSeconds = 0.4` produit un léger blanc si
+   l'appelant marque une pause. **Ne pas le réduire** : notre public est stressé, parfois
+   âgé. Curseur à régler sur du réel.
+3. **Barge-in** : impossible de couper l'agent en l'état. À activer (`stopSpeakingPlan`) —
+   les tours verbatim longs (récapitulatif de RDV, consignes de sécurité) sont exactement
+   ceux qu'un appelant pressé voudra couper.
+
+**Prochaine étape.** Brancher `endCallPhrases` sur la phrase de fin désormais stable,
+activer `stopSpeakingPlan`, et rappeler. Les évals réelles devront intégrer les dictées de
+ces deux appels — un numéro à douze chiffres et un code postal séparé sont des cas de
+production, pas des curiosités.
 
 ---
 
