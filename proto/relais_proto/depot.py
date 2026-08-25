@@ -100,7 +100,8 @@ class Depot(Protocol):
 
     def supprimer_code_connexion(self, artisan_id: str) -> None: ...
 
-    def ouvrir_appel(self, artisan_id: str, maintenant: dt.datetime) -> Appel: ...
+    def ouvrir_appel(self, artisan_id: str, maintenant: dt.datetime,
+                     appel_id: str | None = None) -> Appel: ...
 
     def enregistrer_etat(self, appel_id: str, etat: dict) -> None: ...
 
@@ -210,8 +211,19 @@ class DepotMemoire:
         return f"{prefixe}-{self._compteurs[prefixe]}"
 
     # ---- appels ----
-    def ouvrir_appel(self, artisan_id: str, maintenant: dt.datetime) -> Appel:
-        appel = Appel(id=self._id("apl"), artisan_id=artisan_id, debut_a=maintenant)
+    def ouvrir_appel(self, artisan_id: str, maintenant: dt.datetime,
+                     appel_id: str | None = None) -> Appel:
+        """`appel_id` permet à l'appelant d'IMPOSER l'identifiant.
+
+        Ajouté pour la voix : la plateforme vocale porte déjà un identifiant d'appel
+        stable (`call.id`), et le réutiliser tel quel évite une table de correspondance
+        entière — donc une source de désynchronisation. Il se trouve que c'est un UUID
+        valide, donc il entre aussi dans la colonne `uuid` de l'adaptateur Postgres.
+
+        Sans argument, le comportement ne change pas : le dépôt génère l'identifiant.
+        """
+        appel = Appel(id=appel_id or self._id("apl"), artisan_id=artisan_id,
+                      debut_a=maintenant)
         self._appels[appel.id] = self._appel_en_dict(appel)
         return appel
 

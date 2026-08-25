@@ -189,8 +189,13 @@ class DepotPostgres:
         self._executer("delete from code_connexion where artisan_id = %s", (artisan_id,))
 
     # ---- appels ----
-    def ouvrir_appel(self, artisan_id: str, maintenant: dt.datetime) -> Appel:
-        appel = Appel(id=self._id(), artisan_id=artisan_id, debut_a=maintenant)
+    def ouvrir_appel(self, artisan_id: str, maintenant: dt.datetime,
+                     appel_id: str | None = None) -> Appel:
+        # `appel_id` imposé : voir le port. La colonne est de type `uuid`, et
+        # l'identifiant d'appel de la plateforme vocale en est un — `_uuid` refuse tout
+        # ce qui n'en serait pas, plutôt que de laisser Postgres lever une erreur de cast.
+        appel = Appel(id=self._uuid(appel_id, appel_id) if appel_id else self._id(),
+                      artisan_id=artisan_id, debut_a=maintenant)
         self._executer(
             "insert into appel (id, artisan_id, debut_a) values (%s, %s, %s)",
             (appel.id, artisan_id, maintenant))

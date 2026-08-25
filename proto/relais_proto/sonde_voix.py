@@ -139,63 +139,8 @@ def journaliser(entree: dict, chemin: pathlib.Path) -> None:
         f.write(json.dumps(entree, ensure_ascii=False, default=str) + "\n")
 
 
-def reponse_openai(texte: str, modele: str, instant: dt.datetime) -> dict:
-    """Réponse au format `chat.completion`, d'un seul bloc.
-
-    Conservée alors que Vapi exige du flux : c'est ce que d'autres plateformes attendent,
-    et c'est la forme qu'on relit le plus facilement en diagnostic. Ce qui a changé le
-    25/08, c'est qu'elle ne suffit pas — voir `evenements_sse`.
-    """
-    return {
-        "id": "sonde-relais",
-        "object": "chat.completion",
-        "created": int(instant.timestamp()),
-        "model": modele or "relais-sonde",
-        "choices": [{
-            "index": 0,
-            "message": {"role": "assistant", "content": texte},
-            "finish_reason": "stop",
-        }],
-        "usage": {"prompt_tokens": 0, "completion_tokens": 0, "total_tokens": 0},
-    }
-
-
-def evenements_sse(texte: str, modele: str, instant: dt.datetime):
-    """Rend le texte en `text/event-stream`, au format des morceaux OpenAI.
-
-    ⚠️ LIRE AVANT DE MODIFIER — c'est ici que se joue la décision d'arbitrage n°4.
-
-    Le texte arrive ENTIER et part en **un seul morceau de contenu**. Le flux est un mode
-    de TRANSPORT, jamais un mode de génération. La raison n'est pas esthétique : tout ce
-    qui sort de l'agent passe par `guards.check_output` (règle n°2), et des garde-fous ne
-    peuvent rien contre un fragment de phrase. Un prix interdit, un « c'est confirmé »
-    prématuré ou un diagnostic improvisé se reconnaissent sur la phrase complète ; émettre
-    au fil des jetons reviendrait à prononcer d'abord et vérifier ensuite.
-
-    Le découpage est donc interdit, et R40 le vérifie explicitement plutôt que de le
-    confier au commentaire ci-dessus.
-
-    Pourquoi du flux malgré tout : mesuré le 25/08 à 21:02, Vapi envoie `"stream": true`
-    et une réponse d'un seul bloc lui vaut un 200 **et un silence**. Le flux n'est pas un
-    choix de conception, c'est une exigence du transport — d'où la séparation stricte
-    entre les deux.
-
-    Conséquence pour la latence, à ne pas se cacher : émettre d'un bloc signifie que le
-    premier son sort quand la phrase entière est prête. C'est le coût assumé de l'invariant,
-    et c'est ce que les phrases-tampons pré-approuvées doivent couvrir — pas le streaming.
-    """
-    base = {"id": "sonde-relais", "object": "chat.completion.chunk",
-            "created": int(instant.timestamp()), "model": modele or "relais-sonde"}
-    # premier morceau : le rôle ET tout le texte. Certains clients exigent que `role`
-    # figure dans le premier delta.
-    yield "data: " + json.dumps(
-        {**base, "choices": [{"index": 0,
-                              "delta": {"role": "assistant", "content": texte},
-                              "finish_reason": None}]},
-        ensure_ascii=False) + "\n\n"
-    # second morceau : la fin, delta vide. Séparer la fin du contenu évite qu'un client
-    # qui s'arrête au premier `finish_reason` tronque la phrase.
-    yield "data: " + json.dumps(
-        {**base, "choices": [{"index": 0, "delta": {}, "finish_reason": "stop"}]},
-        ensure_ascii=False) + "\n\n"
-    yield "data: [DONE]\n\n"
+# Le format de fil (réponse d'un bloc, flux SSE) vit dans `vapi.py` : il est PRODUIT, pas
+# diagnostic, et l'adaptateur comme la sonde doivent en sortir exactement le même. Deux
+# implémentations dériveraient, et c'est justement le flux qui décide si l'agent est
+# audible ou muet.
+from .vapi import evenements_sse, reponse_openai            # noqa: E402,F401

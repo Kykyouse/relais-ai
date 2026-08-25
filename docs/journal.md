@@ -22,7 +22,7 @@ point d'entrée du produit. Plus rien d'autre n'est bloqué côté code.
 
 ```bash
 cd proto
-python run_scenario.py                              # 44 tests, ~3 s, sans clé ni base
+python run_scenario.py                              # 45 tests, ~3 s, sans clé ni base
 python semer_artisans.py [--ecrire]                 # amorce la table `artisan`
 python run_depot_pg.py [--migrer]                   # contrat du port contre Supabase
 uvicorn serveur:app --port 8000                     # API HTTP
@@ -57,7 +57,9 @@ python run_llm_eval.py [--mock] [--n 3]             # éval appelant-simulé
 | Sortie prononçable : emoji et markdown (R37) | ✅ | mock, mutations 5/5 |
 | Créneaux prononcés verbatim (R38) | ✅ | mock, mutations 2/2 |
 | Contrainte nouvelle > « rien de plus tôt » (R39) | ✅ | mock, mutations 2/2 |
-| **Sonde de l'étape 0, chantier voix (R40)** | ✅ | mock, mutations 13/13 + 7/7 — **plomberie Vapi→serveur vérifiée le 25/08** |
+| **Sonde de l'étape 0, chantier voix (R40)** | ✅ | mock, mutations 13/13 + 7/7 + 8/8 — **appel réel : la sonde PARLE** |
+| **Adaptateur de la plateforme vocale (R41)** | ✅ | mock, mutations 14/14 — *pas encore branché sur un appel réel* |
+| Identifiant d'appel imposé au dépôt (port) | ✅ | **contrat rejoué sur Supabase** |
 
 ## Ce qui est encore un double (et non un manque caché)
 
@@ -169,7 +171,22 @@ on le laissait faire. C'est un argument de plus pour le verbatim là où le fond
 Le garde-fou emoji est fait (R37). La **sonde de l'étape 0 est écrite** (R40) : il ne reste
 qu'à la jouer. Reste aussi la ligne `RELAIS_MODEL` du `.env` de Geoffrey.
 
-**Comment jouer l'étape 0**, dans l'ordre :
+**L'étape 0 est TERMINÉE** (récolte ci-dessous) et **l'adaptateur est écrit** (R41).
+Ce qui reste est du branchement, pas de la conception :
+
+```bash
+# 1. l'assistant Vapi, créé proprement par l'API : STT/TTS français, custom LLM
+#    pointant sur <tunnel>/voix/vapi, et SURTOUT aucun `firstMessage` — l'annonce IA
+#    doit sortir de NOTRE moteur (règle n°5), pas d'un champ de tableau de bord.
+# 2. champ « API Key » de Vapi = RELAIS_WEBHOOK_SECRET (il part en Authorization: Bearer)
+# 3. activer stopSpeakingPlan (barge-in) — cf. mesure d'oreille n°3
+RELAIS_VOIX_ARTISAN=art-dupont uvicorn serveur:app --port 8000
+```
+
+Scénario cible du premier appel : « j'ai une fuite » → commune → première question de
+qualification (S0→S2). C'est exactement ce que R41 joue en mock.
+
+**Mode d'emploi de la sonde** (elle reste utile pour toute nouvelle plateforme) :
 
 ```bash
 RELAIS_SONDE_VOIX=1 uvicorn serveur:app --port 8000   # le serveur l'annonce au démarrage
@@ -367,8 +384,86 @@ Suite : 44 PASS.
 `stream: true`, si bien que les six contrôles d'authentification recevaient du SSE et que
 `r.json()` tombait. Deux charges distinctes depuis — celle en flux est explicite.
 
-**Prochaine étape** : la contre-épreuve à l'oreille (rappeler, vérifier que la phrase est
-bien prononcée), **puis** l'adaptateur.
+**Contre-épreuve faite le soir même : la sonde PARLE.** Appel complet de plusieurs tours,
+phrase prononcée en français à chaque tour, transcript propre côté Vapi. Le silence
+précédent est donc prouvé dans les deux sens — c'était bien le transport, rien d'autre.
+
+Trois mesures d'oreille, consignées comme données d'arbitrage :
+
+1. **Latence** : le délai de la sonde (plancher réseau + STT + TTS + tunnel, zéro calcul)
+   est confortable. C'est le **plancher, pas le verdict** — le vrai test est plancher +
+   contrôleur (~1,9 s en Haiku). Les phrases-tampons restent au programme.
+2. **Fin de tour** : léger blanc si l'appelant marque une pause en milieu de phrase —
+   c'est `startSpeakingPlan.waitSeconds = 0.4`, vu dans la charge utile. Défaut
+   raisonnable pour notre public (appelant stressé, parfois âgé) : **ne pas le réduire**,
+   curseur à régler sur du réel.
+3. **Barge-in** : impossible de couper l'agent en l'état. Pas bloquant sur des répliques
+   courtes, mais **à activer** (`stopSpeakingPlan`) : les tours verbatim longs
+   (récapitulatif de RDV, consignes de sécurité) sont exactement ceux qu'un appelant
+   pressé voudra couper. Décision réversible, à trancher à l'oreille.
+
+---
+
+## Session du 25/08/2026 (fin de soirée) — l'adaptateur vocal (R41)
+
+**Fait.** `proto/relais_proto/vapi.py` + la route `POST /voix/vapi[/chat/completions]`,
+couverts par **R41**, mutations **14/14**. Le port `Depot` accepte désormais un identifiant
+d'appel imposé, vérifié par le contrat **sur Supabase réel**. Suite : **45 PASS**.
+
+**La récolte a changé deux hypothèses de conception.** C'est le retour sur investissement
+de la sonde, et il ne s'est pas vu venir :
+
+1. **Un appel web ne porte AUCUN numéro appelé.** `call.type == "webCall"`, transport
+   Daily, pas un seul champ en `+33` dans toute la charge utile. Or `/webhooks/appel`
+   identifie l'artisan par le numéro composé — et le spike se fait justement **sans**
+   numéro français. Sans la sonde, l'adaptateur aurait été écrit autour d'un champ qui
+   n'existe pas dans le seul mode où on allait s'en servir. D'où `artisan_de_l_appel` :
+   le numéro composé s'il existe (production), sinon un artisan désigné en configuration
+   (`RELAIS_VOIX_ARTISAN`), sinon **404 explicite** — un rattachement au hasard enverrait
+   les leads d'un artisan chez un autre, sans la moindre erreur visible.
+
+2. **Vapi rejoue le même tour.** Le 25/08 à 21:20 : quatre requêtes en sept secondes,
+   même nombre de messages, pendant un barge-in. Les traiter ferait avancer le contrôleur
+   de quatre états pour une seule phrase de l'appelant — la conversation part de travers
+   et personne ne comprend pourquoi. `est_un_rejeu` s'en sert du fait que Vapi renvoie
+   **tout l'historique** : le nombre de messages `user` est un numéro de séquence, comparé
+   aux tours déjà inscrits dans notre transcript. **Aucun stockage nouveau** — l'état
+   existant suffisait. Sur un rejeu, on redit la dernière réplique, ce qui est aussi le
+   bon comportement à l'oreille : l'appelant qui a coupé l'agent n'a pas entendu la fin.
+
+**L'identifiant de la plateforme EST notre clé.** `call.id` est un UUID valide et stable
+sur tout l'appel, donc il entre tel quel dans `appel.id`. Le port a gagné un paramètre
+`appel_id` facultatif plutôt qu'une table de correspondance : une table de plus, c'est une
+désynchronisation de plus. Le contrat du port a été étendu et rejoué contre les DEUX
+implémentations — la colonne est de type `uuid`, c'est exactement le genre d'ajout qui
+marche en mémoire et casse en base.
+
+**Ce que l'adaptateur ignore, et pourquoi c'est un invariant** : le message système de
+Vapi (celui de son assistant par défaut, « You are Riley… ») et tout l'historique renvoyé.
+Notre état vit dans le dépôt, notre prompt vient de notre moteur. R41 le vérifie avec un
+prompt système **hostile** — il promet 500 dollars et une confirmation immédiate — et
+exige qu'aucun des deux n'apparaisse. Un prompt étranger qui déciderait quoi que ce soit
+serait une violation directe de la règle n°1.
+
+**L'annonce IA sort du moteur, jamais d'un `firstMessage` configuré chez le prestataire.**
+Elle est non négociable (règle n°5) et ne doit pas pouvoir diverger dans un tableau de
+bord que personne ne relit. L'assistant Vapi doit donc être créé **sans** premier message.
+
+**Clôture factorisée.** `/webhooks/appel/{id}/tour` et la porte voix partagent désormais
+`_cloturer_appel` : deux transports, un seul métier. Le jour où l'un des deux oublierait
+de créer le RDV, c'est LA fonction produit qui disparaîtrait sans la moindre erreur.
+
+**Mutation, et un kill pour la mauvaise raison.** La mutation « un jeton d'artisan ouvre
+la porte voix » a d'abord été tuée par un 401 sur le chemin NORMAL : en remplaçant le
+contrôle du secret, elle cassait aussi l'authentification légitime, si bien que le
+contrôle visé n'était jamais atteint. Rejouée sous la forme réaliste — un `or` qui ACCEPTE
+les deux — elle est tuée par le bon message, sur R41 comme sur R40. Une mutation qui tue
+par effet de bord ne prouve rien.
+
+**Prochaine étape.** Créer l'assistant Vapi par l'API (STT/TTS français, sans premier
+message, `stopSpeakingPlan` actif), pointer le custom LLM sur `/voix/vapi`, et appeler.
+Le prérequis Haiku est **déjà rendu** : 42/42 au 7ᵉ passage sur l'arbre corrigé
+(`evals/results-20260825-213151.json`), sans incident de harnais.
 
 ---
 

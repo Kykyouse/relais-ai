@@ -16,7 +16,7 @@ Cible V1 : plombiers/chauffagistes FR. Solo dev : Geoffrey (binôme Claude) ; ma
 ```bash
 cd proto
 pip install -r requirements.txt     # anthropic, python-dotenv (inutiles en mock)
-python run_scenario.py              # suite de non-régression (mock, sans clé, ~3 s) — 44 tests
+python run_scenario.py              # suite de non-régression (mock, sans clé, ~3 s) — 45 tests
 python run_llm_eval.py --mock       # plomberie de l'éval appelant-simulé (sans clé)
 python run_llm_eval.py [--n 3] [--only T05]   # éval LLM réel → evals/results-*.json
                                     # RELAIS_MODEL = l'agent, RELAIS_MODEL_APPELANT
@@ -67,8 +67,10 @@ la **table `artisan`** (la config reste un fichier versionné) ·
 `confirmation.py` jetons du lien de validation client (empreinte seule en base) ·
 `envoi.py` plage de silence + réessais + port fournisseur (aucun câblé : `EnvoyeurJournal`) ·
 `pages.py` pages HTML (client + boîte de validation artisan, sans JS ni ressource externe) ·
-`session.py` sessions artisan par cookie · `sonde_voix.py` sonde de diagnostic
-du chantier voix (hors produit, éteinte par défaut : `RELAIS_SONDE_VOIX`) · `connexion.py` code SMS à 6 chiffres (empreinte
+`session.py` sessions artisan par cookie · `vapi.py` adaptateur de la plateforme
+vocale (traduit, ne décide rien ; porte aussi le format de fil SSE — lire son en-tête
+avant de toucher au chantier voix) · `sonde_voix.py` sonde de diagnostic de l'étape 0
+(hors produit, éteinte par défaut : `RELAIS_SONDE_VOIX`) · `connexion.py` code SMS à 6 chiffres (empreinte
 seule, essais comptés, un seul code vivant) · `serveur.py` câblage de production ·
 `worker.py` un passage des workers de fond. **L'API ne décide jamais** — corollaire
 backend de la règle n°1 : elle transporte et persiste, le métier reste dans engine/rdv.

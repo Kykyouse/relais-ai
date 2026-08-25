@@ -21,7 +21,8 @@ from pydantic import BaseModel, Field
 
 import secrets
 
-from . import connexion, messages, pages, session, sonde_voix as _sonde, temps
+from . import (connexion, messages, pages, session, sonde_voix as _sonde, temps,
+               vapi as _vapi)
 from .calendar_stub import CalendarStub, libelle_creneau
 from .confirmation import creer_jeton, empreinte, lien
 from .depot import Introuvable
@@ -107,7 +108,8 @@ class ReproposerIn(BaseModel):
 def creer_app(depot, registre: Registre, fabrique_llm, horloge=None,
               base_url: str = "https://relais.example",
               cookie_secure: bool = True, envoyeur=None,
-              sonde_voix: "pathlib.Path | None" = None) -> FastAPI:
+              sonde_voix: "pathlib.Path | None" = None,
+              voix_artisan_defaut: str | None = None) -> FastAPI:
     """Collaborateurs injectés explicitement plutôt que par variables globales : les tests
     passent un dépôt mémoire, un MockLLM et une horloge figée, la prod un dépôt Postgres.
 
@@ -119,6 +121,11 @@ def creer_app(depot, registre: Registre, fabrique_llm, horloge=None,
     `sonde_voix` est le chemin du journal de la sonde de l'étape 0 (`sonde_voix.py`).
     `None` — le défaut — ne déclare même pas la route : un outil de diagnostic ne doit pas
     pouvoir se retrouver exposé en production par simple oubli de le désactiver.
+
+    `voix_artisan_defaut` rattache à un artisan les appels vocaux SANS numéro appelé.
+    Mesuré le 25/08 : un appel web n'en porte aucun (`call.type == "webCall"`), et c'est
+    le mode du spike puisqu'il n'exige pas de numéro français. Sans lui, un tel appel est
+    refusé explicitement plutôt que rattaché au hasard.
     """
     # l'un des DEUX seuls endroits où l'horloge système entre (l'autre est worker.py) :
     # elle rend un instant UTC, et tout ce qui suit en hérite (cf. temps.py)
@@ -168,6 +175,23 @@ def creer_app(depot, registre: Registre, fabrique_llm, horloge=None,
         if artisan is None:
             raise HTTPException(401, "authentification artisan requise")
         return artisan
+
+    def _secret_webhook_present(entetes: dict) -> bool:
+        """Le secret webhook, par l'en-tête dédié OU par `Authorization`.
+
+        La seconde voie n'est pas un confort : mesuré le 25/08, la plateforme vocale
+        n'envoie AUCUN en-tête personnalisé vers un custom LLM — le contenu de son champ
+        « API Key » part en `Authorization: Bearer`. Refuser cette voie reviendrait à
+        exiger d'un tiers une convention qu'il n'a pas.
+
+        ⚠️ Seul le SECRET WEBHOOK ouvre. Un jeton d'artisan présenté dans ce même format
+        `Bearer` est refusé : c'est le format de l'AUTRE porte, et les deux ne se
+        substituent jamais l'une à l'autre (R40, R41).
+        """
+        if registre.secret_webhook_valide(entetes.get("x-relais-secret", "")):
+            return True
+        return registre.secret_webhook_valide(
+            entetes.get("authorization", "").removeprefix("Bearer ").strip())
 
     def webhook_authentifie(
             x_relais_secret: str = Header(default="")) -> None:
@@ -222,8 +246,7 @@ def creer_app(depot, registre: Registre, fabrique_llm, horloge=None,
             voie_auth = None
             if registre.secret_webhook_valide(entetes.get("x-relais-secret", "")):
                 voie_auth = "x-relais-secret"
-            elif registre.secret_webhook_valide(
-                    entetes.get("authorization", "").removeprefix("Bearer ").strip()):
+            elif _secret_webhook_present(entetes):
                 voie_auth = "authorization"
             if voie_auth is None:
                 # On journalise l'échec, mais seulement les NOMS d'en-têtes (jamais leurs
@@ -248,13 +271,121 @@ def creer_app(depot, registre: Registre, fabrique_llm, horloge=None,
             # morceau : voir `sonde_voix.evenements_sse`, où la raison est écrite.
             if isinstance(corps, dict) and corps.get("stream"):
                 return StreamingResponse(
-                    _sonde.evenements_sse(_sonde.PHRASE_SONDE, modele or "", t),
+                    _vapi.evenements_sse(_sonde.PHRASE_SONDE, modele or "", t),
                     media_type="text/event-stream",
                     # la plateforme lit au fil de l'eau : un proxy qui met en tampon
                     # rendrait la mesure de latence fausse
                     headers={"Cache-Control": "no-cache", "X-Accel-Buffering": "no"})
             return JSONResponse(
-                _sonde.reponse_openai(_sonde.PHRASE_SONDE, modele or "", t))
+                _vapi.reponse_openai(_sonde.PHRASE_SONDE, modele or "", t))
+
+    # ---- porte voix : adaptateur de la plateforme vocale ----
+    def _cloturer_appel(appel_id: str, convo, artisan, t) -> str | None:
+        """Fin d'appel : lead, puis RDV si un créneau a été réservé. Rend l'id du RDV.
+
+        Partagé avec `/webhooks/appel/{id}/tour` : deux transports pour un seul métier.
+        Le jour où l'un des deux oublierait de créer le RDV, c'est LA fonction produit qui
+        disparaîtrait — sans la moindre erreur visible.
+        """
+        donnees = build_lead(convo)
+        lead = depot.cloturer_appel(appel_id, donnees, t)
+        if not donnees.get("rdv"):
+            return None
+        rdv = depot.creer_rdv(lead_id=lead.id, hold=donnees["rdv"],
+                              lead_donnees=donnees, cfg=artisan.config, maintenant=t)
+        # le push part ici ; l'échéance, elle, court depuis la réservation (rdv.py)
+        rdv.notifier(t)
+        depot.sauver_rdv(rdv)
+        return rdv.id
+
+    @app.post("/voix/vapi")
+    @app.post("/voix/vapi/chat/completions")
+    async def voix_vapi(requete: Request):
+        """Un tour d'appel vocal. **Cette fonction ne décide rien** : elle traduit.
+
+        Tout ce qu'elle sait de la plateforme est dans `vapi.py`, et vient de la récolte
+        de l'étape 0 — pas d'une documentation.
+        """
+        entetes = dict(requete.headers)
+        if not _secret_webhook_present(entetes):
+            raise HTTPException(401, "secret webhook invalide")
+        try:
+            corps = await requete.json()
+        except Exception:
+            raise HTTPException(400, "charge utile illisible") from None
+        if not isinstance(corps, dict):
+            raise HTTPException(400, "charge utile illisible")
+
+        appel_id = _vapi.identifiant_appel(corps)
+        if not appel_id:
+            # sans clé de conversation, chaque tour repartirait de zéro : mieux vaut un
+            # refus lisible qu'un agent amnésique au téléphone
+            raise HTTPException(400, "identifiant d'appel absent (call.id)")
+        artisan, voie = _vapi.artisan_de_l_appel(corps, registre, voix_artisan_defaut)
+        if artisan is None:
+            raise HTTPException(
+                404, "aucun artisan pour cet appel : ni numéro appelé reconnu, ni "
+                     "artisan par défaut configuré (RELAIS_VOIX_ARTISAN)")
+
+        t = maintenant()
+        modele = corps.get("model") or ""
+        try:
+            appel = depot.appel(appel_id)
+        except Introuvable:
+            appel = None
+
+        if appel is None or appel.etat_conversation is None:
+            # OUVERTURE. L'annonce IA sort d'ICI, jamais d'un `firstMessage` configuré
+            # côté plateforme : elle est non négociable (règle n°5) et ne doit pas pouvoir
+            # diverger dans un tableau de bord. Configurer l'assistant Vapi SANS premier
+            # message, pour que ce soit notre moteur qui parle en premier.
+            #
+            # Le calendrier est calé sur l'horloge de l'appel (cf. `/webhooks/appel`) :
+            # son `now` voyage dans l'état sérialisé, donc « demain entre 08h et 10h »
+            # garde le même sens jusqu'à la fin de l'appel, même passé minuit.
+            convo = Conversation(artisan.config, fabrique_llm(),
+                                 CalendarStub(artisan.config, now=t))
+            texte = convo.open()
+            if appel is None:
+                depot.ouvrir_appel(artisan.id, t, appel_id=appel_id)
+            depot.enregistrer_etat(appel_id, convo.to_dict())
+            return _repondre_voix(texte, modele, t, corps)
+
+        convo = Conversation.from_dict(appel.etat_conversation, artisan.config,
+                                       fabrique_llm())
+        # tours DÉJÀ traités = ce que notre transcript contient, pas ce que la plateforme
+        # raconte. C'est notre état qui fait foi.
+        traites = sum(1 for r, _ in convo.transcript if r == "client")
+        if _vapi.est_un_rejeu(corps, traites):
+            # Retransmission (mesurée : 4 requêtes en 7 s pendant un barge-in). La traiter
+            # ferait avancer le contrôleur sans que personne n'ait parlé. On redit la
+            # dernière réplique — c'est aussi ce qu'il faut à l'oreille quand l'appelant a
+            # coupé l'agent et n'a donc pas entendu la fin.
+            dernier = next((txt for r, txt in reversed(convo.transcript) if r == "agent"),
+                           None)
+            return _repondre_voix(dernier or convo.open(), modele, t, corps)
+
+        textes = _vapi.messages_utilisateur(corps)
+        texte = convo.process(textes[-1])
+        depot.enregistrer_etat(appel_id, convo.to_dict())
+
+        if convo.state in (State.S11_CLOTURE, State.FIN) and appel.fin_a is None:
+            _cloturer_appel(appel_id, convo, artisan, t)
+        return _repondre_voix(texte, modele, t, corps)
+
+    def _repondre_voix(texte: str, modele: str, t, corps: dict):
+        """Une réplique, dans le transport que la plateforme attend.
+
+        Le texte est déjà passé par les garde-fous (`_say` dans `engine.py`) AVANT
+        d'arriver ici : c'est tout l'objet de la décision d'arbitrage n°4. Voir
+        `vapi.evenements_sse` pour la raison écrite au long.
+        """
+        if corps.get("stream"):
+            return StreamingResponse(
+                _vapi.evenements_sse(texte, modele, t),
+                media_type="text/event-stream",
+                headers={"Cache-Control": "no-cache", "X-Accel-Buffering": "no"})
+        return JSONResponse(_vapi.reponse_openai(texte, modele, t))
 
     # ---- porte téléphonie ----
     @app.post("/webhooks/appel", response_model=TourOut,
@@ -298,18 +429,10 @@ def creer_app(depot, registre: Registre, fabrique_llm, horloge=None,
         if convo.state not in (State.S11_CLOTURE, State.FIN):
             return TourOut(appel_id=appel_id, texte=texte, termine=False)
 
-        # fin d'appel : lead, puis RDV si un créneau a été réservé
+        # fin d'appel : lead, puis RDV si un créneau a été réservé — même code que la
+        # porte voix, pour que les deux transports ne puissent pas diverger
         t = maintenant()
-        donnees = build_lead(convo)
-        lead = depot.cloturer_appel(appel_id, donnees, t)
-        rdv_id = None
-        if donnees.get("rdv"):
-            rdv = depot.creer_rdv(lead_id=lead.id, hold=donnees["rdv"],
-                                  lead_donnees=donnees, cfg=artisan.config, maintenant=t)
-            # le push part ici ; l'échéance, elle, court depuis la réservation (rdv.py)
-            rdv.notifier(t)
-            depot.sauver_rdv(rdv)
-            rdv_id = rdv.id
+        rdv_id = _cloturer_appel(appel_id, convo, artisan, t)
         return TourOut(appel_id=appel_id, texte=texte, termine=True, rdv_id=rdv_id)
 
     # ---- porte app artisan ----

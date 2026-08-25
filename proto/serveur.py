@@ -17,6 +17,11 @@ Variables optionnelles :
                              `/voix/sonde`, cf. `sonde_voix.py`). Valeur = chemin du
                              journal, ou `1` pour `proto/sonde-vapi.jsonl`. Absente par
                              défaut : la route n'est alors même pas déclarée.
+    RELAIS_VOIX_ARTISAN      artisan auquel rattacher les appels vocaux SANS numéro
+                             appelé — c'est-à-dire les appels web (`call.type ==
+                             "webCall"`), le mode du spike. Sans elle, un tel appel est
+                             refusé en 404 plutôt que rattaché au hasard. Inutile dès
+                             qu'un vrai numéro est branché : le numéro composé l'emporte.
 
 Rien de métier ici : uniquement du câblage. Les collaborateurs sont les mêmes objets que
 ceux des tests, avec les implémentations réelles à la place des doubles — c'est tout
@@ -108,6 +113,12 @@ def construire():
     # sélection que le worker (`RELAIS_SMS`), donc même défaut inoffensif.
     envoyeur, mode_sms = choisir_envoyeur()
     print(f"envoi des codes de connexion : {mode_sms}")
+    voix_artisan = (os.environ.get("RELAIS_VOIX_ARTISAN") or "").strip() or None
+    if voix_artisan:
+        # annoncé, comme la sonde : c'est un rattachement PAR DÉFAUT, donc exactement le
+        # genre de réglage qu'on oublie et qui envoie les leads chez le mauvais artisan
+        print(f"appels vocaux sans numéro appelé → artisan {voix_artisan!r} "
+              f"(RELAIS_VOIX_ARTISAN)")
     sonde = _sonde_voix()
     # Annoncée au démarrage, comme le réglage du cookie et pour la même raison : un état
     # qu'on ne voit que lorsqu'il est anormal ne se distingue pas d'un réglage non pris en
@@ -116,7 +127,8 @@ def construire():
         print(f"⚠️  SONDE VOIX ALLUMÉE : POST /voix/sonde → {sonde} "
               f"(diagnostic étape 0 ; à éteindre après usage)")
     return creer_app(depot, registre, make_llm, base_url=_exige("RELAIS_BASE_URL"),
-                     cookie_secure=secure, envoyeur=envoyeur, sonde_voix=sonde)
+                     cookie_secure=secure, envoyeur=envoyeur, sonde_voix=sonde,
+                     voix_artisan_defaut=voix_artisan)
 
 
 app = construire()

@@ -105,6 +105,19 @@ def verifier(fabrique, cfg: dict) -> list[str]:
     donnees, etat = _lead_donnees(cfg, LIGNES_URGENCE, LUNDI_9H)
     appel = depot.ouvrir_appel("art-dupont", LUNDI_9H)
     exiger(bool(appel.id), "ouvrir_appel : id vide")
+
+    # Identifiant IMPOSÉ (voie de la plateforme vocale). Joué contre les deux
+    # implémentations : c'est exactement le genre d'ajout qui marche en mémoire et casse
+    # en base, la colonne étant de type `uuid`.
+    impose = "01a03acb-34da-7ee6-aceb-3fa46a379efe"
+    appel_impose = depot.ouvrir_appel("art-dupont", LUNDI_9H, appel_id=impose)
+    exiger(appel_impose.id == impose,
+           f"ouvrir_appel : id imposé non respecté ({appel_impose.id})")
+    exiger(depot.appel(impose).artisan_id == "art-dupont",
+           "ouvrir_appel : appel à id imposé introuvable")
+    depot.enregistrer_etat(impose, {"marqueur": "voix"})
+    exiger(depot.appel(impose).etat_conversation == {"marqueur": "voix"},
+           "ouvrir_appel : état non relu sur un id imposé")
     exiger(depot.appel(appel.id).debut_a == LUNDI_9H,
            "appel : debut_a ne fait pas l'aller-retour")
     exiger(depot.appel(appel.id).fin_a is None, "appel neuf : fin_a devrait être vide")
