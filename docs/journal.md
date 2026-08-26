@@ -22,7 +22,7 @@ point d'entrée du produit. Plus rien d'autre n'est bloqué côté code.
 
 ```bash
 cd proto
-python run_scenario.py                              # 61 tests, ~3 s, sans clé ni base
+python run_scenario.py                              # 62 tests, ~3 s, sans clé ni base
 python semer_artisans.py [--ecrire]                 # amorce la table `artisan`
 python run_depot_pg.py [--migrer]                   # contrat du port contre Supabase
 uvicorn serveur:app --port 8000                     # API HTTP
@@ -76,6 +76,7 @@ python run_llm_eval.py [--mock] [--n 3]             # éval appelant-simulé
 | Numéro confronté à ce qui a été dit (R55) | ✅ | mock, mutations 7/7 |
 | Question du secteur verbatim, relance par les chiffres (R56) | ✅ | mock, *idem* |
 | Paire commune/CP cohérente, refus verbatim (R57) | ✅ | mock, mutations 5/5 |
+| Code postal relu en DEUX groupes (R58) | ✅ | mock, mutations 5/5 |
 | Identifiant d'appel imposé au dépôt (port) | ✅ | **contrat rejoué sur Supabase** |
 
 ## Ce qui est encore un double (et non un manque caché)
@@ -433,6 +434,40 @@ Trois mesures d'oreille, consignées comme données d'arbitrage :
    courtes, mais **à activer** (`stopSpeakingPlan`) : les tours verbatim longs
    (récapitulatif de RDV, consignes de sécurité) sont exactement ceux qu'un appelant
    pressé voudra couper. Décision réversible, à trancher à l'oreille.
+
+---
+
+## Session du 26/08/2026 (fin) — R58 : un code postal français est DEUX nombres
+
+Premier appel où **l'agent parle en premier** (réglage Vapi corrigé côté Geoffrey). Le
+déroulé est propre de bout en bout : ouverture avec l'annonce IA, consigne de sécurité,
+question du secteur, `91 260` lu du premier coup, **relecture avant refus** (R54 en
+production), refus verbatim sans commune inventée. Aucun garde-fou déclenché.
+
+Une observation, et elle est plus grosse qu'elle n'en a l'air. Nous émettions
+« J'ai noté le 91 260 » — avec une espace — et la synthèse a prononcé
+**« quatre-vingt-onze MILLE deux cent soixante »**. Elle joint les deux groupes en un seul
+nombre ; une espace ne lui suffit pas.
+
+Geoffrey l'a formulé en l'écrivant, et c'est la clé de tout ce qu'on a corrigé aujourd'hui :
+**on dit le numéro du département, puis le reste.** « Quatre-vingt-onze, deux cent
+soixante. » Jamais en un seul nombre.
+
+D'où la symétrie qu'on n'avait pas vue. R43 (« 91 260 »), R47
+(« quatre-vingt-onze, deux cent soixante »), R49 (« 91/260 ») : trois correctifs, trois
+symptômes du même fait. **Un code postal français est deux nombres, pas un.** Le STT le rend
+en deux morceaux parce qu'il est prononcé en deux morceaux — et nous, on l'écrivait en un
+seul, donc la synthèse le lisait en un seul. Les deux bouts de la chaîne butaient sur la
+même chose, vue d'abord à l'entrée puis à la sortie.
+
+Virgule entre les groupes désormais, et le tiret avant la question de confirmation (un point
+après des chiffres est lu comme une fin d'énoncé, R46).
+
+⚠️ Ce que le test ne prouve pas : que la synthèse prononce bien deux groupes. Il vérifie ce
+qu'on ÉMET, seule chose qui nous appartienne. Le reste demande une oreille.
+
+**Reste à régler côté plateforme** : l'appelant a parlé par-dessus l'ouverture (« Vit dans la
+salle de bain. J'ai une fuite. » — deux tours mêlés), faute de `stopSpeakingPlan`.
 
 ---
 

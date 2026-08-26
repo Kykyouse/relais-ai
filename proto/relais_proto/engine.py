@@ -813,7 +813,12 @@ class Conversation:
                 # et non d'un point (R46 : un point après des chiffres est lu comme une
                 # fin d'énoncé par la synthèse vocale).
                 question = (f"Juste pour être sûr — vous êtes bien à {nom} ?" if nom
-                            else f"J'ai noté le {cp[:2]} {cp[2:]}, c'est bien ça ?")
+                            # VIRGULE entre les deux groupes, pas une espace : la
+                            # synthèse vocale joint « 91 260 » en « quatre-vingt-onze
+                            # MILLE deux cent soixante » (entendu le 26/08). Un code
+                            # postal francais est DEUX nombres — le departement, puis le
+                            # reste — et c'est ainsi qu'on le prononce. R58.
+                            else f"J'ai noté le {cp[:2]}, {cp[2:]} — c'est bien ça ?")
                 return self._say(question, verbatim=True)  # chiffres jamais réécrits
             return self._hors_zone()
         self.state = State.S3_QUALIFIER

@@ -3571,6 +3571,84 @@ def check_creneaux_verbatim() -> bool:
     return True
 
 
+def check_code_postal_en_deux_groupes() -> bool:
+    """R58 : un code postal relu à l'appelant est écrit en DEUX groupes, comme on le dit.
+
+    Observé le 26/08, premier appel où l'agent parle en premier. Nous émettions
+    « J'ai noté le 91 260, c'est bien ça ? » — avec une espace — et la synthèse vocale a
+    prononcé « quatre-vingt-onze **mille** deux cent soixante ». Elle a joint les deux
+    groupes en un seul nombre : une espace ne lui suffit pas à les séparer.
+
+    Ce n'est pas une coquette. Geoffrey l'a formulé en l'écrivant, et c'est la clé de tout
+    ce qu'on a corrigé aujourd'hui autour des codes postaux : **on dit le numéro du
+    département, puis le reste.** « Quatre-vingt-onze, deux cent soixante. » Jamais
+    « quatre-vingt-onze mille deux cent soixante ».
+
+    D'où la symétrie qu'on n'avait pas vue : si NOUS écrivons un code postal en un seul
+    bloc, la synthèse le lit comme un nombre unique — et réciproquement, le STT n'a aucune
+    raison de rendre en deux morceaux ce qui se prononce en deux morceaux, si l'on ne
+    l'écrit pas ainsi. R43 (« 91 260 »), R47 (« quatre-vingt-onze, deux cent soixante »),
+    R49 (« 91/260 ») étaient tous des symptômes du même fait : **un code postal français
+    est deux nombres, pas un.**
+
+    ⚠️ Ce que ce test NE prouve pas : que la synthèse vocale prononce bien deux groupes.
+    Il vérifie ce que nous ÉMETTONS, seule chose qui nous appartienne. Le reste demande une
+    oreille — comme pour R46.
+    """
+    import re as _re
+
+    from relais_proto.engine import Conversation
+
+    convo = Conversation(CFG, MockLLM(), CalendarStub(CFG, now=LUNDI_9H))
+    convo.open()
+    convo.process("j'ai une fuite d'eau dans la salle de bain")
+    relu = convo.process("91 260")
+
+    # (a) les deux groupes sont séparés par une VIRGULE, pas par une espace : l'espace
+    # laisse la synthèse composer un seul nombre.
+    if "91, 260" not in relu:
+        print(f"   le code postal n'est pas relu en deux groupes : « {relu} »")
+        return False
+    if "91 260" in relu or "91260" in relu:
+        print(f"   le code postal apparaît encore en un seul bloc : « {relu} »")
+        return False
+
+    # (b) et toujours aucun point juste après des chiffres (R46) : la synthèse y entend
+    # une fin d'énoncé, et la question de confirmation arriverait détachée.
+    if _re.search(r"\d\s*\.", relu):
+        print(f"   un point suit immédiatement des chiffres : « {relu} »")
+        return False
+    if "c'est bien ça" not in relu.lower():
+        print(f"   la question de confirmation a disparu : « {relu} »")
+        return False
+
+    # (c) le découpage est bien 2+3, celui de la prononciation — et il vaut pour tout
+    # code postal, pas seulement celui de l'appel du jour
+    for cp, attendu in (("94130", "94, 130"), ("75001", "75, 001"),
+                        ("91260", "91, 260")):
+        convo2 = Conversation(CFG, MockLLM(), CalendarStub(CFG, now=LUNDI_9H))
+        convo2.open()
+        convo2.process("j'ai une fuite d'eau dans la salle de bain")
+        dit = convo2.process(f"je suis au {cp}")
+        if convo2.flags["zone"] == "hors_zone" or convo2.slots["code_postal"] == cp:
+            # en zone : pas de relecture, on avance — c'est le cas de 94130
+            if attendu in dit or "c'est bien ça" in dit.lower():
+                if attendu not in dit:
+                    print(f"   {cp} relu autrement qu'en deux groupes : « {dit} »")
+                    return False
+
+    # (d) une commune connue reste NOMMÉE : la relecture par chiffres est le repli, pas
+    # la règle (R49). Nommer une ville est plus clair que d'épeler cinq chiffres.
+    convo3 = Conversation(CFG, MockLLM(), CalendarStub(CFG, now=LUNDI_9H))
+    convo3.open()
+    convo3.process("j'ai une fuite d'eau dans la salle de bain")
+    dit = convo3.process("je suis à Juvisy-sur-Orge")
+    if "Juvisy" not in dit:
+        print(f"   une commune connue n'est plus nommée dans la relecture : « {dit} »")
+        return False
+    return True
+
+
 def check_paire_commune_cp_coherente() -> bool:
     """R57 : la commune doit être COHÉRENTE avec le code postal, et les phrases qui
     énoncent un fait ne passent plus par le formuleur.
@@ -3656,7 +3734,8 @@ def check_paire_commune_cp_coherente() -> bool:
         print(f"   une commune incohérente est prononcée : « {dit} »")
         return False
     # ...et c'est bien les CHIFFRES qui sont relus, faute de nom sûr
-    if "91 260" not in dit:
+    # forme exacte : R58
+    if "91" not in dit or "260" not in dit:
         print(f"   le code postal n'est pas relu : « {dit} »")
         return False
 
@@ -3980,7 +4059,9 @@ def check_correction_apres_refus() -> bool:
     if convo.state.value in ("S11", "FIN"):
         print(f"   l'appel est refusé sans relecture : « {relecture} »")
         return False
-    if "91 260" not in relecture and "91260" not in relecture:
+    # la FORME exacte de la relecture appartient à R58 (deux groupes, virgule) ; ici on
+    # vérifie seulement que le secteur est bien redit
+    if "91" not in relecture or "260" not in relecture:
         print(f"   le secteur n'est pas relu à l'appelant : « {relecture} »")
         return False
     # les chiffres sont prononcés en groupes, et aucun point ne les suit (R46)
@@ -6332,6 +6413,14 @@ def run() -> int:
     if check_paire_commune_cp_coherente():
         print("   → une commune incohérente avec le code postal est écartée, et "
               "refus comme re-dictée du numéro sont prononcés verbatim : ✅ PASS")
+    else:
+        print("   → ❌ FAIL")
+        echecs += 1
+
+    print(f"\n──── R58_code_postal_deux_groupes ────")
+    if check_code_postal_en_deux_groupes():
+        print("   → un code postal relu est écrit en deux groupes, comme on le "
+              "prononce — le département, puis le reste : ✅ PASS")
     else:
         print("   → ❌ FAIL")
         echecs += 1
