@@ -3571,6 +3571,145 @@ def check_creneaux_verbatim() -> bool:
     return True
 
 
+def check_rejeu_vs_transcription_qui_se_precise() -> bool:
+    """R59 : un tour dont la TRANSCRIPTION se précise n'est pas un rejeu.
+
+    L'appel du 26/08 le plus coûteux de la série. L'appelant donne sa commune dans sa
+    première phrase — Nogent-sur-Marne, **en zone** — puis s'entend redemander trois fois
+    où il habite :
+
+        User  : Je suis dans la salle de bain. J'habite sur Nogent-sur-Marne.
+        …
+        Agent : Êtes sur quelle commune
+        User  : Déjà dit.
+        Agent : J'ai besoin de votre commune ou code postal…
+        User  : Bonjour sur le membre.                       (STT : Nogent-sur-Marne)
+        Agent : Je n'arrive pas à situer votre commune…
+        User  : Vis à nos gens sur moi.                      (STT : Nogent-sur-Marne)
+        Agent : Je transmets tout ça à Julien…
+
+    « Déjà dit. » Il avait raison. Un client en zone, avec une fuite, perdu — la catégorie
+    d'échec la plus chère du produit.
+
+    **Et ce n'est pas la résolution qui a fauté** : rejouée sur l'arbre courant, cette
+    phrase donne `Nogent-sur-marne / 94130` du premier coup, avec un extracteur vide, avec
+    une commune sans code postal, ou avec une paire incohérente. Le texte que le moteur a
+    reçu n'était donc pas celui que la plateforme affiche.
+
+    **Le suspect est le garde de rejeu, que j'ai écrit à l'étape 0.** Il compare le NOMBRE
+    de messages `user` à ce que notre transcript contient déjà. Or une transcription qui se
+    précise pour le MÊME tour — l'appelant a parlé par-dessus l'accueil, le texte arrive en
+    deux temps — porte le même nombre de messages. Le garde la prend pour une
+    retransmission et la jette. Ce qui a été jeté ici, c'est la commune.
+
+    Le barge-in de l'étape 0 (quatre requêtes en sept secondes) était bien un rejeu : texte
+    IDENTIQUE. Une transcription qui se précise, elle, s'allonge. C'est ce qui les distingue,
+    et le garde ne regardait pas.
+
+    ⚠️ Honnêteté : sans la charge utile de cet appel, je ne peux pas PROUVER que c'est la
+    cause. Ce que ce test prouve, c'est que le garde perdait bel et bien un tour dans ce
+    cas-là — indépendamment de savoir si c'est ce qui est arrivé au client.
+    """
+    from relais_proto import vapi
+
+    def corps(textes):
+        messages = [{"role": "system", "content": "peu importe"}]
+        for t in textes:
+            messages.append({"role": "user", "content": t})
+        return {"messages": messages}
+
+    # (a) un vrai rejeu : même nombre, texte IDENTIQUE (le barge-in de l'étape 0)
+    if not vapi.est_un_rejeu(corps(["allo", "j'ai une fuite"]), 2, "j'ai une fuite"):
+        print("   un vrai rejeu n'est plus reconnu : le contrôleur va avancer sans que "
+              "personne n'ait parlé")
+        return False
+
+    # (b) une transcription qui SE PRÉCISE : même nombre, texte plus long. Ce n'est pas un
+    # rejeu — c'est le tour de l'appelant, enfin complet.
+    if vapi.est_un_rejeu(corps(["Je suis dans la salle de bain. J'habite sur "
+                                "Nogent-sur-Marne."]), 1,
+                         "Je suis dans la salle de bain."):
+        print("   une transcription qui se précise est prise pour un rejeu : le tour est "
+              "perdu")
+        return False
+
+    # (c) un vrai NOUVEAU tour reste un nouveau tour
+    if vapi.est_un_rejeu(corps(["allo", "j'ai une fuite"]), 1, "allo"):
+        print("   un nouveau tour est pris pour un rejeu")
+        return False
+
+    # (d) sans mémoire du texte précédent, on retombe sur le comptage seul — le
+    # comportement d'avant, qui reste correct pour un rejeu franc
+    if not vapi.est_un_rejeu(corps(["allo"]), 1):
+        print("   sans texte de référence, le comptage ne fonctionne plus")
+        return False
+    # ...et un texte PLUS COURT n'est pas une précision : on ne rejoue pas sur une
+    # transcription qui s'appauvrit (ce serait une régression du STT, pas un tour neuf)
+    if not vapi.est_un_rejeu(corps(["Je suis dans la salle de bain."]), 1,
+                             "Je suis dans la salle de bain. J'habite sur "
+                             "Nogent-sur-Marne."):
+        print("   une transcription plus COURTE est traitée comme un tour neuf")
+        return False
+
+    # (e) DE BOUT EN BOUT, par l'adaptateur : la commune du premier tour survit
+    try:
+        from fastapi.testclient import TestClient
+    except ImportError:
+        print("   fastapi/httpx absents : pip install -r requirements.txt")
+        return False
+
+    import json as _json
+
+    from relais_proto.api import creer_app
+    from relais_proto.registre import Artisan, Registre, empreinte as emp_token
+
+    SECRET = "secret-voix"
+    registre = Registre([Artisan("art-dupont", "+33189701234", emp_token("tok"), CFG)],
+                        emp_token(SECRET))
+    depot = DepotMemoire()
+    app = creer_app(depot, registre, MockLLM, lambda: LUNDI_9H,
+                    base_url="https://relais.test", cookie_secure=False,
+                    voix_artisan_defaut="art-dupont")
+    APPEL = "01a03acb-34da-7ee6-aceb-3fa46a379efe"
+    AUTH = {"Authorization": f"Bearer {SECRET}"}
+
+    def charge(tours):
+        messages = [{"role": "system", "content": "You are Riley."}]
+        for role, texte in tours:
+            messages.append({"role": role, "content": texte})
+        return {"model": "gpt-4", "messages": messages,
+                "call": {"id": APPEL, "type": "webCall"}}
+
+    with TestClient(app) as c:
+        c.post("/voix/vapi/chat/completions", json=charge([]), headers=AUTH)
+        accueil = depot.appel(APPEL).etat_conversation["transcript"][0][1]
+        # l'appelant parle par-dessus l'accueil : le texte arrive tronqué, puis complet
+        c.post("/voix/vapi/chat/completions",
+               json=charge([("assistant", accueil),
+                            ("user", "Je suis dans la salle de bain.")]), headers=AUTH)
+        c.post("/voix/vapi/chat/completions",
+               json=charge([("assistant", accueil),
+                            ("user", "Je suis dans la salle de bain. J'habite sur "
+                                     "Nogent-sur-Marne.")]), headers=AUTH)
+        etat = depot.appel(APPEL).etat_conversation
+        if etat["slots"].get("code_postal") != "94130":
+            print(f"   la commune du premier tour est perdue : "
+                  f"{etat['slots'].get('commune')!r} / "
+                  f"{etat['slots'].get('code_postal')!r}")
+            return False
+
+        # ...et un vrai rejeu, lui, ne fait toujours pas avancer le contrôleur
+        avant = _json.dumps(depot.appel(APPEL).etat_conversation, sort_keys=True)
+        c.post("/voix/vapi/chat/completions",
+               json=charge([("assistant", accueil),
+                            ("user", "Je suis dans la salle de bain. J'habite sur "
+                                     "Nogent-sur-Marne.")]), headers=AUTH)
+        if _json.dumps(depot.appel(APPEL).etat_conversation, sort_keys=True) != avant:
+            print("   un rejeu franc fait de nouveau avancer le contrôleur")
+            return False
+    return True
+
+
 def check_code_postal_en_deux_groupes() -> bool:
     """R58 : un code postal relu à l'appelant est écrit en DEUX groupes, comme on le dit.
 
@@ -5537,9 +5676,19 @@ def check_adaptateur_vapi() -> bool:
         if dit(r) == r2:
             print("   après les rejeux, un vrai tour reste bloqué sur l'ancienne réponse")
             return False
-        if sum(1 for r_, _ in depot.appel(APPEL).etat_conversation["transcript"]
+        etat_apres = depot.appel(APPEL).etat_conversation
+        if sum(1 for r_, _ in etat_apres["transcript"]
                if r_ == "client") != tours_avant + 1:
             print("   le vrai tour suivant n'a pas été traité")
+            return False
+        # C'est bien le DERNIER tour de l'appelant qui a été traité, et pas un ancien.
+        # Vérifier que « quelque chose » a avancé ne suffisait pas : depuis R59, traiter
+        # le PREMIER message de l'historique fait aussi avancer le compteur et change la
+        # réponse, et la mutation survivait.
+        dernier_traite = [t for r_, t in etat_apres["transcript"] if r_ == "client"][-1]
+        if dernier_traite != "Dupont, 06 12 34 56 78":
+            print(f"   ce n'est pas le dernier tour qui a été traité mais "
+                  f"{dernier_traite!r}")
             return False
 
         # (e) DEUX APPELS ne se mélangent pas : l'identifiant est la seule clé.
@@ -6421,6 +6570,14 @@ def run() -> int:
     if check_code_postal_en_deux_groupes():
         print("   → un code postal relu est écrit en deux groupes, comme on le "
               "prononce — le département, puis le reste : ✅ PASS")
+    else:
+        print("   → ❌ FAIL")
+        echecs += 1
+
+    print(f"\n──── R59_rejeu_vs_transcription ────")
+    if check_rejeu_vs_transcription_qui_se_precise():
+        print("   → une transcription qui se précise n'est plus prise pour un "
+              "rejeu, et un rejeu franc ne fait toujours rien avancer : ✅ PASS")
     else:
         print("   → ❌ FAIL")
         echecs += 1

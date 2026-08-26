@@ -356,7 +356,12 @@ def creer_app(depot, registre: Registre, fabrique_llm, horloge=None,
         # tours DÉJÀ traités = ce que notre transcript contient, pas ce que la plateforme
         # raconte. C'est notre état qui fait foi.
         traites = sum(1 for r, _ in convo.transcript if r == "client")
-        if _vapi.est_un_rejeu(corps, traites):
+        # Le DERNIER texte réellement traité, en plus du compte : une transcription qui se
+        # précise porte le même nombre de messages mais un texte plus long (R59). Le
+        # comptage seul a coûté un client en zone le 26/08.
+        dernier = next((txt for r, txt in reversed(convo.transcript) if r == "client"),
+                       None)
+        if _vapi.est_un_rejeu(corps, traites, dernier):
             # Retransmission (mesurée : 4 requêtes en 7 s pendant un barge-in). La traiter
             # ferait avancer le contrôleur sans que personne n'ait parlé. On redit la
             # dernière réplique — c'est aussi ce qu'il faut à l'oreille quand l'appelant a

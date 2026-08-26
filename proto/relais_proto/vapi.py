@@ -93,18 +93,38 @@ def interrompu(corps: dict) -> bool:
     return bool(meta.get("assistantTurnInterrupted")) if isinstance(meta, dict) else False
 
 
-def est_un_rejeu(corps: dict, tours_traites: int) -> bool:
+def est_un_rejeu(corps: dict, tours_traites: int,
+                 dernier_traite: str | None = None) -> bool:
     """Vrai si cette requête redit un tour que nous avons DÉJÀ traité.
 
     Vapi renvoyant tout l'historique, le nombre de messages `user` est un numéro de
     séquence : il augmente d'une unité par vraie prise de parole. S'il n'a pas dépassé ce
-    que notre transcript contient déjà, c'est une retransmission — mesuré le 25/08, quatre
-    requêtes identiques en sept secondes pendant un barge-in.
+    que notre transcript contient déjà, c'est *a priori* une retransmission — mesuré le
+    25/08, quatre requêtes identiques en sept secondes pendant un barge-in.
 
-    Traiter un rejeu ferait avancer le contrôleur sans que personne n'ait parlé. On rend
-    donc la réponse précédente, à l'identique.
+    ⚠️ MAIS LE COMPTAGE NE SUFFIT PAS, et ça a coûté un client en zone le 26/08.
+
+    Quand l'appelant parle par-dessus l'accueil, la transcription de son tour arrive en
+    DEUX temps : d'abord tronquée, puis complète. Les deux requêtes portent le même nombre
+    de messages `user` — le comptage seul les confond, et la seconde était jetée. Ce qui a
+    été jeté ce jour-là, c'est « J'habite sur Nogent-sur-Marne » : le client s'est entendu
+    redemander sa commune trois fois, a répondu « Déjà dit », et l'appel s'est terminé sans
+    RDV alors qu'il était en zone.
+
+    Ce qui distingue les deux cas : un rejeu porte un texte IDENTIQUE, une transcription
+    qui se précise s'ALLONGE. On compare donc aussi le dernier texte à celui qu'on a
+    réellement traité.
+
+    Sans `dernier_traite`, le comportement d'avant : le comptage seul.
     """
-    return len(messages_utilisateur(corps)) <= tours_traites
+    textes = messages_utilisateur(corps)
+    if len(textes) > tours_traites:
+        return False
+    if dernier_traite is not None and textes \
+            and len(textes[-1].strip()) > len(dernier_traite.strip()):
+        # même tour, transcription plus complète : à traiter, pas à jeter
+        return False
+    return True
 
 
 def artisan_de_l_appel(corps: dict, registre, artisan_par_defaut: str | None):

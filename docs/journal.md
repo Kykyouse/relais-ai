@@ -22,7 +22,7 @@ point d'entrée du produit. Plus rien d'autre n'est bloqué côté code.
 
 ```bash
 cd proto
-python run_scenario.py                              # 62 tests, ~3 s, sans clé ni base
+python run_scenario.py                              # 63 tests, ~3 s, sans clé ni base
 python semer_artisans.py [--ecrire]                 # amorce la table `artisan`
 python run_depot_pg.py [--migrer]                   # contrat du port contre Supabase
 uvicorn serveur:app --port 8000                     # API HTTP
@@ -77,6 +77,7 @@ python run_llm_eval.py [--mock] [--n 3]             # éval appelant-simulé
 | Question du secteur verbatim, relance par les chiffres (R56) | ✅ | mock, *idem* |
 | Paire commune/CP cohérente, refus verbatim (R57) | ✅ | mock, mutations 5/5 |
 | Code postal relu en DEUX groupes (R58) | ✅ | mock, mutations 5/5 |
+| Transcription qui se précise ≠ rejeu (R59) | ✅ | mock, mutations 5/5 — **un lead en zone perdu le 26/08** |
 | Identifiant d'appel imposé au dépôt (port) | ✅ | **contrat rejoué sur Supabase** |
 
 ## Ce qui est encore un double (et non un manque caché)
@@ -434,6 +435,66 @@ Trois mesures d'oreille, consignées comme données d'arbitrage :
    courtes, mais **à activer** (`stopSpeakingPlan`) : les tours verbatim longs
    (récapitulatif de RDV, consignes de sécurité) sont exactement ceux qu'un appelant
    pressé voudra couper. Décision réversible, à trancher à l'oreille.
+
+---
+
+## Session du 26/08/2026 (fin) — R59 : le garde de rejeu a jeté la commune d'un client
+
+L'appel le plus coûteux de la série. L'appelant donne sa commune dans sa PREMIÈRE phrase —
+Nogent-sur-Marne, **en zone** — et s'entend redemander trois fois où il habite :
+
+    User  : Je suis dans la salle de bain. J'habite sur Nogent-sur-Marne.
+    …
+    Agent : Êtes sur quelle commune
+    User  : Déjà dit.
+    Agent : J'ai besoin de votre commune ou code postal…
+    User  : Bonjour sur le membre.                      (STT : Nogent-sur-Marne)
+    Agent : Je n'arrive pas à situer votre commune…
+    User  : Vis à nos gens sur moi.                     (STT : Nogent-sur-Marne)
+    Agent : Je transmets tout ça à Julien…
+
+« Déjà dit. » Il avait raison. **Un client en zone, avec une fuite, perdu** — la catégorie
+d'échec la plus chère du produit, et la première fois qu'on la voit.
+
+### La résolution n'a pas fauté
+
+Rejouée sur l'arbre courant, cette phrase donne `Nogent-sur-marne / 94130` du premier coup :
+avec un extracteur vide, avec une commune sans code postal, avec une paire incohérente. Les
+trois variantes plausibles du modèle réel aboutissent. **Le texte que le moteur a reçu
+n'était donc pas celui que la plateforme affiche.**
+
+### Le coupable est un garde que j'ai écrit à l'étape 0
+
+`est_un_rejeu` comparait le NOMBRE de messages `user` à ce que notre transcript contient
+déjà. Quand l'appelant parle par-dessus l'accueil — ce qui est arrivé aux deux derniers
+appels, faute de `stopSpeakingPlan` — la transcription de son tour arrive en **deux temps** :
+d'abord tronquée, puis complète. Les deux requêtes portent le même nombre de messages. Le
+garde prend la seconde pour une retransmission et la jette.
+
+Ce qui a été jeté ici, c'est « J'habite sur Nogent-sur-Marne ».
+
+Le barge-in de l'étape 0 (quatre requêtes en sept secondes) était bien un rejeu : texte
+**identique**. Une transcription qui se précise, elle, **s'allonge**. C'est ce qui les
+distingue, et le garde ne regardait pas.
+
+⚠️ Sans la charge utile de cet appel, je ne peux pas PROUVER que c'est la cause. Ce que le
+test prouve, c'est que le garde perdait bel et bien un tour dans ce cas-là.
+
+### Ce que cet épisode dit de l'étape 0
+
+`est_un_rejeu` est né d'une mesure réelle — quatre requêtes identiques pendant un barge-in —
+et il était juste pour ce cas-là. Il a échoué sur le cas voisin, que la mesure n'avait pas
+montré. **Un correctif taillé sur une seule observation couvre une seule observation.** La
+sonde a bien fait son travail ; c'est mon inférence qui a généralisé trop vite.
+
+### Effet en cascade sur les bancs de mutation
+
+Changer la signature a fait tomber trois ancres de R41, et une mutation y a **resurvécu** :
+« traiter le PREMIER tour au lieu du dernier ». R41 vérifiait qu'un tour avait avancé, pas
+LEQUEL — et depuis R59, traiter un ancien message fait aussi avancer le compteur. R41 exige
+désormais que le dernier tour traité soit bien le dernier envoyé. 14/14 rétabli.
+
+Suite : **63 PASS**. Mutations 5/5 (R59), 14/14 (R41), contrat Postgres rejoué.
 
 ---
 
