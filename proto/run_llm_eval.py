@@ -56,9 +56,11 @@ PERSONAS = {
         "role": ("M. Lefèvre, calme et réfléchi. Tu veux un devis pour remplacer ta chaudière "
                  "fioul par une pompe à chaleur. Tu habites Champigny-sur-Marne (94500). "
                  "Échéance : avant l'hiver."),
-        "cache": "Tu ne donnes ton code postal que si on te le demande explicitement.",
+        "cache": "Tu ne donnes ton code postal que si on te le demande explicitement. "
+                 "Si l'agent te relit ton secteur, confirme.",
         "attendu": {"score": 0, "categorie": "hors_zone", "rdv": False},
-        "script": ["Je voudrais un devis pour une pompe à chaleur", "Champigny, 94500"],
+        "script": ["Je voudrais un devis pour une pompe à chaleur", "Champigny, 94500",
+                   "Oui c'est bien ça"],
     },
     "T03_entretien_samedi_prix": {
         "role": ("M. Diallo, organisé. Tu veux l'entretien annuel de ta chaudière à Nogent "
@@ -249,14 +251,16 @@ PERSONAS = {
                  "quatre-vingt Non, c'est 160 », puis au tour suivant « pardon, je suis "
                  "sur le quatre-vingt-onze deux cent soixante »."),
         "cache": "Tu habites vraiment dans le 91260. Le « 160 » était une erreur de ta "
-                 "part, ne le redis plus après t'être corrigé.",
+                 "part, ne le redis plus après t'être corrigé. Si l'agent te relit ton "
+                 "secteur, confirme.",
         # 91260 = Juvisy, hors zone : le refus est la BONNE issue. Ce qu'on vérifie, c'est
         # qu'il tombe sur le vrai code postal et non sur le fragment « 160 » — le 26/08,
         # l'agent a raccroché sur trois chiffres.
         "attendu": {"categorie": "hors_zone", "rdv": False, "cp": "91260"},
         "script": ["J'ai une fuite dans la salle de bain",
                    "je suis sur le quatre-vingt Non, c'est 160",
-                   "pardon, je suis sur le quatre-vingt-onze deux cent soixante"],
+                   "pardon, je suis sur le quatre-vingt-onze deux cent soixante",
+                   "Oui c'est bien ça"],
     },
     "T17_commune_deformee": {
         "role": ("M. Petitjean. Fuite dans la salle de bain. Tu habites Juvisy-sur-Orge, "
@@ -264,13 +268,14 @@ PERSONAS = {
                  "Orange » puis « Zivier-sur-Orge » — c'est ce que l'agent entend. "
                  "Quand on insiste, tu donnes ton code postal : 91260."),
         "cache": "Tu ne corriges jamais la prononciation de ta commune : redis-la "
-                 "toujours déformée.",
+                 "toujours déformée. Si l'agent te relit ton code postal, confirme.",
         # L'agent ne doit JAMAIS répéter un nom de commune qu'il n'a pas vérifié. Le
         # 26/08, il a dit « n'intervient pas sur Essonne » — un département.
         "attendu": {"categorie": "hors_zone", "rdv": False, "cp": "91260",
                     "texte_agent_absent": ["Zivier", "sur Orange", "sur Essonne"]},
         "script": ["J'ai une fuite dans la salle de bain",
-                   "je visite sur Orange", "Zivier-sur-Orge, le 91260"],
+                   "je visite sur Orange", "Zivier-sur-Orge, le 91260",
+                   "Oui c'est bien ça"],
     },
     "T18_premier_tour_incomprehensible": {
         "role": ("Mme Fournier. La transcription de ta première phrase est illisible : "

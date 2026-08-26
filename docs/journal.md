@@ -22,7 +22,7 @@ point d'entrée du produit. Plus rien d'autre n'est bloqué côté code.
 
 ```bash
 cd proto
-python run_scenario.py                              # 57 tests, ~3 s, sans clé ni base
+python run_scenario.py                              # 58 tests, ~3 s, sans clé ni base
 python semer_artisans.py [--ecrire]                 # amorce la table `artisan`
 python run_depot_pg.py [--migrer]                   # contrat du port contre Supabase
 uvicorn serveur:app --port 8000                     # API HTTP
@@ -72,6 +72,7 @@ python run_llm_eval.py [--mock] [--n 3]             # éval appelant-simulé
 | Vouvoiement, jamais de tutoiement (R51) | ✅ | mock, *idem* |
 | Aucune salutation en conversation (R52) | ✅ | mock, mutations 7/7 |
 | Une seule question par réplique (R53) | ✅ | mock, *idem* — **contrôle AST de toutes les instructions** |
+| Relecture du secteur avant refus (R54) | ✅ | mock, mutations 8/8 |
 | Identifiant d'appel imposé au dépôt (port) | ✅ | **contrat rejoué sur Supabase** |
 
 ## Ce qui est encore un double (et non un manque caché)
@@ -99,6 +100,10 @@ python run_llm_eval.py [--mock] [--n 3]             # éval appelant-simulé
 
 - **Le LLM ne décide jamais**, l'artisan valide toujours (pas d'auto-validation en V1),
   annonce IA en ouverture et téléphone confirmé avant tout RDV.
+- **Une décision terminale ne se prend jamais sur une donnée non relue** (R54, 26/08). Le
+  secteur est relu à l'appelant avant tout refus hors zone — une fois, et une seule. La
+  règle valait pour la commune glanée au passage et exemptait la donnée DEMANDÉE ; six
+  appels vocaux ont montré que demander ne fiabilise rien quand la transcription se trompe.
 - **Délais de validation : 24 h / 2 h en heures réelles**, réglables par artisan.
 - **L'échéance fait foi, pas le passage du worker.**
 - **Un horodatage est un INSTANT en UTC ; une heure de config est une heure de PENDULE**
@@ -425,6 +430,72 @@ Trois mesures d'oreille, consignées comme données d'arbitrage :
    courtes, mais **à activer** (`stopSpeakingPlan`) : les tours verbatim longs
    (récapitulatif de RDV, consignes de sécurité) sont exactement ceux qu'un appelant
    pressé voudra couper. Décision réversible, à trancher à l'oreille.
+
+---
+
+## Session du 26/08/2026 (suite) — R54 : rendre la correction possible avant le refus
+
+Question de Geoffrey avant de lancer l'éval : quand quelqu'un essaie de se corriger et que
+l'agent est déjà passé à l'étape suivante, est-ce vu et corrigé, ou laissé tel quel par
+choix ? **Ni l'un ni l'autre — ça n'avait jamais été examiné.**
+
+Deux gels coexistaient, et un seul était voulu. Le gel **après réservation** (`hold`) est un
+choix écrit et commenté : créneau bloqué, plus rien ne bouge. Le gel **après clôture**,
+lui, était un effet de bord — et R44 l'a *durci* la veille en rendant la phrase de fin
+verbatim pour accrocher `endCallPhrases`. La boucle a été renforcée sans qu'on se demande
+si elle devait exister.
+
+Deux appels sur six ont buté dessus. Et pire que l'ignorer : `process` rendait la phrase de
+clôture **avant même d'enregistrer** ce que l'appelant avait dit. La correction ne figurait
+donc dans AUCUN transcript — Julien ne pouvait pas voir que son client avait insisté. Le
+seul défaut de la journée silencieux des deux côtés : ni entendu, ni tracé.
+
+### Ce qui change
+
+1. **Le secteur est relu avant tout refus.** « J'ai noté le 91 260, c'est bien ça ? », ou
+   le nom de la commune quand notre table la connaît (R49). Une fois, et une seule. Cela
+   place la correction là où la machinerie fonctionne déjà, au lieu d'espérer la rattraper
+   après coup.
+2. **Ce qui est dit après la clôture est conservé** dans le transcript. On ne relance pas
+   la conversation pour autant — dans le chemin API le lead est déjà persisté et
+   `cloturer_appel` refuse un second passage — mais la trace permet un rappel humain.
+
+Coût assumé : un tour de plus sur chaque appel hors zone. Bénéfice : l'appelant mal
+transcrit a un moyen de revenir, et il n'en avait aucun.
+
+### Une décision renversée, et il faut le dire
+
+R30 contenait le point inverse, explicitement : *« une commune donnée EN RÉPONSE à la
+question ne se fait pas reconfirmer »*, au motif qu'une donnée demandée est fiable et
+qu'une question de plus est une question de trop. C'était défendable à l'écrit. Six appels
+vocaux l'ont invalidé : « Zivier-sur-Orge » pour Juvisy, « 160 » pour un code postal,
+« 91/260 » illisible trois fois. **Demander ne fiabilise rien quand la transcription se
+trompe.** Le test porte désormais la trace du renversement plutôt que d'être réécrit en
+silence.
+
+### Sept tests sont tombés, et ils avaient raison
+
+Premier jet : la relecture VIDAIT les slots, comme le faisait le chemin de la commune
+glanée. Sept tests l'ont relevé d'un coup en attendant d'y trouver le code postal. Ils
+avaient raison — un état où l'on a posé une question SUR un code postal sans plus l'avoir
+en mémoire est incohérent, et si l'appelant raccroche pendant la relecture, le lead ne dit
+plus rien. Le secteur reste donc dans les slots ; ce que le vidage garantissait est assuré
+autrement (signal de correction dans `_resoudre_commune`, `code_postal` réécrivable tant
+qu'aucun créneau n'est bloqué).
+
+### Encore du code mort, quatrième fois
+
+`self.flags["zone"] = None` pendant la relecture : hérité du temps où les slots étaient
+vidés, et sans **aucun** effet observable une fois le vidage retiré — une correction vers
+un autre secteur hors zone est refusée une seule fois de toute façon, soit par la
+revalidation de `process`, soit par le bloc de `_s2`, jamais deux. Une mutation l'a montré.
+Retiré.
+
+Et un trou dans ma propre assertion : je vérifiais que la correction remplissait le slot et
+que l'appel n'était pas clos, sans vérifier qu'il **avançait**. Une mutation survivait en
+laissant l'agent redemander sa commune à quelqu'un qui venait de la donner.
+
+Mutations 8/8. Suite : **58 PASS**. Éval mock 19/19, contrat Postgres rejoué.
 
 ---
 

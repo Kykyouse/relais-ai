@@ -344,6 +344,18 @@ class Conversation:
     # ------------------------------------------------------------- tour
     def process(self, user_text: str) -> str:
         if self.state in (State.S11_CLOTURE, State.FIN):
+            # Ce que l'appelant dit APRÈS la clôture est conservé, même si le contrôleur
+            # n'en fait rien. Auparavant on rendait la phrase de fin avant même de
+            # l'enregistrer : la correction ne figurait donc dans AUCUN transcript, et
+            # Julien ne pouvait pas voir que son client avait insisté. C'était le seul
+            # défaut du 26/08 silencieux des deux côtés — ni entendu, ni tracé.
+            #
+            # On ne relance pas la conversation pour autant : dans le chemin API, le lead
+            # est déjà persisté à ce stade et `cloturer_appel` refuse un second passage.
+            # Rouvrir serait un autre objet. Ici, on garde la trace — c'est ce qui permet
+            # un rappel humain, et ça ne coûte rien.
+            if user_text.strip():
+                self.transcript.append(("client", user_text.strip()))
             # VERBATIM, et pour deux raisons dont la seconde est la vraie.
             #
             # 1. Une phrase de fin n'a rien à reformuler. La faire passer par le formuleur,
@@ -620,13 +632,20 @@ class Conversation:
         return "hors_zone"
 
     def _s2(self, ex: dict) -> str:
-        # Une confirmation de commune est en attente (cf. plus bas). Les slots ont été
-        # VIDÉS en posant la question, pour que la réponse soit relue sans entrave : si
-        # l'appelant corrige, `_resoudre_commune` a déjà fait son travail avant d'arriver
-        # ici, et le candidat n'a plus qu'à être oublié.
+        # Une confirmation de secteur est en attente (cf. plus bas). Le secteur RESTE
+        # dans les slots pendant ce temps : il était vidé, et sept tests l'ont relevé d'un
+        # coup en attendant de l'y trouver. Ils avaient raison — un état où l'on a posé une
+        # question SUR un code postal sans plus l'avoir en mémoire est incohérent, et si
+        # l'appelant raccroche pendant la relecture, le lead ne dit plus rien du tout.
+        #
+        # Ce qui rendait le vidage nécessaire — relire la réponse sans entrave — est
+        # assuré autrement : `_resoudre_commune` relit dès qu'il y a signal de correction,
+        # et un code postal corrigé passe par `_merge` (`code_postal` est réécrivable tant
+        # qu'aucun créneau n'est bloqué).
         candidat = self.flags.get("commune_a_confirmer")
         if candidat:
-            if self.slots["code_postal"] is not None:      # il a nommé une autre commune
+            # un secteur DIFFÉRENT du candidat : l'appelant s'est corrigé, on repart dessus
+            if self.slots["code_postal"] not in (None, candidat[1]):
                 self.flags["commune_a_confirmer"] = None
             elif ex.get("confirme") is True:
                 self.flags["commune_a_confirmer"] = None
@@ -671,13 +690,38 @@ class Conversation:
             # ne se prend pas sur une donnée que personne n'a vérifiée. Le 25/08, « il
             # faudrait que quelqu'un vienne » a coûté un lead de fuite en cours.
             # Une commune DEMANDÉE, elle, tranche immédiatement — pas de question de trop.
-            if self.flags.get("commune_incidente"):
+            # La règle valait pour la commune GLANÉE au passage, et exemptait la
+            # donnée DEMANDÉE — en supposant que demander suffit à la fiabiliser. Les six
+            # appels vocaux du 26/08 cassent cette hypothèse : « Zivier-sur-Orge » pour
+            # Juvisy, « 91/260 » illisible trois fois, « 160 » pour un code postal. Un
+            # secteur demandé n'est pas un secteur vérifié.
+            #
+            # On relit donc AVANT de refuser, dans tous les cas. Coût : un tour de plus
+            # sur chaque appel hors zone. Bénéfice : l'appelant mal transcrit a un moyen
+            # de revenir — et il n'en avait AUCUN, la clôture étant sourde.
+            #
+            # Deux appels sur six ont essayé de se corriger après le refus. Aucun n'a été
+            # entendu ; les deux étaient réellement hors zone, donc on a eu raison par
+            # accident.
+            if not self.flags.get("secteur_relu"):
+                self.flags["secteur_relu"] = True
                 self.flags["commune_a_confirmer"] = (self.slots["commune"], cp)
                 self.flags["commune_incidente"] = False
                 nom = self.slots["commune"]
-                self.slots["commune"] = self.slots["code_postal"] = None
-                self.flags["zone"] = None
-                return self._say(f"Juste pour être sûr — vous êtes bien à {nom} ?")
+                # Ici se trouvait `self.flags["zone"] = None`, hérité du temps où les
+                # slots étaient vidés. Une mutation a montré qu'il n'avait plus AUCUN effet
+                # observable : une correction vers un autre secteur hors zone est refusée
+                # une seule fois de toute façon — soit par la revalidation de `process`,
+                # soit par ce bloc-ci, jamais deux. Retiré : quatrième fois dans ce projet
+                # qu'une mutation survivante révèle du code mort, et du code mort qui a
+                # l'air d'une garantie est pire que pas de garantie du tout.
+                # Nommer la commune quand notre table la connaît (R49), sinon relire les
+                # CHIFFRES — groupés 2+3 comme on les prononce, et suivis d'une virgule
+                # et non d'un point (R46 : un point après des chiffres est lu comme une
+                # fin d'énoncé par la synthèse vocale).
+                question = (f"Juste pour être sûr — vous êtes bien à {nom} ?" if nom
+                            else f"J'ai noté le {cp[:2]} {cp[2:]}, c'est bien ça ?")
+                return self._say(question, verbatim=True)  # chiffres jamais réécrits
             return self._hors_zone()
         self.state = State.S3_QUALIFIER
         return self._s3({})

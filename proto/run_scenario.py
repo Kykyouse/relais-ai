@@ -46,9 +46,13 @@ SCENARIOS = {
         "attendu": {"score": 5, "categorie": "rdv_reserve", "rdv": True},
     },
     "T02_hors_zone": {
+        # Depuis R54, le secteur est RELU avant tout refus : « J'ai noté le 94 500,
+        # c'est bien ça ? ». Un tour de plus sur chaque appel hors zone, et le seul
+        # moyen pour un appelant mal transcrit de se reprendre.
         "lignes": [
             "Bonjour, je voudrais un devis pour une pompe à chaleur",
             "J'habite à Champigny, 94500",
+            "Oui c'est bien ça",
         ],
         "attendu": {"score": 0, "categorie": "hors_zone", "rdv": False},
     },
@@ -154,6 +158,7 @@ SCENARIOS = {
             "Bonjour, je voudrais un devis pour une pompe à chaleur",
             "Juvisy-sur-Orge",
             "91260",
+            "Oui",                       # relecture du secteur (R54)
         ],
         "attendu": {"score": 0, "categorie": "hors_zone", "rdv": False, "cp": "91260"},
     },
@@ -185,10 +190,13 @@ SCENARIOS = {
     },
     "R13_commune_idf_hors_zone_directe": {
         # table IdF complète : une commune francilienne hors zone est classée
-        # hors_zone immédiatement, sans demander le code postal (UX cas Juvisy).
+        # hors_zone SANS demander le code postal (UX cas Juvisy) — la table le connaît.
+        # Une relecture reste posée avant le refus (R54), mais ce n'est pas la même
+        # chose que redemander une information : on redit celle qu'on a comprise.
         "lignes": [
             "Bonjour, je voudrais un devis pour une pompe à chaleur",
             "J'habite à Juvisy-sur-Orge.",
+            "Oui",
         ],
         "attendu": {"score": 0, "categorie": "hors_zone", "rdv": False, "cp": "91260"},
     },
@@ -2753,12 +2761,24 @@ def check_commune_homonyme() -> bool:
         print(f"   la commune est redemandée après correction : « {reponse} »")
         return False
 
-    # (c) SYMÉTRIQUE, et c'est ce qui empêche le correctif de dégénérer en question de
-    # trop : une commune donnée EN RÉPONSE à la question ne se fait pas reconfirmer.
+    # (c) Une commune donnée EN RÉPONSE à la question mène bien au refus — après une
+    # relecture, et une seule.
+    #
+    # ⚠️ CE POINT A ÉTÉ RENVERSÉ le 26/08. Il exigeait auparavant qu'une commune DEMANDÉE
+    # ne soit PAS reconfirmée, au motif qu'une donnée demandée est une donnée fiable et
+    # qu'une question de plus est une question de trop. Six appels vocaux réels ont montré
+    # que demander ne fiabilise rien quand la transcription se trompe : « Zivier-sur-Orge »
+    # pour Juvisy, « 160 » pour un code postal, « 91/260 » illisible trois fois de suite.
+    # La relecture vaut donc désormais dans tous les cas (R54) — mais elle reste UNIQUE,
+    # et c'est ce que ce point continue de garantir.
     convo = conversation()
     convo.open()
     convo.process("J'ai une fuite sous l'évier")          # aucune commune ici
-    reponse = convo.process("Je suis à Champigny-sur-Marne")
+    relu = convo.process("Je suis à Champigny-sur-Marne")
+    if "champigny" not in relu.lower():
+        print(f"   le secteur n'est pas relu avant refus : « {relu} »")
+        return False
+    reponse = convo.process("Oui")
     if convo.flags["categorie"] != "hors_zone":
         print(f"   commune hors zone donnée explicitement : catégorie "
               f"{convo.flags['categorie']!r} — « {reponse} »")
@@ -3551,6 +3571,137 @@ def check_creneaux_verbatim() -> bool:
     return True
 
 
+def check_correction_apres_refus() -> bool:
+    """R54 : on relit le secteur avant de refuser, et ce qui est dit après la clôture est
+    conservé.
+
+    Question posée par Geoffrey le 26/08, après six appels réels : quand quelqu'un essaie
+    de se corriger, le modèle passe à l'étape suivante et ne revient pas — est-ce vu, ou
+    choisi ? **Ni l'un ni l'autre.** Deux gels coexistaient, et un seul était voulu.
+
+    Le gel **après réservation** (`hold`) est un choix, écrit et commenté : créneau bloqué,
+    plus rien ne bouge. Le gel **après clôture**, lui, était un effet de bord — et R44 l'a
+    *durci* la veille en rendant la phrase de fin verbatim pour accrocher `endCallPhrases`.
+    La boucle a été renforcée sans qu'on se demande si elle devait exister.
+
+    Deux appels sur six ont buté dessus :
+
+        Agent : « … n'intervient pas sur votre secteur. »
+        User  : « Pardon, je suis sur le quatre-vingt-onze deux cent soixante. »
+        Agent : « L'appel est terminé. »
+
+    Et pire que l'ignorer : `process` rendait la phrase de clôture **avant même
+    d'enregistrer** ce que l'appelant avait dit. La correction ne figurait donc dans aucun
+    transcript — Julien ne pouvait pas voir que son client avait insisté. Le seul défaut de
+    la journée silencieux des deux côtés.
+
+    Deux correctifs, dans cet ordre d'importance :
+
+    1. **Relire le secteur avant de refuser.** Cela place la correction là où la machinerie
+       fonctionne déjà, au lieu d'espérer la rattraper après coup. Ce n'est pas une règle
+       nouvelle : c'est celle du 25/08 pour la commune glanée au passage — *une décision
+       terminale et coûteuse ne se prend pas sur une donnée que personne n'a vérifiée*.
+       Elle exemptait les données DEMANDÉES, en supposant que demander suffit à fiabiliser.
+       La transcription casse cette hypothèse : « Zivier-sur-Orge », « 91/260 », « 160 ».
+    2. **Conserver les tours post-clôture.** Gratuit, aucun changement de comportement, et
+       le lead montre que le client a essayé.
+    """
+    from relais_proto.engine import Conversation
+
+    # (a) un refus hors zone est PRÉCÉDÉ d'une relecture, et le code postal est redit
+    convo = Conversation(CFG, MockLLM(), CalendarStub(CFG, now=LUNDI_9H))
+    convo.open()
+    convo.process("J'ai une fuite dans la salle de bain")
+    relecture = convo.process("je suis dans le 91260")
+    if convo.state.value in ("S11", "FIN"):
+        print(f"   l'appel est refusé sans relecture : « {relecture} »")
+        return False
+    if "91 260" not in relecture and "91260" not in relecture:
+        print(f"   le secteur n'est pas relu à l'appelant : « {relecture} »")
+        return False
+    # les chiffres sont prononcés en groupes, et aucun point ne les suit (R46)
+    import re as _re
+    if _re.search(r"\d\s*\.", relecture):
+        print(f"   un point suit immédiatement des chiffres : « {relecture} »")
+        return False
+
+    # (b) LA correction est entendue : l'appelant se reprend, et l'appel continue
+    suite = convo.process("pardon, je suis à Nogent-sur-Marne 94130")
+    if convo.slots["code_postal"] != "94130":
+        print(f"   la correction n'est pas entendue : "
+              f"{convo.slots['code_postal']!r} — « {suite} »")
+        return False
+    if convo.state.value in ("S11", "FIN"):
+        print(f"   l'appel est clos alors que l'appelant est EN ZONE : « {suite} »")
+        return False
+    # ...et la conversation AVANCE : on ne repose pas la question de la commune. Vérifier
+    # le slot et l'état ne suffisait pas — une mutation survivait en laissant l'agent
+    # redemander sa commune à quelqu'un qui venait de la donner.
+    if "quelle commune" in suite.lower() or "code postal" in suite.lower():
+        print(f"   la commune est redemandée après une correction valide : « {suite} »")
+        return False
+    if convo.state.value == "S2":
+        print(f"   l'appel reste bloqué en S2 après la correction : « {suite} »")
+        return False
+
+    # (c) et une confirmation referme normalement
+    convo2 = Conversation(CFG, MockLLM(), CalendarStub(CFG, now=LUNDI_9H))
+    convo2.open()
+    convo2.process("J'ai une fuite dans la salle de bain")
+    convo2.process("je suis dans le 91260")
+    refus = convo2.process("oui, c'est bien ça")
+    if convo2.state.value not in ("S11", "FIN"):
+        print(f"   un secteur CONFIRMÉ hors zone ne conclut pas : {convo2.state.value}")
+        return False
+    if "intervient pas" not in refus:
+        print(f"   le refus n'est pas prononcé : « {refus} »")
+        return False
+
+    # (d) la relecture ne se répète pas indéfiniment : la borne de R48 tient
+    convo3 = Conversation(CFG, MockLLM(), CalendarStub(CFG, now=LUNDI_9H))
+    convo3.open()
+    convo3.process("J'ai une fuite dans la salle de bain")
+    convo3.process("je suis dans le 91260")
+    tours = 0
+    while convo3.state.value not in ("S11", "FIN") and tours < 8:
+        convo3.process("euh, je ne sais pas")
+        tours += 1
+    if convo3.state.value not in ("S11", "FIN"):
+        print(f"   la relecture boucle sans borne ({tours} tours)")
+        return False
+
+    # (e) un appelant EN ZONE n'est pas ralenti : aucune relecture, on avance
+    convo4 = Conversation(CFG, MockLLM(), CalendarStub(CFG, now=LUNDI_9H))
+    convo4.open()
+    convo4.process("J'ai une fuite d'eau dans la salle de bain")
+    dit = convo4.process("Nogent-sur-Marne 94130")
+    if "c'est bien ça" in dit.lower() or "juste pour être sûr" in dit.lower():
+        print(f"   un appelant en zone subit une relecture inutile : « {dit} »")
+        return False
+
+    # (f) CE QUI EST DIT APRÈS LA CLÔTURE EST CONSERVÉ. Sans cela, Julien ne peut pas
+    # voir que son client a insisté — et c'est la seule trace qui resterait.
+    convo5 = Conversation(CFG, MockLLM(), CalendarStub(CFG, now=LUNDI_9H))
+    convo5.open()
+    convo5.process("J'ai une fuite dans la salle de bain")
+    convo5.process("je suis dans le 91260")
+    convo5.process("oui")
+    if convo5.state.value not in ("S11", "FIN"):
+        print("   préparation : l'appel n'est pas clos")
+        return False
+    convo5.process("attendez, en fait c'est le 94130 !")
+    clients = [t for r, t in convo5.transcript if r == "client"]
+    if clients[-1] != "attendez, en fait c'est le 94130 !":
+        print(f"   un tour post-clôture n'est pas conservé : dernier client = "
+              f"{clients[-1]!r}")
+        return False
+    # la phrase de clôture reste la même (R44 : `endCallPhrases` doit pouvoir l'accrocher)
+    if convo5.transcript[-1][1] != "L'appel est terminé. Bonne journée !":
+        print(f"   la phrase de clôture a changé : {convo5.transcript[-1][1]!r}")
+        return False
+    return True
+
+
 def check_salutation_nulle_part() -> bool:
     """R52 : après l'accueil, l'agent ne salue plus — NULLE PART dans la réplique.
 
@@ -3827,6 +3978,7 @@ def check_code_postal_valide() -> bool:
     convo.open()
     convo.process("J'ai une fuite dans la salle de bain")
     dit = convo.process("Je suis sur Zivier-sur-Orge, le quatre-vingt Non, c'est 160")
+    dit = convo.process("Oui")                # relecture du secteur (R54)
     if convo.slots["code_postal"] != "91260" or convo.state.value not in ("S11", "FIN"):
         print(f"   un code postal valide ne tranche plus : "
               f"{convo.slots['code_postal']!r}, état {convo.state.value}")
@@ -3977,6 +4129,7 @@ def check_code_postal_barre() -> bool:
     if convo.slots["code_postal"] is None:
         print(f"   code postal avec barre non retenu — « {reponse} »")
         return False
+    reponse = convo.process("Oui")            # relecture du secteur (R54)
     if convo.state.value not in ("S11", "FIN"):
         print(f"   l'appel n'est pas conclu alors que le CP est connu : "
               f"{convo.state.value}")
@@ -4007,7 +4160,8 @@ def check_code_postal_barre() -> bool:
                           CalendarStub(CFG, now=LUNDI_9H))
     convo2.open()
     convo2.process("J'ai une fuite d'eau dans la salle de bain")
-    dit = convo2.process("Dans l'Essonne, 91/160.")
+    convo2.process("Dans l'Essonne, 91/160.")
+    dit = convo2.process("Oui")               # relecture du secteur (R54)
     if "Essonne" in dit:
         print(f"   un département est prononcé comme une commune : « {dit} »")
         return False
@@ -4151,6 +4305,7 @@ def check_nombres_prononces() -> bool:
         print(f"   code postal dit en lettres non retenu : "
               f"{convo.slots['code_postal']!r} — « {reponse} »")
         return False
+    convo.process("Oui")                      # relecture du secteur (R54)
     if convo.state.value not in ("S11", "FIN"):
         print(f"   hors zone non conclu : {convo.state.value}")
         return False
@@ -4578,6 +4733,7 @@ def check_code_postal_dicte() -> bool:
     if "commune" in reponse.lower() and "code postal" in reponse.lower():
         print(f"   la question est reposée alors que le CP a été donné : « {reponse} »")
         return False
+    reponse = convo.process("Oui")            # relecture du secteur (R54)
     if convo.state.value not in ("S11", "FIN"):
         print(f"   hors zone non conclu : état {convo.state.value}, « {reponse} »")
         return False
@@ -5774,6 +5930,14 @@ def run() -> int:
     if check_une_seule_question():
         print("   → une réplique ne pose qu'une question, et le contrôleur n'en "
               "a jamais posé deux : ✅ PASS")
+    else:
+        print("   → ❌ FAIL")
+        echecs += 1
+
+    print(f"\n──── R54_correction_apres_refus ────")
+    if check_correction_apres_refus():
+        print("   → le secteur est relu avant tout refus, la correction est "
+              "entendue, et ce qui est dit après la clôture est conservé : ✅ PASS")
     else:
         print("   → ❌ FAIL")
         echecs += 1
