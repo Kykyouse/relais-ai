@@ -904,16 +904,36 @@ class Conversation:
             # valide déclaré « incomplet ».
             if ex.get("code_postal"):
                 digits = digits.replace(ex["code_postal"], "", 1)
-            # Des chiffres, mais pas un numéro exploitable. Deux cas, deux phrases : trop
-            # PEU (l'appelant s'est arrêté) et trop (il en a dit un de plus, ou le STT en
-            # a inventé). Le second manquait, et c'est celui du 26/08 : douze chiffres
-            # tombaient dans la branche « il me faut un numéro », qui réclame à l'appelant
-            # quelque chose qu'il venait de donner — de quoi le braquer, et surtout de
-            # quoi masquer que c'est la DICTÉE qui n'allait pas.
-            if len(digits) >= 5:
+            # Des chiffres, mais pas un numéro exploitable. Deux cas pour la PREMIÈRE
+            # relance : trop PEU (l'appelant s'est arrêté) et trop (il en a dit un de
+            # plus, ou le STT en a inventé). Le second manquait, et c'est celui du 26/08 :
+            # douze chiffres tombaient dans la branche « il me faut un numéro », qui
+            # réclame à l'appelant quelque chose qu'il venait de donner.
+            #
+            # DEUX chiffres suffisent à compter comme une tentative. Le seuil était à cinq,
+            # et « 0 6. 30 » — un appelant qui dicte par morceaux — tombait donc dans la
+            # branche de celui qui n'a RIEN donné, bornée à deux tours. On le renvoyait au
+            # repli en croyant qu'il se dérobait, alors qu'il était en train de répondre.
+            if len(digits) >= 2:
                 self.flags["tel_incomplets"] = self.flags.get("tel_incomplets", 0) + 1
                 if self.flags["tel_incomplets"] >= 3:
                     return self._sans_rdv()
+                # LA RELANCE VARIE, et la seconde reconnaît qu'on a déjà demandé.
+                #
+                # Trois fois la même phrase, mot pour mot, à quelqu'un qui coopère : c'est
+                # ce qu'a entendu l'appelant du 26/08, et ça sonne préenregistré. Ce n'est
+                # pas un défaut du modèle — ces phrases sont verbatim (R57), le formuleur
+                # n'est pas appelé. **Le caractère « robot » est le prix cumulé des
+                # verbatim**, chacun justifié par un défaut réel.
+                #
+                # La réponse n'est pas de rendre la main au formuleur — il inventerait à
+                # nouveau des chiffres — mais de donner au contrôleur PLUSIEURS phrases au
+                # lieu d'une. Ce sont les « phrases-tampons pré-approuvées » de
+                # l'arbitrage voix du 25/08, enfin écrites.
+                if self.flags["tel_incomplets"] >= 2:
+                    return self._say("Excusez-moi, je n'y arrive pas. Dites-moi les dix "
+                                     "chiffres d'un seul coup, sans pause — je vous "
+                                     "écoute.", verbatim=True)
                 if len(digits) > 10:
                     # VERBATIM. Le formuleur en a fait une RELECTURE des douze chiffres
                     # qu'on venait de refuser (« 0-6-1-0-1-5-4-7-6-8-7-9. C'est bien

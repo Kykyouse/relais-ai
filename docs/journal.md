@@ -22,7 +22,7 @@ point d'entrée du produit. Plus rien d'autre n'est bloqué côté code.
 
 ```bash
 cd proto
-python run_scenario.py                              # 65 tests, ~3 s, sans clé ni base
+python run_scenario.py                              # 66 tests, ~3 s, sans clé ni base
 python semer_artisans.py [--ecrire]                 # amorce la table `artisan`
 python run_depot_pg.py [--migrer]                   # contrat du port contre Supabase
 uvicorn serveur:app --port 8000                     # API HTTP
@@ -80,6 +80,7 @@ python run_llm_eval.py [--mock] [--n 3]             # éval appelant-simulé
 | Transcription qui se précise ≠ rejeu (R59) | ✅ | mock, mutations 5/5 — **un lead en zone perdu le 26/08** |
 | Rattrapage des tours manqués (R60) | ✅ | mock, mutations 5/5 |
 | « demain » / « aujourd'hui » comme contrainte (R61) | ✅ | mock, mutations 6/6 |
+| Relance du numéro qui varie (R62) | ✅ | mock, mutations 5/5 — **premières phrases-tampons** |
 | Identifiant d'appel imposé au dépôt (port) | ✅ | **contrat rejoué sur Supabase** |
 
 ## Ce qui est encore un double (et non un manque caché)
@@ -137,6 +138,17 @@ python run_llm_eval.py [--mock] [--n 3]             # éval appelant-simulé
   structure juridique et le domaine. Ne pas la redécouvrir comme si elle était vraie.
 
 ## Dettes et décisions ouvertes
+
+0. **LE COÛT CUMULÉ DES VERBATIM** (ouvert le 26/08, à trancher). Chaque `verbatim=True` a
+   été ajouté après un défaut réel — R38, R44, R45, R56, R57 — et l'effet d'ensemble est que
+   l'agent sonne préenregistré là où il devrait s'adapter. Geoffrey : *« on vend de l'IA avec
+   notre produit, pas du message préenregistré »*. R62 apporte la réponse actuelle : donner
+   au CONTRÔLEUR plusieurs phrases au lieu d'une (les « phrases-tampons » de l'arbitrage
+   voix). **La piste à évaluer ensuite** : au lieu de figer des PHRASES, interdire les
+   FAITS dans un tour formulé — un garde-fou qui refuse chiffres, dates, prix et noms de
+   lieux hors verbatim. Le formuleur retrouverait sa liberté de formulation sans pouvoir
+   inventer une donnée. Ce n'est PAS un changement de modèle : les phrases fautives sont
+   verbatim, donc aucun modèle n'est consulté (mesuré).
 
 1. ~~Le chemin nominal est muet~~ — **traité le 25/08** (`confirmation_client`, refus
    couvert aussi, R27). La classe de test qui manquait — confronter la promesse ORALE aux
@@ -437,6 +449,59 @@ Trois mesures d'oreille, consignées comme données d'arbitrage :
    courtes, mais **à activer** (`stopSpeakingPlan`) : les tours verbatim longs
    (récapitulatif de RDV, consignes de sécurité) sont exactement ceux qu'un appelant
    pressé voudra couper. Décision réversible, à trancher à l'oreille.
+
+---
+
+## Session du 26/08/2026 (fin) — R62 : le prix cumulé des verbatim, et la réponse
+
+Geoffrey, après l'appel où l'agent a répété trois fois la même phrase à quelqu'un qui
+coopérait : *« ça m'a l'air d'être un problème basique qu'elle aurait pu comprendre au lieu
+de tourner en rond comme un robot préenregistré… et non une IA. On vend de l'IA avec notre
+produit quand même. Est-ce que ça vaudrait le coup de repasser sur Sonnet ? »*
+
+### Non — et c'est mesurable
+
+Ces phrases sont **verbatim** (R57, pour empêcher le formuleur de faire confirmer des
+chiffres refusés). Mesuré avec un espion sur `reply` : **zéro appel au formuleur** pendant
+ces trois tours. Aucun modèle n'est consulté ; Sonnet produirait les mêmes octets.
+
+Et sur le fond, la comparaison a déjà été faite le 25/08 : Sonnet 42/42, Haiku 42/42 — à
+parité sur les verdicts — pour une latence de tour de **3,42 s contre 1,93 s**. Au téléphone,
+c'est décisif dans l'autre sens.
+
+⚠️ Une comparaison des seules INTERCEPTIONS de garde-fous entre les deux modèles n'est pas
+disponible : les passages Sonnet du 25/08 précèdent R37, R46, R51, R52 et R53. Pour trancher
+il faudrait rejouer les 19 personas en Sonnet sur l'arbre courant. C'est faisable et cher ;
+la question est posée au journal, pas tranchée.
+
+### La vraie cause est de mon fait
+
+Chaque `verbatim=True` a été ajouté après un défaut réel : R38 (le formuleur niait les
+créneaux), R44 (clôture bégayée), R45 (commune écorchée), R56 (quiz sur le Vaucluse), R57
+(relecture de chiffres refusés). Chacun justifié localement. **L'effet d'ensemble est que
+l'agent sonne préenregistré** — et c'est exactement ce que Geoffrey a entendu.
+
+La réponse n'est pas de rendre la main au formuleur, qui inventerait à nouveau des chiffres.
+C'est de donner au **contrôleur plusieurs phrases au lieu d'une** : les « phrases-tampons
+pré-approuvées » de l'arbitrage voix du 25/08, restées au journal jusqu'ici. R62 en écrit les
+premières — la seconde relance reconnaît qu'on a déjà demandé et **change de stratégie** :
+« Excusez-moi, je n'y arrive pas. Dites-moi les dix chiffres d'un seul coup, sans pause. »
+
+### La piste à évaluer ensuite
+
+Au lieu de figer des PHRASES, interdire les FAITS dans un tour formulé : un garde-fou qui
+refuse chiffres, dates, prix et noms de lieux hors verbatim. Le formuleur retrouverait sa
+liberté de formulation sans pouvoir inventer une donnée. Consigné en dette n°0.
+
+### Un second défaut trouvé en écrivant le test
+
+« 0 6. 30 » compte trois chiffres, et la branche « numéro inexploitable » n'en tenait compte
+qu'à partir de CINQ. Un appelant qui dicte **par morceaux** tombait donc dans la branche de
+celui qui n'a rien donné, bornée à deux tentatives. On le renvoyait au repli en croyant qu'il
+se dérobait, alors qu'il était en train de répondre. Seuil abaissé à deux chiffres — et une
+mutation a exigé qu'un chiffre ISOLÉ (« j'ai pas 2 minutes ») n'en soit pas une.
+
+Suite : **66 PASS**. Mutations 5/5.
 
 ---
 

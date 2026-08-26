@@ -3571,6 +3571,141 @@ def check_creneaux_verbatim() -> bool:
     return True
 
 
+def check_relance_numero_variee() -> bool:
+    """R62 : la relance du numéro CHANGE de phrase, et reconnaît qu'on a déjà demandé.
+
+    Appel réel du 26/08. L'appelant dicte onze chiffres, puis se reprend en morceaux :
+
+        User  : mon numéro est de 0 6 30 30 40 40 45      (onze chiffres — R55 refuse)
+        Agent : Je n'ai pas bien noté votre numéro. Pouvez-vous me le redonner chiffre…
+        User  : 0 6. 30
+        Agent : je n'ai●
+        User  : 30
+        Agent : je n'ai pas bien noté votre numéro, pouvez-vous me le redonner chiffre…
+        User  : 4 0 4 5.
+        Agent : Je pas bien noté votre numéro. Pouvez-vous me le redonner chiffre…
+
+    **Trois fois la même phrase, mot pour mot, à quelqu'un qui coopère.** Geoffrey l'a dit
+    plus clairement que je ne l'aurais fait : « on vend de l'IA avec notre produit, pas du
+    message préenregistré ».
+
+    Et ce n'est PAS un défaut du modèle. Cette phrase est verbatim (R57, pour l'empêcher de
+    faire confirmer les chiffres refusés) : le formuleur n'est pas appelé du tout sur ces
+    tours — mesuré, zéro appel. Changer de modèle produirait les mêmes octets. **Le
+    caractère « préenregistré » est le prix cumulé des verbatim**, chacun justifié
+    localement par un défaut réel, et dont l'effet d'ensemble est celui-là.
+
+    La réponse n'est donc pas de rendre la main au formuleur — il inventerait à nouveau des
+    chiffres — mais de donner au contrôleur **plusieurs phrases** au lieu d'une. C'est
+    exactement les « phrases-tampons pré-approuvées » de l'arbitrage voix, restées au
+    journal depuis le 25/08.
+
+    Second défaut trouvé en écrivant ce test : « 0 6. 30 » compte trois chiffres, et la
+    branche « numéro inexploitable » n'en tenait compte qu'à partir de CINQ. Un appelant qui
+    dicte par morceaux tombait donc dans « il me faut un numéro » — la branche de celui qui
+    n'a rien donné, bornée à deux tentatives. On le renvoyait au repli en croyant qu'il
+    refusait de répondre, alors qu'il était en train de répondre.
+    """
+    from relais_proto.engine import Conversation
+
+    def jusqu_au_numero(espion=None):
+        convo = Conversation(CFG, espion or MockLLM(),
+                             CalendarStub(CFG, now=LUNDI_9H))
+        convo.open()
+        for ligne in ("J'ai une fuite d'eau dans la salle de bain",
+                      "Nogent-sur-Marne 94130", "Dupont"):
+            convo.process(ligne)
+        return convo
+
+    # (a) la relance CHANGE de phrase, et la seconde reconnaît la difficulté
+    convo = jusqu_au_numero()
+    premiere = convo.process("mon numéro est de 0 6 30 30 40 40 45")   # onze chiffres
+    seconde = convo.process("0 6 30 30 40 40 45")
+    if premiere == seconde:
+        print(f"   la relance est identique deux fois : « {premiere} »")
+        return False
+    if "pas bien noté" not in premiere.lower():
+        print(f"   la première relance ne dit pas ce qui n'allait pas : « {premiere} »")
+        return False
+    # une seconde relance qui ne reconnaît pas qu'on a déjà demandé sonne préenregistré
+    if not any(m in seconde.lower() for m in ("je n'y arrive pas", "excusez-moi",
+                                              "toujours pas")):
+        print(f"   la seconde relance ne reconnaît pas qu'on a déjà demandé : "
+              f"« {seconde} »")
+        return False
+    # ...et elle change de STRATÉGIE : les dix chiffres d'un coup
+    if "d'un" not in seconde.lower() and "seul" not in seconde.lower():
+        print(f"   la seconde relance ne propose pas d'autre façon de faire : "
+              f"« {seconde} »")
+        return False
+
+    # (b) la borne tient : au troisième échec, on prend le lead
+    troisieme = convo.process("0 6 30 30 40 40 45")
+    if convo.state.value not in ("S11", "FIN"):
+        print(f"   la relance n'est plus bornée : état {convo.state.value}")
+        return False
+    if "rappelle" not in troisieme.lower():
+        print(f"   la sortie ne promet pas de rappel : « {troisieme} »")
+        return False
+
+    # (c) UNE DICTÉE EN MORCEAUX est une tentative, pas un refus. « 0 6. 30 » compte trois
+    # chiffres : l'appelant répond, il ne se dérobe pas.
+    convo2 = jusqu_au_numero()
+    dit = convo2.process("0 6. 30")
+    if "transmets" in dit.lower():
+        print(f"   un début de dictée est traité comme un refus de répondre : "
+              f"« {dit} »")
+        return False
+    if convo2.state.value in ("S11", "FIN"):
+        print(f"   l'appel est clos sur un début de dictée : « {dit} »")
+        return False
+    # et il reste au moins un tour pour se reprendre
+    suite = convo2.process("06 30 30 40 45")
+    if convo2.slots["telephone_rappel"] != "0630304045":
+        print(f"   le numéro donné après un début de dictée n'est pas retenu : "
+              f"{convo2.slots['telephone_rappel']!r} — « {suite} »")
+        return False
+
+    # (c-bis) UN SEUL chiffre n'est pas une dictée. « j'ai pas 2 minutes là » ne doit pas
+    # recevoir « ce numéro me semble incomplet » — l'appelant n'a pas commencé à dicter,
+    # et lui parler d'un numéro qu'il n'a pas donné est incompréhensible.
+    convo_un = jusqu_au_numero()
+    dit = convo_un.process("écoutez j'ai pas 2 minutes là")
+    if "incomplet" in dit.lower() or "chiffre par chiffre" in dit.lower():
+        print(f"   un seul chiffre est pris pour un début de dictée : « {dit} »")
+        return False
+    # (on ne va pas plus loin : la suite dépend de la borne « pas de numéro donné »,
+    # préexistante et bornée à deux tours — ce n'est pas ce que R62 possède.)
+
+    # (d) celui qui REFUSE vraiment garde sa borne courte : deux tentatives, puis le lead
+    # (invariant n°2 — pas de RDV sans rappel, et T11 le couvre en éval)
+    convo3 = jusqu_au_numero()
+    convo3.process("non je préfère pas donner mon numéro")
+    convo3.process("non, pas de numéro je vous dis")
+    if convo3.state.value not in ("S11", "FIN"):
+        print(f"   un refus de numéro n'est plus borné : {convo3.state.value}")
+        return False
+
+    # (e) le formuleur n'est TOUJOURS pas consulté sur ces phrases : elles énoncent ce que
+    # le contrôleur a décidé, et c'est ce qui empêche d'inventer des chiffres (R57).
+    class Espion(MockLLM):
+        appels = 0
+
+        def reply(self, instruction, context):
+            Espion.appels += 1
+            return "LE FORMULEUR A PARLÉ"
+
+    convo4 = jusqu_au_numero(Espion())
+    avant = Espion.appels
+    convo4.process("mon numéro est de 0 6 30 30 40 40 45")
+    convo4.process("0 6 30 30 40 40 45")
+    if Espion.appels != avant:
+        print(f"   la relance passe par le formuleur ({Espion.appels - avant} appels) : "
+              f"il pourra inventer des chiffres")
+        return False
+    return True
+
+
 def check_dispo_demain_aujourdhui() -> bool:
     """R61 : « demain » et « aujourd'hui » sont des contraintes de jour comme les autres.
 
@@ -6886,6 +7021,14 @@ def run() -> int:
     if check_dispo_demain_aujourdhui():
         print("   → « demain » et « aujourd'hui » filtrent les créneaux comme un "
               "nom de jour, résolus en heure de pendule : ✅ PASS")
+    else:
+        print("   → ❌ FAIL")
+        echecs += 1
+
+    print(f"\n──── R62_relance_numero_variee ────")
+    if check_relance_numero_variee():
+        print("   → la relance change de phrase et reconnaît qu'on a déjà "
+              "demandé ; une dictée en morceaux n'est plus prise pour un refus : ✅ PASS")
     else:
         print("   → ❌ FAIL")
         echecs += 1
