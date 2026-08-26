@@ -3551,6 +3551,183 @@ def check_creneaux_verbatim() -> bool:
     return True
 
 
+def check_code_postal_valide() -> bool:
+    """R50 : un code postal qui n'en est pas un ne décide RIEN — et surtout pas un refus.
+
+    Cinquième appel vocal réel du 26/08, le premier sur l'arbre corrigé. L'appelant se
+    reprend au milieu de sa phrase :
+
+        User : « Je suis sur Zivier-sur-Orge, le quatre-vingt Non, c'est 160 »
+        Agent: « Je suis désolé, Dupont Chauffage n'intervient pas sur votre secteur. »
+
+    Le modèle a rendu `code_postal = "160"`. **Trois chiffres.** Le contrôleur l'a accepté
+    tel quel, l'a comparé aux listes de la zone, n'y a rien trouvé — et a **raccroché**.
+
+    C'est exactement le trou que R42 a bouché pour le téléphone, sur le champ qui décide si
+    on envoie quelqu'un chez quelqu'un. Et la conséquence est pire : un numéro faux produit
+    un RDV bancal, un code postal faux produit un **refus définitif**. Le projet a déjà
+    écrit cette règle pour la commune (« une décision terminale et coûteuse ne se prend pas
+    sur une donnée que personne n'a vérifiée ») — elle ne s'appliquait pas au code postal
+    venu de l'extracteur.
+
+    Ici, l'appelant était réellement hors zone : on a eu raison par accident. S'il avait
+    été à Nogent, on perdait un client sur un artefact de transcription.
+    """
+    from relais_proto.engine import Conversation
+
+    class ExtracteurBancal(MockLLM):
+        """Double : rend le code postal tronqué que le modèle réel a produit."""
+        def __init__(self, valeur):
+            super().__init__()
+            self.valeur = valeur
+
+        def extract(self, utterance, context):
+            ex = super().extract(utterance, context)
+            if "zivier" in utterance.lower():
+                ex["code_postal"] = self.valeur
+            return ex
+
+        def reply(self, instruction, context):
+            return instruction
+
+    # (a) tout ce qui n'est pas un code postal français est IGNORÉ, et ne conclut rien
+    for mauvais in ("160",           # le cas du 26/08 : trois chiffres
+                    "1600", "9126",  # trop court
+                    "916000",        # trop long
+                    "", "abcde",
+                    "00160", "99160",        # départements inexistants
+                    "91 60",                 # quatre chiffres, séparateur ou pas
+                    "94130 environ",         # cinq chiffres ET des mots
+                    "le 91 ou le 92"):
+        convo = Conversation(CFG, ExtracteurBancal(mauvais),
+                             CalendarStub(CFG, now=LUNDI_9H))
+        convo.open()
+        convo.process("J'ai une fuite dans la salle de bain")
+        dit = convo.process("Je suis sur Zivier-sur-Orge, le quatre-vingt Non, "
+                            "c'est 160")
+        if convo.slots["code_postal"] is not None:
+            print(f"   code postal invalide accepté : {mauvais!r} → "
+                  f"{convo.slots['code_postal']!r}")
+            return False
+        if convo.state.value in ("S11", "FIN"):
+            print(f"   l'appel est CLOS sur un code postal invalide ({mauvais!r}) : "
+                  f"« {dit} »")
+            return False
+        # ...et on repose la question plutôt que de trancher
+        if "commune" not in dit.lower() and "code postal" not in dit.lower():
+            print(f"   la question n'est pas reposée : « {dit} »")
+            return False
+
+    # (a-bis) mais un code postal ÉCRIT avec un séparateur est valide : l'extracteur rend
+    # parfois « 91 260 », et le refuser ferait perdre une donnée juste. Les séparateurs
+    # sont tolérés, les lettres non — même partage que pour le téléphone (R42).
+    for bon, attendu in (("91 260", "91260"), ("91.260", "91260"), ("91-260", "91260")):
+        convo = Conversation(CFG, ExtracteurBancal(bon),
+                             CalendarStub(CFG, now=LUNDI_9H))
+        convo.open()
+        convo.process("J'ai une fuite dans la salle de bain")
+        convo.process("Je suis sur Zivier-sur-Orge, le quatre-vingt Non, c'est 160")
+        if convo.slots["code_postal"] != attendu:
+            print(f"   code postal valide refusé : {bon!r} → "
+                  f"{convo.slots['code_postal']!r}")
+            return False
+
+    # (b) un VRAI code postal continue de trancher immédiatement, dans les deux sens
+    convo = Conversation(CFG, ExtracteurBancal("91260"),
+                         CalendarStub(CFG, now=LUNDI_9H))
+    convo.open()
+    convo.process("J'ai une fuite dans la salle de bain")
+    dit = convo.process("Je suis sur Zivier-sur-Orge, le quatre-vingt Non, c'est 160")
+    if convo.slots["code_postal"] != "91260" or convo.state.value not in ("S11", "FIN"):
+        print(f"   un code postal valide ne tranche plus : "
+              f"{convo.slots['code_postal']!r}, état {convo.state.value}")
+        return False
+
+    convo2 = Conversation(CFG, ExtracteurBancal("94130"),
+                          CalendarStub(CFG, now=LUNDI_9H))
+    convo2.open()
+    convo2.process("J'ai une fuite dans la salle de bain")
+    convo2.process("Je suis sur Zivier-sur-Orge, le quatre-vingt Non, c'est 160")
+    if convo2.slots["code_postal"] != "94130" or convo2.flags["zone"] != "en_zone":
+        print(f"   un code postal EN ZONE n'est plus reconnu : "
+              f"{convo2.slots['code_postal']!r}, zone {convo2.flags['zone']!r}")
+        return False
+
+    # (c) et la CORRECTION du tour suivant est entendue — c'est ce que l'appelant a fait
+    convo3 = Conversation(CFG, ExtracteurBancal("160"),
+                          CalendarStub(CFG, now=LUNDI_9H))
+    convo3.open()
+    convo3.process("J'ai une fuite dans la salle de bain")
+    convo3.process("Je suis sur Zivier-sur-Orge, le quatre-vingt Non, c'est 160")
+    convo3.process("Pardon, je suis sur le quatre-vingt-onze deux cent soixante")
+    if convo3.slots["code_postal"] != "91260":
+        print(f"   la correction de l'appelant n'est pas entendue : "
+              f"{convo3.slots['code_postal']!r}")
+        return False
+    return True
+
+
+def check_vouvoiement() -> bool:
+    """R51 : l'agent VOUVOIE, toujours. Un artisan ne tutoie pas ses clients.
+
+    Cinquième appel vocal réel : « Ah d'accord, je comprends que **tu** m'appelles depuis
+    le cent soixante. » Le formuleur a changé de registre en pleine phrase.
+
+    Aucun garde-fou ne pouvait l'attraper — ce n'est ni un prix, ni une promesse, ni un
+    caractère imprononçable, ni une salutation déplacée. C'est de la même famille que R46 :
+    une faute qui ne se voit pas à la relecture du code et qui s'entend immédiatement au
+    téléphone. Sauf qu'elle est plus grave qu'un « bonjour » de trop : un client qu'on
+    tutoie sans le connaître entend un défaut de sérieux, chez un artisan qu'il paie.
+
+    Contrairement à R46, la règle vaut PARTOUT — SMS et pages web comprises. Il n'y a
+    aucun contexte où ce produit tutoie.
+    """
+    from relais_proto.guards import check_output
+    from relais_proto.engine import Conversation
+
+    # (a) le tutoiement est signalé, sous ses formes courantes
+    for texte in ("Je comprends que tu m'appelles depuis le cent soixante.",
+                  "Donne-moi ton code postal.",
+                  "C'est bien ta commune ?",
+                  "Je te confirme le rendez-vous.",
+                  "Tes disponibilités sont notées.",
+                  "Toi, tu es où ?"):
+        if not any(v.startswith("tutoiement") for v in check_output(texte, CFG)):
+            print(f"   tutoiement non signalé : « {texte} »")
+            return False
+
+    # (b) et AUCUN faux positif sur le français du produit. « vous êtes » contient « tes »,
+    # et la limite de mot doit connaître les accents.
+    for texte in ("Vous êtes sur quelle commune ?",
+                  "Julien vous rappelle sous 2 heures.",
+                  "Je répète votre numéro : 06 12 34 56 78, c'est bien ça ?",
+                  "Vous êtes bien chez Dupont Chauffage.",
+                  "L'appel est terminé. Bonne journée !",
+                  "Ses disponibilités : demain entre 08h et 10h.",
+                  "Coupez l'eau au compteur en attendant."):
+        violations = [v for v in check_output(texte, CFG) if v.startswith("tutoiement")]
+        if violations:
+            print(f"   faux positif de tutoiement : « {texte} » → {violations}")
+            return False
+
+    # (c) de bout en bout : un formuleur qui tutoie est REPLIÉ sur l'instruction du
+    # contrôleur, qui vouvoie par construction
+    class FormuleurFamilier(MockLLM):
+        def reply(self, instruction, context):
+            return "Alors, dis-moi, tu es où exactement ?"
+
+    convo = Conversation(CFG, FormuleurFamilier(), CalendarStub(CFG, now=LUNDI_9H))
+    convo.open()
+    dit = convo.process("J'ai une fuite dans la salle de bain")
+    if " tu " in f" {dit} ":
+        print(f"   un formuleur qui tutoie passe quand même : « {dit} »")
+        return False
+    if not any(v.startswith("tutoiement") for v in convo.flags["violations"]):
+        print(f"   la violation n'est pas tracée : {convo.flags['violations']}")
+        return False
+    return True
+
+
 def check_code_postal_barre() -> bool:
     """R49 : le code postal survit à la ponctuation de la transcription, et un nom de
     commune qu'on ne connaît pas n'est jamais prononcé.
@@ -5364,6 +5541,22 @@ def run() -> int:
         print("   → le code postal survit à la ponctuation de la transcription, "
               "et un nom de commune inconnu de notre table n'est jamais "
               "prononcé : ✅ PASS")
+    else:
+        print("   → ❌ FAIL")
+        echecs += 1
+
+    print(f"\n──── R50_code_postal_valide ────")
+    if check_code_postal_valide():
+        print("   → un code postal qui n'en est pas un ne conclut rien : la "
+              "question est reposée, jamais l'appel raccroché : ✅ PASS")
+    else:
+        print("   → ❌ FAIL")
+        echecs += 1
+
+    print(f"\n──── R51_vouvoiement ────")
+    if check_vouvoiement():
+        print("   → le tutoiement est signalé partout et replié, sans faux "
+              "positif sur le français du produit : ✅ PASS")
     else:
         print("   → ❌ FAIL")
         echecs += 1

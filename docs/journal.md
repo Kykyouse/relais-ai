@@ -22,7 +22,7 @@ point d'entrée du produit. Plus rien d'autre n'est bloqué côté code.
 
 ```bash
 cd proto
-python run_scenario.py                              # 53 tests, ~3 s, sans clé ni base
+python run_scenario.py                              # 55 tests, ~3 s, sans clé ni base
 python semer_artisans.py [--ecrire]                 # amorce la table `artisan`
 python run_depot_pg.py [--migrer]                   # contrat du port contre Supabase
 uvicorn serveur:app --port 8000                     # API HTTP
@@ -67,6 +67,8 @@ python run_llm_eval.py [--mock] [--n 3]             # éval appelant-simulé
 | Nombres prononcés en toutes lettres (R47) | ✅ | mock, mutations 10/11 (1 défense en profondeur) |
 | Question de la commune bornée (R48) | ✅ | mock, *idem* |
 | Code postal avec barre, commune vérifiée (R49) | ✅ | mock, mutations 6/6 |
+| Code postal validé par le contrôleur (R50) | ✅ | mock, mutations 7/8 (1 défense en profondeur, vérifiée) |
+| Vouvoiement, jamais de tutoiement (R51) | ✅ | mock, *idem* |
 | Identifiant d'appel imposé au dépôt (port) | ✅ | **contrat rejoué sur Supabase** |
 
 ## Ce qui est encore un double (et non un manque caché)
@@ -420,6 +422,70 @@ Trois mesures d'oreille, consignées comme données d'arbitrage :
    courtes, mais **à activer** (`stopSpeakingPlan`) : les tours verbatim longs
    (récapitulatif de RDV, consignes de sécurité) sont exactement ceux qu'un appelant
    pressé voudra couper. Décision réversible, à trancher à l'oreille.
+
+---
+
+## Session du 26/08/2026 (suite) — R50/R51 : premier appel sur l'arbre corrigé
+
+Cinquième appel réel, et le premier à tourner sur le code corrigé. **R49 a fonctionné en
+production** : l'appelant disait « Zivier-sur-Orge » (le STT pour Juvisy), la commune n'est
+dans aucune de nos tables, et l'agent a dit « votre secteur » au lieu de répéter un nom qui
+n'existe pas. C'est la première fois qu'un correctif se vérifie à l'oreille.
+
+Deux défauts nouveaux, tous deux dans la même réplique :
+
+    User : « Je suis sur Zivier-sur-Orge, le quatre-vingt Non, c'est 160 »
+    Agent: « Ah d'accord, je comprends que TU m'appelles depuis le cent soixante.
+             Je suis désolé, mais Dupont Chauffage n'intervient pas sur votre secteur. »
+
+### R50 — un code postal qui n'en est pas un a raccroché
+
+Le modèle a rendu `code_postal = "160"`. **Trois chiffres.** Le contrôleur l'a accepté tel
+quel, l'a comparé aux listes de la zone, n'y a rien trouvé — et a **raccroché**.
+
+C'est exactement le trou que R42 a bouché pour le téléphone, sur le champ qui décide si on
+envoie un artisan chez quelqu'un. Et la conséquence est **pire** : un numéro faux produit un
+RDV bancal, un code postal faux produit un refus définitif. Le projet avait déjà écrit la
+règle pour la commune — « une décision terminale et coûteuse ne se prend pas sur une donnée
+que personne n'a vérifiée » — mais elle ne couvrait pas le code postal venu de l'extracteur.
+
+L'appelant était réellement hors zone : **on a eu raison par accident**. À Nogent, on
+perdait un client sur un artefact de transcription.
+
+`_code_postal_fr` rejoint `_numero_fr` dans le contrôleur, et `_merge` est le juge unique
+des deux. Une mutation a d'ailleurs montré que mon premier contrôle était **trop strict** :
+j'exigeais la forme exacte, ce qui rejetait « 91 260 » — un code postal parfaitement valide
+que l'extracteur rend parfois ainsi. Les séparateurs sont tolérés, les lettres non (« 94130
+environ » n'est pas un code postal). Même partage que pour le téléphone.
+
+### R51 — l'agent a tutoyé
+
+« Je comprends que **tu** m'appelles. » Le formuleur a changé de registre en pleine phrase.
+
+Aucun garde-fou ne pouvait l'attraper : ni prix, ni promesse, ni caractère imprononçable, ni
+salutation déplacée. Même famille que R46, mais plus grave — un client qu'on tutoie sans le
+connaître entend un défaut de sérieux, chez un artisan qu'il paie. Et contrairement à R46,
+la règle vaut **partout** : SMS et pages comprises, il n'existe aucun contexte où ce produit
+tutoie.
+
+Le motif ne retient que les marques qui ne sont QUE de la deuxième personne du singulier —
+pronoms, possessifs, élision — et jamais de formes verbales, innombrables et ambiguës.
+Vérifié par balayage sur **tous** les textes du produit et des configs : zéro correspondance.
+
+Piège au passage : `grep` dans une locale C m'a fait croire à des faux positifs sur « vous
+**êtes** », qui contient « tes ». En Python, `\b` connaît l'Unicode et ne s'y trompe pas.
+Ne pas conclure d'un `grep` sur du texte accentué.
+
+### Ce que les mutations ont encore corrigé dans mon travail
+
+Sept sur huit. La survivante est une **défense en profondeur vérifiée** et non supposée :
+`_chiffres_dits` soumet un candidat de code postal, et si son propre contrôle disparaît,
+`_merge` le refuse quand même (mesuré : `00123` → None, `94130` → retenu). Le juge est
+unique, les contrôles amont sont des ceintures.
+
+Une mutation a été **retirée** parce qu'elle visait le mauvais test, et une autre **recalée**
+sur R47, où le cas qu'elle exerce est réellement couvert. Une mutation qui tue pour la
+mauvaise raison, ou qui ne peut rien exercer, ne prouve rien.
 
 ---
 

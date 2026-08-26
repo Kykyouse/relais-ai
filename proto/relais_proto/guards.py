@@ -64,6 +64,17 @@ _RE_MARKDOWN = re.compile(
 _RE_SALUTATION = re.compile(r"^\s*(bonjour|bonsoir|salut|re-?bonjour)\b",
                             re.IGNORECASE)
 
+# Tutoiement. Les formes retenues sont celles qui ne sont QUE des marques de deuxième
+# personne du singulier : « tu », « te », « toi », « ton », « ta », « tes », et l'élision « t'a /
+# t'es / t'ai ». Pas de formes verbales — elles sont innombrables, et le pronom ou le
+# possessif accompagne presque toujours.
+#
+# Les limites de mot doivent connaître les accents : « vous êtes » contient « tes », et
+# `\b` en Python le sait (contrairement à `grep` dans une locale C, qui m'a fait croire à
+# des faux positifs). Vérifié sur tous les textes du produit : aucune correspondance.
+_RE_TUTOIEMENT = re.compile(r"\b(tu|te|toi|ton|ta|tes)\b|\bt'(?=[aeiouyéèêà])",
+                            re.IGNORECASE)
+
 
 def check_output(text: str, config: dict, rdv_valide: bool = False,
                  en_conversation: bool = False) -> list[str]:
@@ -94,6 +105,19 @@ def check_output(text: str, config: dict, rdv_valide: bool = False,
     muets = _non_prononcables(text)
     if muets:
         violations.append("caractere_non_prononcable:" + "".join(muets))
+
+    # 7. Tutoiement. Un artisan ne tutoie pas ses clients.
+    #
+    # Le 26/08, cinquième appel réel : « je comprends que TU m'appelles depuis le cent
+    # soixante ». Le formuleur a changé de registre en pleine phrase. Aucun garde-fou ne
+    # pouvait l'attraper — ni prix, ni promesse, ni caractère imprononçable, ni salutation
+    # déplacée. Même famille que la re-salutation, mais plus grave : un client qu'on tutoie
+    # sans le connaître entend un défaut de sérieux, chez un artisan qu'il paie.
+    #
+    # Contrairement à la re-salutation, la règle vaut PARTOUT — SMS et pages comprises. Il
+    # n'existe aucun contexte où ce produit tutoie.
+    if m := _RE_TUTOIEMENT.search(text or ""):
+        violations.append(f"tutoiement:{m.group(0)}")
 
     # 6. Re-salutation. On dit bonjour une fois par conversation, et l'accueil l'a déjà
     # fait. Le formuleur resalue parce que chaque tour lui arrive comme un début — au

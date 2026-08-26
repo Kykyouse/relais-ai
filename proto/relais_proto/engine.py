@@ -92,6 +92,39 @@ class Conversation:
     OVERWRITABLE = {"code_postal", "commune", "disponibilites"}
 
     @staticmethod
+    def _code_postal_fr(valeur) -> str | None:
+        """Un code postal français, ou rien. Cinq chiffres, département 01–98.
+
+        Même raison que `_numero_fr`, sur le champ qui décide si on envoie un artisan chez
+        quelqu'un — et la conséquence est PIRE. Un numéro faux produit un RDV bancal ; un
+        code postal faux produit un **refus définitif**.
+
+        Le 26/08, au cinquième appel réel, le modèle a rendu « 160 » d'une phrase où
+        l'appelant se reprenait (« le quatre-vingt Non, c'est 160 »). Le contrôleur l'a
+        comparé aux listes de la zone, n'y a rien trouvé, et a raccroché. L'appelant était
+        réellement hors zone : on a eu raison par accident. À Nogent, on perdait un client
+        sur un artefact de transcription.
+
+        Le projet avait déjà écrit la règle pour la commune — « une décision terminale et
+        coûteuse ne se prend pas sur une donnée que personne n'a vérifiée » — mais elle ne
+        couvrait pas le code postal venu de l'extracteur.
+        """
+        brut = str(valeur or "")
+        chiffres = "".join(c for c in brut if c.isdigit())
+        if len(chiffres) != 5:
+            return None
+        # Les séparateurs sont TOLÉRÉS — « 91 260 » est un code postal, et l'extracteur le
+        # rend parfois ainsi. Les lettres, non : elles trahissent autre chose qu'un code
+        # postal (« 94130 environ », « le 91 ou le 92 »). Même partage que `_numero_fr`.
+        # J'avais d'abord exigé la forme exacte, ce qui rejetait « 91 260 » — trop strict,
+        # et une mutation survivante l'a montré.
+        if any(c.isalpha() for c in brut):
+            return None
+        # 00 et 99 ne sont pas des départements. Contrôle léger, mais il écarte les
+        # suites de cinq chiffres qui n'en sont pas.
+        return chiffres if "01" <= chiffres[:2] <= "98" else None
+
+    @staticmethod
     def _numero_fr(valeur) -> str | None:
         """Un numéro FR à dix chiffres, ou rien. Aucune tolérance, aucune troncature.
 
@@ -142,10 +175,10 @@ class Conversation:
         # Ce n'est pas une limitation : une CORRECTION de commune passe par le nom
         # (`_resoudre_commune`) ou par des chiffres, deux chemins qui restent ouverts.
         if not extracted.get("code_postal") and self.slots.get("code_postal") is None:
-            cp = suite_de_chiffres(texte, 5)
-            # Un code postal français commence par un département 01–98. Le contrôle est
-            # léger, mais il écarte les suites de cinq chiffres qui n'en sont pas.
-            if cp and "01" <= cp[:2] <= "98":
+            # `_code_postal_fr` est le juge unique (R50) : on lui soumet un candidat,
+            # on ne décide pas à sa place.
+            cp = self._code_postal_fr(suite_de_chiffres(texte, 5))
+            if cp:
                 extracted["code_postal"] = cp
         if not extracted.get("telephone_rappel"):
             tel = suite_de_chiffres(texte, 10)
@@ -178,8 +211,14 @@ class Conversation:
         for k, v in extracted.items():
             if k not in self.slots or v in (None, ""):
                 continue
-            # Le numéro de rappel est le SEUL slot revérifié en entrée : c'est le seul
-            # dont une valeur approximative produit un RDV en apparence normal.
+            # Le code postal et le numéro de rappel sont les deux slots revérifiés en
+            # entrée : ce sont les seuls dont une valeur approximative produit une
+            # décision d'apparence normale — un refus définitif pour l'un, un RDV dont le
+            # rappel est impossible pour l'autre.
+            if k == "code_postal":
+                v = self._code_postal_fr(v)
+                if v is None:
+                    continue
             if k == "telephone_rappel":
                 v = self._numero_fr(v)
                 if v is None:
