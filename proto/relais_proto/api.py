@@ -370,8 +370,30 @@ def creer_app(depot, registre: Registre, fabrique_llm, horloge=None,
                            None)
             return _repondre_voix(dernier or convo.open(), modele, t, corps)
 
+        # RATTRAPAGE. La plateforme renvoie tout l'historique ; nous ne lisions que le
+        # dernier message. Si une requête est perdue (réseau, 500, expiration), la suivante
+        # arrive avec deux tours d'avance et le tour du milieu était **définitivement
+        # perdu** — alors que son texte était dans la charge utile. Mesuré le 26/08 : la
+        # commune, le code postal et le problème disparaissaient, seul le numéro restait.
+        #
+        # Et l'appelant, lui, n'a aucune raison de redire ce qu'il a déjà dit : c'est le
+        # « Déjà dit. » de R59, vu par un autre chemin.
         textes = _vapi.messages_utilisateur(corps)
-        texte = convo.process(textes[-1])
+        # `textes[traites:]` = ce qui nous manque. Vide quand la transcription du tour
+        # courant se précise sans en ajouter (R59) : on retraite alors ce tour-là.
+        a_traiter = textes[traites:] or textes[-1:]
+        # BORNE. Un retard de un ou deux vient d'une requête perdue, ce qui arrive. Un
+        # retard de dix voudrait dire que plusieurs requêtes consécutives ont échoué, et
+        # rejouer dix tours dans une seule requête HTTP ferait expirer l'appel — le client
+        # entendrait le silence, ce qui est pire que de perdre un tour. On garde les plus
+        # RÉCENTS : c'est le contexte utile.
+        if len(a_traiter) > 3:
+            a_traiter = a_traiter[-3:]
+        texte = None
+        for ligne in a_traiter:
+            texte = convo.process(ligne)
+            if convo.state in (State.S11_CLOTURE, State.FIN):
+                break
         depot.enregistrer_etat(appel_id, convo.to_dict())
 
         if convo.state in (State.S11_CLOTURE, State.FIN) and appel.fin_a is None:

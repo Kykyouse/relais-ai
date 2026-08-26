@@ -22,7 +22,7 @@ point d'entrée du produit. Plus rien d'autre n'est bloqué côté code.
 
 ```bash
 cd proto
-python run_scenario.py                              # 63 tests, ~3 s, sans clé ni base
+python run_scenario.py                              # 64 tests, ~3 s, sans clé ni base
 python semer_artisans.py [--ecrire]                 # amorce la table `artisan`
 python run_depot_pg.py [--migrer]                   # contrat du port contre Supabase
 uvicorn serveur:app --port 8000                     # API HTTP
@@ -78,6 +78,7 @@ python run_llm_eval.py [--mock] [--n 3]             # éval appelant-simulé
 | Paire commune/CP cohérente, refus verbatim (R57) | ✅ | mock, mutations 5/5 |
 | Code postal relu en DEUX groupes (R58) | ✅ | mock, mutations 5/5 |
 | Transcription qui se précise ≠ rejeu (R59) | ✅ | mock, mutations 5/5 — **un lead en zone perdu le 26/08** |
+| Rattrapage des tours manqués (R60) | ✅ | mock, mutations 5/5 |
 | Identifiant d'appel imposé au dépôt (port) | ✅ | **contrat rejoué sur Supabase** |
 
 ## Ce qui est encore un double (et non un manque caché)
@@ -435,6 +436,60 @@ Trois mesures d'oreille, consignées comme données d'arbitrage :
    courtes, mais **à activer** (`stopSpeakingPlan`) : les tours verbatim longs
    (récapitulatif de RDV, consignes de sécurité) sont exactement ceux qu'un appelant
    pressé voudra couper. Décision réversible, à trancher à l'oreille.
+
+---
+
+## Session du 26/08/2026 (fin) — R60 : on jetait des tours que la plateforme nous donnait
+
+Trouvé en répondant à une question de Geoffrey : *« à quel point le mock joue sur le
+comportement de Haiku ? Normalement l'IA aurait dû pouvoir couvrir les infos de la
+conversation, non ? »*
+
+La réponse directe est non, et par construction : **l'extracteur ne voit jamais
+l'historique.** Il reçoit la phrase courante et un contexte minuscule ; c'est le contrôleur
+qui tient l'état (règle n°1). Ce n'est pas un chat. Et dans le cas de R59, le tour n'est même
+jamais arrivé jusqu'au modèle — `est_un_rejeu` s'exécute dans `api.py`, avant `process()`.
+
+Mais la question portait juste par un autre chemin, et elle a trouvé un second trou.
+
+### La plateforme nous donne tout, et nous ne lisions que le dernier message
+
+Mesuré : si une requête est perdue (réseau, 500, expiration) et que la suivante arrive avec
+deux tours d'avance, l'adaptateur ne traitait que le dernier.
+
+    Vapi envoie : [« J'ai une fuite, j'habite Nogent-sur-Marne 94130 »,
+                   « Dupont, 06 12 34 56 78 »]
+    traité       : [« Dupont, 06 12 34 56 78 »]
+    slots        : {telephone_rappel} — commune, code postal et problème PERDUS
+
+L'information était dans la charge utile. On la jetait. Et le client n'a aucune raison de
+redire ce qu'il a déjà dit : c'est le « Déjà dit. » de R59, vu par un autre chemin.
+
+`textes[traites:]` rattrape le retard, dans l'ordre. Avec une **borne** à trois tours : un
+retard de un ou deux vient d'une requête perdue, ce qui arrive ; un retard de dix voudrait
+dire que plusieurs requêtes consécutives ont échoué, et rejouer dix tours dans une seule
+requête HTTP ferait expirer l'appel — le client entendrait le silence, ce qui est pire que
+de perdre un tour.
+
+### Ce que le mock change vraiment, puisque la question était là
+
+Il ne tourne **jamais** au téléphone — sauf comme filet : `ResilientLLM` y retombe si l'API
+échoue, pour ne jamais rester muet. Là où il compte, c'est sur ce que nos tests peuvent
+VOIR. Quand il est *meilleur* que Haiku sur un point, un test passe et la production casse :
+c'est exactement T14, dont la regex refusait douze chiffres là où Haiku les tronquait (R55).
+R26, R42, R47, R55 viennent tous de cet écart — et c'est ce qui justifie le coût de l'éval
+réelle.
+
+### Trois bancs de mutation à recalibrer, et une mutation resurvécue
+
+Le rattrapage a déplacé le traitement du tour courant : l'ancre de R41 (« c'est le PREMIER
+tour qui est traité ») visait un index qui n'existe plus, et la mutation « la transcription
+qui se précise n'est traitée par personne » appartient désormais au banc de R59, seul à
+exercer ce cas. **Un correctif qui touche un chemin partagé périme les mutations de tous les
+tests qui passent par là** — c'est la troisième fois aujourd'hui, et ça vaut d'être su :
+après un changement d'architecture, rejouer les bancs voisins, pas seulement le nouveau.
+
+Suite : **64 PASS**. Mutations 5/5 (R60), 6/6 (R59), 14/14 (R41), contrat Postgres rejoué.
 
 ---
 

@@ -3571,6 +3571,169 @@ def check_creneaux_verbatim() -> bool:
     return True
 
 
+def check_rattrapage_des_tours_manques() -> bool:
+    """R60 : un tour que nous n'avons pas traité est RATTRAPÉ, pas perdu.
+
+    Trouvé le 26/08 en répondant à une question de Geoffrey : « à quel point le mock joue
+    sur le comportement de Haiku ? Normalement l'IA aurait dû pouvoir couvrir les infos de
+    la conversation, non ? »
+
+    La réponse est que l'IA ne voit jamais l'historique — c'est le contrôleur qui tient
+    l'état (règle n°1). Mais la question portait juste, et par un autre chemin : **la
+    plateforme nous envoie tout l'historique, et nous ne lisions que le dernier message.**
+
+    Mesuré : si une requête est perdue (réseau, 500, expiration) et que la suivante arrive
+    avec deux tours d'avance, l'adaptateur traitait uniquement le dernier —
+
+        Vapi envoie : [« J'ai une fuite, j'habite Nogent-sur-Marne 94130 »,
+                       « Dupont, 06 12 34 56 78 »]
+        traité       : [« Dupont, 06 12 34 56 78 »]
+        slots        : {telephone_rappel} — commune, code postal et problème PERDUS
+
+    L'information était dans la charge utile. On la jetait. Et le client, lui, n'a aucune
+    raison de redire ce qu'il a déjà dit — c'est exactement le « Déjà dit. » de R59.
+
+    Le rattrapage a une BORNE : au-delà de trois tours de retard, on ne traite que les
+    trois derniers. Un retard de un ou deux vient d'une requête perdue, ce qui arrive ; un
+    retard de dix voudrait dire que plusieurs requêtes consécutives ont échoué, et rejouer
+    dix tours dans une seule requête HTTP ferait expirer l'appel — le client entendrait le
+    silence, ce qui est pire que de perdre un tour.
+    """
+    try:
+        from fastapi.testclient import TestClient
+    except ImportError:
+        print("   fastapi/httpx absents : pip install -r requirements.txt")
+        return False
+
+    from relais_proto.api import creer_app
+    from relais_proto.registre import Artisan, Registre, empreinte as emp_token
+
+    SECRET = "secret-voix"
+    APPEL = "01a03acb-34da-7ee6-aceb-3fa46a379efe"
+    AUTH = {"Authorization": f"Bearer {SECRET}"}
+
+    def monter():
+        registre = Registre([Artisan("art-dupont", "+33189701234",
+                                     emp_token("tok"), CFG)], emp_token(SECRET))
+        depot = DepotMemoire()
+        app = creer_app(depot, registre, MockLLM, lambda: LUNDI_9H,
+                        base_url="https://relais.test", cookie_secure=False,
+                        voix_artisan_defaut="art-dupont")
+        return depot, app
+
+    def charge(tours):
+        messages = [{"role": "system", "content": "You are Riley."}]
+        for role, texte in tours:
+            messages.append({"role": role, "content": texte})
+        return {"model": "gpt-4", "messages": messages,
+                "call": {"id": APPEL, "type": "webCall"}}
+
+    # (a) DEUX tours d'avance : le tour manqué est rattrapé, pas perdu
+    depot, app = monter()
+    with TestClient(app) as c:
+        c.post("/voix/vapi/chat/completions", json=charge([]), headers=AUTH)
+        accueil = depot.appel(APPEL).etat_conversation["transcript"][0][1]
+        c.post("/voix/vapi/chat/completions",
+               json=charge([("assistant", accueil),
+                            ("user", "J'ai une fuite d'eau, j'habite Nogent-sur-Marne "
+                                     "94130"),
+                            ("assistant", "…"),
+                            ("user", "Dupont, 06 12 34 56 78")]), headers=AUTH)
+        etat = depot.appel(APPEL).etat_conversation
+        clients = [t for r, t in etat["transcript"] if r == "client"]
+        if len(clients) != 2:
+            print(f"   {len(clients)} tour(s) traité(s) au lieu de 2 : {clients}")
+            return False
+        manquants = [k for k in ("commune", "code_postal", "telephone_rappel")
+                     if not etat["slots"].get(k)]
+        if manquants:
+            print(f"   slots perdus malgré le rattrapage : {manquants} — "
+                  f"{etat['slots']}")
+            return False
+        # l'ORDRE compte : la commune avant le numéro, sinon le contrôleur ne peut pas
+        # avoir demandé le numéro
+        if clients[0] != "J'ai une fuite d'eau, j'habite Nogent-sur-Marne 94130":
+            print(f"   les tours sont rattrapés dans le mauvais ordre : {clients}")
+            return False
+
+    # (b) le cas NORMAL (un seul tour d'avance) n'est pas altéré
+    depot, app = monter()
+    with TestClient(app) as c:
+        c.post("/voix/vapi/chat/completions", json=charge([]), headers=AUTH)
+        accueil = depot.appel(APPEL).etat_conversation["transcript"][0][1]
+        c.post("/voix/vapi/chat/completions",
+               json=charge([("assistant", accueil),
+                            ("user", "J'ai une fuite d'eau dans la salle de bain")]),
+               headers=AUTH)
+        clients = [t for r, t in
+                   depot.appel(APPEL).etat_conversation["transcript"]
+                   if r == "client"]
+        if clients != ["J'ai une fuite d'eau dans la salle de bain"]:
+            print(f"   un tour normal est traité de travers : {clients}")
+            return False
+
+    # (b-bis) une conversation NORMALE sur plusieurs tours ne rejoue rien : chaque
+    # requête n'apporte qu'un tour, et les précédents ne doivent pas être retraités.
+    # Sans ce contrôle, rejouer TOUT l'historique à chaque tour passait inaperçu — le
+    # nombre de tours finissait juste par être faux, ce que (a) ne regardait pas.
+    depot, app = monter()
+    with TestClient(app) as c:
+        c.post("/voix/vapi/chat/completions", json=charge([]), headers=AUTH)
+        accueil = depot.appel(APPEL).etat_conversation["transcript"][0][1]
+        tours = [("assistant", accueil)]
+        dits = ["J'ai une fuite d'eau dans la salle de bain", "Nogent-sur-Marne 94130",
+                "Dupont, 06 12 34 56 78"]
+        for d in dits:
+            tours.append(("user", d))
+            c.post("/voix/vapi/chat/completions", json=charge(tours), headers=AUTH)
+            tours.append(("assistant", "…"))
+        clients = [t for r, t in
+                   depot.appel(APPEL).etat_conversation["transcript"] if r == "client"]
+        if clients != dits:
+            print(f"   une conversation normale rejoue des tours : {clients}")
+            return False
+
+    # (c) le RETARD EST BORNÉ : au-delà de trois tours, on ne rejoue que les trois
+    # derniers. Rejouer dix tours dans une requête HTTP ferait expirer l'appel.
+    depot, app = monter()
+    with TestClient(app) as c:
+        c.post("/voix/vapi/chat/completions", json=charge([]), headers=AUTH)
+        accueil = depot.appel(APPEL).etat_conversation["transcript"][0][1]
+        tours = [("assistant", accueil)]
+        for i in range(8):
+            tours += [("user", f"tour numéro {i}"), ("assistant", "…")]
+        c.post("/voix/vapi/chat/completions", json=charge(tours), headers=AUTH)
+        clients = [t for r, t in
+                   depot.appel(APPEL).etat_conversation["transcript"]
+                   if r == "client"]
+        if len(clients) > 3:
+            print(f"   {len(clients)} tours rejoués d'un coup : l'appel expirerait")
+            return False
+        if not clients:
+            print("   un retard important ne rattrape plus rien")
+            return False
+        # ce sont les PLUS RÉCENTS qu'on garde : c'est le contexte utile
+        if clients[-1] != "tour numéro 7":
+            print(f"   le tour le plus récent n'est pas traité : {clients}")
+            return False
+
+    # (d) et un vrai REJEU ne fait toujours rien avancer (R41, R59)
+    depot, app = monter()
+    with TestClient(app) as c:
+        c.post("/voix/vapi/chat/completions", json=charge([]), headers=AUTH)
+        accueil = depot.appel(APPEL).etat_conversation["transcript"][0][1]
+        tours = [("assistant", accueil), ("user", "J'ai une fuite dans la salle de bain")]
+        c.post("/voix/vapi/chat/completions", json=charge(tours), headers=AUTH)
+        import json as _json
+        avant = _json.dumps(depot.appel(APPEL).etat_conversation, sort_keys=True)
+        c.post("/voix/vapi/chat/completions", json=charge(tours), headers=AUTH)
+        if _json.dumps(depot.appel(APPEL).etat_conversation,
+                       sort_keys=True) != avant:
+            print("   un rejeu franc fait avancer le contrôleur")
+            return False
+    return True
+
+
 def check_rejeu_vs_transcription_qui_se_precise() -> bool:
     """R59 : un tour dont la TRANSCRIPTION se précise n'est pas un rejeu.
 
@@ -6578,6 +6741,14 @@ def run() -> int:
     if check_rejeu_vs_transcription_qui_se_precise():
         print("   → une transcription qui se précise n'est plus prise pour un "
               "rejeu, et un rejeu franc ne fait toujours rien avancer : ✅ PASS")
+    else:
+        print("   → ❌ FAIL")
+        echecs += 1
+
+    print(f"\n──── R60_rattrapage_tours_manques ────")
+    if check_rattrapage_des_tours_manques():
+        print("   → un tour que nous n'avons pas traité est rattrapé dans l'ordre, "
+              "avec une borne, et un rejeu franc ne bouge toujours pas : ✅ PASS")
     else:
         print("   → ❌ FAIL")
         echecs += 1
