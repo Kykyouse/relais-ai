@@ -61,8 +61,15 @@ _RE_MARKDOWN = re.compile(
     re.MULTILINE)
 
 
-_RE_SALUTATION = re.compile(r"^\s*(bonjour|bonsoir|salut|re-?bonjour)\b",
-                            re.IGNORECASE)
+# Salutation, où qu'elle soit dans la réplique. L'ancrage en tête a été RETIRÉ le 26/08 :
+# le sixième appel réel a produit « Pouvez-vous ? Oui, Bonjour, vous avez une fuite… », où
+# le « Bonjour » est au milieu et passait donc à travers.
+#
+# J'avais ancré le motif pour protéger « dites-lui bonjour de ma part », et j'avais même
+# écrit un test qui l'exigeait. Cette phrase n'existe pas dans ce produit ; le « Bonjour »
+# perdu au milieu d'une réplique, lui, s'est produit. Un garde-fou calibré sur un cas
+# imaginé plutôt que sur un cas observé protège le mauvais côté.
+_RE_SALUTATION = re.compile(r"\b(bonjour|bonsoir|salut|re-?bonjour)\b", re.IGNORECASE)
 
 # Tutoiement. Les formes retenues sont celles qui ne sont QUE des marques de deuxième
 # personne du singulier : « tu », « te », « toi », « ton », « ta », « tes », et l'élision « t'a /
@@ -119,6 +126,23 @@ def check_output(text: str, config: dict, rdv_valide: bool = False,
     if m := _RE_TUTOIEMENT.search(text or ""):
         violations.append(f"tutoiement:{m.group(0)}")
 
+    # 8. Plusieurs questions dans une seule réplique.
+    #
+    # Sixième appel réel du 26/08 : « Pouvez-vous ? Oui, Bonjour, vous avez une fuite dans
+    # la salle de bain ? D'accord, dites-moi, vous êtes sur quelle commune ? » — trois
+    # points d'interrogation.
+    #
+    # Au téléphone, c'est pire qu'inélégant : l'appelant répond à celle qu'il a retenue, et
+    # le contrôleur reçoit une réponse à une question qu'il n'a pas posée. Le slot attendu
+    # n'arrive pas, la question est reposée, et l'appelant a l'impression de se répéter —
+    # c'est le mécanisme exact des boucles qu'on passe notre temps à borner.
+    #
+    # La règle ne contraint que le FORMULEUR : aucune instruction du contrôleur, aucun
+    # gabarit de message ne pose plus d'une question (vérifié). Le repli est donc toujours
+    # une réplique valide.
+    if (text or "").count("?") > 1:
+        violations.append(f"questions_multiples:{(text or '').count('?')}")
+
     # 6. Re-salutation. On dit bonjour une fois par conversation, et l'accueil l'a déjà
     # fait. Le formuleur resalue parce que chaque tour lui arrive comme un début — au
     # téléphone le 26/08, l'agent a dit « Bonjour » au deuxième tour, juste après avoir
@@ -134,7 +158,7 @@ def check_output(text: str, config: dict, rdv_valide: bool = False,
     # la phrase de la sonde commencent par « Bonjour », légitimement. Un SMS est un
     # premier contact, pas un tour de conversation. Le défaut d'un garde-fou doit être de
     # ne rien interdire à ceux qui ne l'ont pas demandé.
-    if en_conversation and _RE_SALUTATION.match(text or ""):
+    if en_conversation and _RE_SALUTATION.search(text or ""):
         violations.append("resalutation")
 
     # 5. Mise en forme markdown : même finalité, autre mécanisme (ce sont des caractères

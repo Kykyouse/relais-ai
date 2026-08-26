@@ -22,7 +22,7 @@ point d'entrée du produit. Plus rien d'autre n'est bloqué côté code.
 
 ```bash
 cd proto
-python run_scenario.py                              # 55 tests, ~3 s, sans clé ni base
+python run_scenario.py                              # 57 tests, ~3 s, sans clé ni base
 python semer_artisans.py [--ecrire]                 # amorce la table `artisan`
 python run_depot_pg.py [--migrer]                   # contrat du port contre Supabase
 uvicorn serveur:app --port 8000                     # API HTTP
@@ -69,6 +69,8 @@ python run_llm_eval.py [--mock] [--n 3]             # éval appelant-simulé
 | Code postal avec barre, commune vérifiée (R49) | ✅ | mock, mutations 6/6 |
 | Code postal validé par le contrôleur (R50) | ✅ | mock, mutations 7/8 (1 défense en profondeur, vérifiée) |
 | Vouvoiement, jamais de tutoiement (R51) | ✅ | mock, *idem* |
+| Aucune salutation en conversation (R52) | ✅ | mock, mutations 7/7 |
+| Une seule question par réplique (R53) | ✅ | mock, *idem* — **contrôle AST de toutes les instructions** |
 | Identifiant d'appel imposé au dépôt (port) | ✅ | **contrat rejoué sur Supabase** |
 
 ## Ce qui est encore un double (et non un manque caché)
@@ -422,6 +424,58 @@ Trois mesures d'oreille, consignées comme données d'arbitrage :
    courtes, mais **à activer** (`stopSpeakingPlan`) : les tours verbatim longs
    (récapitulatif de RDV, consignes de sécurité) sont exactement ceux qu'un appelant
    pressé voudra couper. Décision réversible, à trancher à l'oreille.
+
+---
+
+## Session du 26/08/2026 (suite) — R52/R53 : quand un garde-fou trouve d'abord notre faute
+
+Sixième appel réel. Une seule réplique, deux défauts :
+
+    Agent: « Pouvez-vous ? Oui, Bonjour, vous avez une fuite dans la salle de bain ?
+             D'accord, dites-moi, vous êtes sur quelle commune ? »
+
+### R52 — la salutation n'était interdite qu'en TÊTE de réplique
+
+R46 signalait la re-salutation, mais ancrée au début. Ici le « Bonjour » est au milieu,
+précédé d'un fragment, et il passe.
+
+**C'était mon jugement, et la production le contredit.** J'avais ancré le motif pour
+protéger une phrase comme « dites-lui bonjour de ma part », et j'avais même écrit un test
+qui l'exigeait. Cette phrase n'existe pas dans ce produit ; le « Bonjour » perdu au milieu
+d'une réplique, lui, s'est produit. *Un garde-fou calibré sur un cas imaginé plutôt que sur
+un cas observé protège le mauvais côté.* L'exception a été retirée, et le test qui la
+défendait porte désormais la note de sa suppression.
+
+### R53 — une réplique ne pose qu'une question
+
+Trois points d'interrogation. Au téléphone, c'est pire qu'inélégant : l'appelant répond à
+celle qu'il a retenue, et le contrôleur reçoit une réponse à une question qu'il n'a pas
+posée. Le slot attendu n'arrive pas, la question est reposée, et l'appelant a l'impression
+de se répéter. **C'est le mécanisme exact des boucles qu'on passe notre temps à borner** —
+R48 et R32 en traitaient les symptômes.
+
+### Et le garde-fou a trouvé notre faute avant celle du formuleur
+
+Premier effet de la règle : **deux tests existants sont tombés** (R38, R45). Cause :
+l'instruction de S1 posait elle-même deux questions —
+
+    « Pouvez-vous me préciser ce qui vous arrive ? Une fuite, un souci de chauffage,
+      autre chose ? »
+
+Les exemples sont une liste, pas une seconde question : un tiret les rattache désormais à
+la première.
+
+Ce que cet incident révèle est plus important que la coquille. **Quand une instruction du
+contrôleur viole un garde-fou, `_say` replie sur `safe_fallback`** — une phrase générique
+(« je préfère laisser Julien vous répondre »). L'agent devient donc MUET sur cet état-là,
+sans erreur, sans trace ailleurs que dans le lead. R53 inscrit donc un contrôle
+**exhaustif par lecture de l'arbre syntaxique** de toutes les instructions `_say` : pas un
+balayage de scénarios, qui en manquerait toujours un.
+
+Ma vérification préalable, elle, était un `grep` sur des littéraux d'une seule ligne — et
+l'instruction fautive était écrite sur deux. Deuxième fois de la journée qu'un contrôle
+approximatif me fait croire une chose fausse (la première : `grep` et « vous **êtes** »).
+Pour affirmer une propriété sur tout le code, lire le code, pas des lignes.
 
 ---
 

@@ -3551,6 +3551,195 @@ def check_creneaux_verbatim() -> bool:
     return True
 
 
+def check_salutation_nulle_part() -> bool:
+    """R52 : après l'accueil, l'agent ne salue plus — NULLE PART dans la réplique.
+
+    Sixième appel réel du 26/08. L'agent a répondu :
+
+        « Pouvez-vous ? Oui, Bonjour, vous avez une fuite dans la salle de bain ?
+          D'accord, dites-moi, vous êtes sur quelle commune ? »
+
+    R46 signalait la re-salutation, mais **en tête de réplique seulement**. Ici le
+    « Bonjour » est au milieu, précédé d'un fragment — et il passe.
+
+    **C'était mon jugement, et la production le contredit.** J'avais ancré le motif pour
+    protéger une phrase comme « dites-lui bonjour de ma part », en écrivant même un test
+    qui l'exigeait. Cette phrase n'existe pas dans ce produit ; le « Bonjour » perdu au
+    milieu d'une réplique, lui, s'est produit. Un garde-fou calibré sur un cas imaginé
+    plutôt que sur un cas observé protège le mauvais côté.
+
+    La règle devient donc : dans un tour de CONVERSATION, aucune salutation, où qu'elle
+    soit. L'accueil garde la sienne — il est le seul tour où `en_conversation` vaut faux.
+    """
+    from relais_proto.guards import check_output
+    from relais_proto.engine import Conversation
+
+    # (a) la réplique verbatim du 26/08, et ses variantes de position
+    verbatim = ("Pouvez-vous ? Oui, Bonjour, vous avez une fuite dans la salle de bain ? "
+                "D'accord, dites-moi, vous êtes sur quelle commune ?")
+    for texte in (verbatim,
+                  "Oui, bonjour, vous êtes où ?",
+                  "Alors — bonsoir ! Vous êtes sur quelle commune ?",
+                  "Merci et bonjour à vous",           # ancienne exception, retirée
+                  "Bonjour, vous êtes où ?"):
+        if not any(v.startswith("resalutation") for v in
+                   check_output(texte, CFG, en_conversation=True)):
+            print(f"   salutation non signalée en conversation : « {texte[:70]} »")
+            return False
+
+    # (b) l'accueil, lui, salue — et c'est le seul
+    if check_output("Bonjour, vous êtes bien chez Dupont Chauffage.", CFG):
+        print("   la salutation d'ACCUEIL est signalée à tort")
+        return False
+    # ...et hors conversation (SMS, pages), rien n'est interdit : un SMS est un premier
+    # contact, pas un tour de dialogue
+    if check_output("Bonjour, Julien vous confirme le rendez-vous.", CFG):
+        print("   un message écrit est traité comme un tour de conversation")
+        return False
+
+    # (c) de bout en bout : le repli sort une réplique propre
+    class FormuleurBrouillon(MockLLM):
+        def reply(self, instruction, context):
+            return "Pouvez-vous ? Oui, Bonjour, " + instruction
+
+    convo = Conversation(CFG, FormuleurBrouillon(), CalendarStub(CFG, now=LUNDI_9H))
+    accueil = convo.open()
+    if "bonjour" not in accueil.lower():
+        print(f"   l'accueil ne salue plus : « {accueil} »")
+        return False
+    dit = convo.process("J'ai une fuite dans la salle de bain")
+    if "bonjour" in dit.lower():
+        print(f"   une salutation passe encore en conversation : « {dit} »")
+        return False
+    if "Pouvez-vous ?" in dit:
+        print(f"   le fragment de brouillon passe encore : « {dit} »")
+        return False
+    return True
+
+
+def check_une_seule_question() -> bool:
+    """R53 : une réplique ne pose qu'UNE question.
+
+    Même réplique du sixième appel, autre défaut : trois points d'interrogation.
+
+        « Pouvez-vous ? … une fuite dans la salle de bain ? … quelle commune ? »
+
+    Au téléphone, c'est pire qu'inélégant : l'appelant répond à celle qu'il a retenue —
+    souvent la première, ou la dernière — et le contrôleur reçoit une réponse à une
+    question qu'il n'a pas posée. Le slot attendu n'arrive pas, la question est reposée, et
+    l'appelant a l'impression de se répéter. C'est le mécanisme exact des boucles qu'on
+    passe notre temps à borner.
+
+    Le contrôleur, lui, ne pose JAMAIS deux questions : vérifié sur toutes ses instructions
+    et sur tous les gabarits de messages. La règle ne contraint donc que le formuleur, et
+    elle le contraint à respecter ce que le contrôleur avait déjà décidé.
+    """
+    import pathlib
+
+    import relais_proto.engine
+    from relais_proto.guards import check_output
+    from relais_proto.engine import Conversation
+
+    # (a) plusieurs questions = signalé
+    for texte in ("Pouvez-vous ? Oui, vous avez une fuite ? Vous êtes où ?",
+                  "Vous êtes où ? Et à quel nom ?",
+                  "C'est bien ça ? Vous confirmez ?"):
+        if not any(v.startswith("questions_multiples") for v in
+                   check_output(texte, CFG)):
+            print(f"   plusieurs questions non signalées : « {texte} »")
+            return False
+
+    # (b) une seule question, ou aucune : rien à signaler
+    for texte in ("Très bien. À quel nom, et sur quel numéro Julien peut vous confirmer "
+                  "le rendez-vous ?",
+                  "Je répète votre numéro : 06 12 34 56 78, c'est bien ça ? Répondez "
+                  "simplement oui ou non.",
+                  "J'ai besoin de votre commune ou code postal pour vérifier qu'on "
+                  "intervient chez vous — vous êtes où ?",
+                  "L'appel est terminé. Bonne journée !",
+                  "Je vous réserve demain entre 08h et 10h."):
+        violations = [v for v in check_output(texte, CFG)
+                      if v.startswith("questions_multiples")]
+        if violations:
+            print(f"   faux positif : « {texte[:60]} » → {violations}")
+            return False
+
+    # (c) AUCUNE instruction du contrôleur ne pose plus d'une question. C'est ce qui rend
+    # la règle applicable : le repli est toujours une réplique valide.
+    convo = Conversation(CFG, MockLLM(), CalendarStub(CFG, now=LUNDI_9H))
+    convo.open()
+    lignes = ("J'ai une fuite d'eau dans la salle de bain", "Nogent-sur-Marne 94130",
+              "Geoffrey, 06 12 34 56 78", "Oui c'est bien ça", "Demain")
+    for ligne in lignes:
+        if convo.state.value in ("S11", "FIN"):
+            break
+        dit = convo.process(ligne)
+        if dit.count("?") > 1:
+            print(f"   le contrôleur lui-même pose deux questions : « {dit} »")
+            return False
+
+    # (c-bis) contrôle EXHAUSTIF de toutes les instructions du contrôleur, par lecture de
+    # l'arbre syntaxique. Pas un balayage de scénarios : il en manquerait toujours un.
+    #
+    # C'est le contrôle qui compte le plus de tout ce test. Si une instruction viole un
+    # garde-fou, `_say` replie sur `safe_fallback` — une phrase générique (« je préfère
+    # laisser Julien vous répondre »). L'agent devient donc MUET sur cet état-là, sans
+    # erreur, sans trace visible ailleurs que dans le lead. C'est exactement ce qui s'est
+    # produit en écrivant ce test : l'instruction de S1 posait deux questions, et le
+    # premier effet du nouveau garde-fou a été de casser deux tests existants.
+    import ast
+
+    def _litteral(noeud):
+        """La part LITTÉRALE d'un argument de `_say` : les f-strings sont recomposées, et
+        les valeurs interpolées remplacées par un jeton neutre (elles ne portent pas de
+        ponctuation)."""
+        if isinstance(noeud, ast.Constant) and isinstance(noeud.value, str):
+            return noeud.value
+        if isinstance(noeud, ast.JoinedStr):
+            return "".join(_litteral(v) for v in noeud.values)
+        if isinstance(noeud, ast.FormattedValue):
+            return "X"
+        if isinstance(noeud, ast.BinOp):
+            return _litteral(noeud.left) + _litteral(noeud.right)
+        return ""
+
+    chemin = pathlib.Path(relais_proto.engine.__file__)
+    arbre = ast.parse(chemin.read_text(encoding="utf-8"))
+    fautives = []
+    for n in ast.walk(arbre):
+        if isinstance(n, ast.Call) and isinstance(n.func, ast.Attribute) \
+                and n.func.attr == "_say" and n.args:
+            t = _litteral(n.args[0])
+            if t.count("?") > 1:
+                fautives.append((n.lineno, t[:80]))
+    if fautives:
+        for ligne, t in fautives:
+            print(f"   engine.py:{ligne} pose deux questions : « {t} » — l'agent y "
+                  f"repliera sur une phrase générique")
+        return False
+
+    # (d) de bout en bout : un formuleur bavard est replié
+    class FormuleurQuestionneur(MockLLM):
+        def reply(self, instruction, context):
+            return "Pouvez-vous répéter ? Et sinon, " + instruction
+
+    convo2 = Conversation(CFG, FormuleurQuestionneur(),
+                          CalendarStub(CFG, now=LUNDI_9H))
+    convo2.open()
+    dit = convo2.process("J'ai une fuite dans la salle de bain")
+    if dit.count("?") > 1:
+        print(f"   deux questions passent encore : « {dit} »")
+        return False
+    if not any(v.startswith("questions_multiples") for v in convo2.flags["violations"]):
+        print(f"   la violation n'est pas tracée : {convo2.flags['violations']}")
+        return False
+    # le repli est bien l'instruction du contrôleur, pas une phrase générique
+    if "commune" not in dit.lower():
+        print(f"   le repli perd la question du contrôleur : « {dit} »")
+        return False
+    return True
+
+
 def check_code_postal_valide() -> bool:
     """R50 : un code postal qui n'en est pas un ne décide RIEN — et surtout pas un refus.
 
@@ -4139,9 +4328,10 @@ def check_pas_de_resalutation() -> bool:
     # un « bonjour » AILLEURS que juste après l'accueil est le seul cas visé : on ne
     # censure pas le mot lui-même (« dites-lui bonjour de ma part » resterait légitime)
     from relais_proto.guards import check_output
-    if check_output("Merci et bonjour à vous", CFG, en_conversation=True):
-        print("   le mot « bonjour » est censuré partout, pas seulement en tête")
-        return False
+    # NOTE : ce test exigeait auparavant que « Merci et bonjour à vous » PASSE — la
+    # salutation n'étant signalée qu'en tête de réplique. Le sixième appel réel du 26/08 a
+    # montré un « Bonjour » perdu au MILIEU d'une réplique, et la règle a été élargie
+    # (R52). L'exception protégeait un cas imaginé contre un cas observé.
     if not check_output("Bonjour, vous êtes où ?", CFG, en_conversation=True):
         print("   une salutation en tête de réplique n'est pas signalée")
         return False
@@ -5557,6 +5747,22 @@ def run() -> int:
     if check_vouvoiement():
         print("   → le tutoiement est signalé partout et replié, sans faux "
               "positif sur le français du produit : ✅ PASS")
+    else:
+        print("   → ❌ FAIL")
+        echecs += 1
+
+    print(f"\n──── R52_salutation_nulle_part ────")
+    if check_salutation_nulle_part():
+        print("   → aucune salutation dans un tour de conversation, où qu'elle "
+              "soit dans la réplique ; l'accueil garde la sienne : ✅ PASS")
+    else:
+        print("   → ❌ FAIL")
+        echecs += 1
+
+    print(f"\n──── R53_une_seule_question ────")
+    if check_une_seule_question():
+        print("   → une réplique ne pose qu'une question, et le contrôleur n'en "
+              "a jamais posé deux : ✅ PASS")
     else:
         print("   → ❌ FAIL")
         echecs += 1

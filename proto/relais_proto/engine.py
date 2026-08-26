@@ -418,8 +418,12 @@ class Conversation:
     def _s1(self, ex: dict) -> str:
         p = self.slots["prestation"]
         if p is None:
-            return self._say("Pouvez-vous me préciser ce qui vous arrive ? "
-                             "Une fuite, un souci de chauffage, autre chose ?")
+            # UNE seule question (R53), et le garde-fou a trouvé celle-ci chez nous
+            # avant de trouver quoi que ce soit chez le formuleur. Les exemples sont une
+            # liste, pas une seconde question : un tiret les rattache à la première.
+            # Deux points d'interrogation, au téléphone, font répondre à l'une des deux.
+            return self._say("Pouvez-vous me préciser ce qui vous arrive — une fuite, "
+                             "un souci de chauffage, autre chose ?")
         if p in self.cfg["prestations"]["refusees"] :
             return self._hors_perimetre()
         if p not in self.cfg["prestations"]["couvertes"]:
