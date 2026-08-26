@@ -233,16 +233,27 @@ PERSONAS = {
                    "Roux, 06 10 15 47 68 79", "06 44 55 66 77", "Oui", "Le premier"],
     },
     "T15_code_postal_en_lettres": {
-        "role": ("Mme Chevalier, âgée, elle parle lentement. Fuite sous l'évier. Tu ne "
-                 "dis JAMAIS ton code postal en chiffres : tu le prononces en toutes "
-                 "lettres, « quatre-vingt-quatorze, cent trente », comme on le dit au "
-                 "téléphone. Ton numéro : 06 33 44 55 66. Tu es disponible n'importe "
-                 "quand."),
+        # ⚠️ LA COMMUNE EST ÉPINGLÉE, et c'est indispensable. Premier jet : le rôle
+        # imposait le code postal en lettres sans nommer la commune, et l'appelant simulé
+        # en a inventé une — Créteil, puis Ivry-sur-Seine — dont le VRAI code postal
+        # contredisait celui qu'il prononçait. Le modèle a tranché en faveur de la
+        # commune, ce qui est défendable sur une entrée contradictoire, et le persona a
+        # produit deux faux échecs.
+        #
+        # Deuxième fois qu'un de mes personas dérive ainsi (après T07). La règle :
+        # **un persona doit épingler tout fait que le verdict affirme.** Si le verdict
+        # exige cp=94130, le rôle doit faire de 94130 la seule réponse cohérente.
+        "role": ("Mme Chevalier, âgée, elle parle lentement. Fuite sous l'évier. Tu "
+                 "habites NOGENT-SUR-MARNE et nulle part ailleurs. Tu ne dis JAMAIS ton "
+                 "code postal en chiffres : tu le prononces en toutes lettres, "
+                 "« quatre-vingt-quatorze, cent trente », comme on le dit au téléphone. "
+                 "Ton numéro : 06 33 44 55 66. Tu es disponible n'importe quand."),
         "cache": "Si on te demande de répéter, tu redis la même chose en lettres — tu "
-                 "ne penses pas à épeler les chiffres.",
+                 "ne penses pas à épeler les chiffres. Tu ne nommes JAMAIS une autre "
+                 "commune que Nogent-sur-Marne.",
         "attendu": {"categorie": "rdv_reserve", "rdv": True, "cp": "94130"},
         "script": ["J'ai une fuite sous l'évier",
-                   "quatre-vingt-quatorze, cent trente",
+                   "Nogent-sur-Marne, quatre-vingt-quatorze, cent trente",
                    "Chevalier, 06 33 44 55 66", "Oui", "Le premier"],
     },
     "T16_appelant_se_reprend": {

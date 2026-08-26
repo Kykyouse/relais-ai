@@ -92,6 +92,38 @@ class Conversation:
     OVERWRITABLE = {"code_postal", "commune", "disponibilites"}
 
     @staticmethod
+    def _numero_suspect(texte: str, numero: str, cp: str | None = None) -> bool:
+        """Vrai si `numero` a l'air TRONQUÉ de ce qui a été dit dans `texte`.
+
+        La limite de tout contrôle de FORME (`_numero_fr`) : il ne dit rien de la
+        correspondance entre ce qui est extrait et ce qui a été prononcé. Le 26/08, l'éval
+        réelle a montré le modèle rendre « 0610154768 » là où l'appelant avait dicté douze
+        chiffres — une forme irréprochable, et deux chiffres perdus. Trois passages sur
+        trois, et exactement le défaut de l'appel vocal du matin.
+
+        La signature d'une troncature est nette : le numéro extrait est un **préfixe
+        strict** d'une suite de chiffres présente dans la phrase. Un numéro donné
+        normalement est ÉGAL à sa suite, pas un morceau de suite.
+
+        Une suite s'interrompt sur autre chose qu'un chiffre, une espace, un point ou un
+        tiret — donc « j'ai 2 enfants, mon numéro est 06 12 34 56 78 » en contient deux,
+        et la seconde est le numéro entier. La virgule coupe volontairement : elle sépare
+        des choses, elle ne les compose pas.
+
+        Exception : un code postal prononcé juste après le numéro allonge la suite sans
+        rien tronquer. Les chiffres en excès sont alors exactement le code postal.
+        """
+        import re as _re
+
+        for suite in _re.findall(r"\d[\d\s.\-]*\d|\d", texte or ""):
+            chiffres = _re.sub(r"\D", "", suite)
+            if len(chiffres) > len(numero) and chiffres.startswith(numero):
+                if cp and chiffres[len(numero):] == cp:
+                    continue
+                return True
+        return False
+
+    @staticmethod
     def _code_postal_fr(valeur) -> str | None:
         """Un code postal français, ou rien. Cinq chiffres, département 01–98.
 
@@ -180,6 +212,13 @@ class Conversation:
             cp = self._code_postal_fr(suite_de_chiffres(texte, 5))
             if cp:
                 extracted["code_postal"] = cp
+        # Le numéro RENDU par l'extracteur est confronté à ce qui a été dit : une
+        # troncature produit une forme valide, que `_numero_fr` ne peut pas voir (R55).
+        # On l'écarte plutôt que de la corriger — deviner les chiffres manquants serait
+        # exactement la faute qu'on reproche au modèle.
+        rendu = self._numero_fr(extracted.get("telephone_rappel"))
+        if rendu and self._numero_suspect(texte, rendu, extracted.get("code_postal")):
+            extracted.pop("telephone_rappel", None)
         if not extracted.get("telephone_rappel"):
             tel = suite_de_chiffres(texte, 10)
             # `_numero_fr` reste le juge (R42) : on lui soumet un candidat, on ne décide
@@ -449,8 +488,13 @@ class Conversation:
         self.state = State.S2_LOCALISER
         if self.slots["code_postal"]:
             return self._s2({})
+        # VERBATIM. Une question factuelle de six mots n'a rien à gagner à être
+        # reformulée, et beaucoup à perdre : celle-ci a été mutilée trois fois en
+        # production — « Pouvez-vous ? Oui, Bonjour, … », les re-salutations, et un
+        # quiz sur le Vaucluse (« Vous êtes sur Orange. C'est dans le Vaucluse, non ? »)
+        # qui nommait au passage un lieu que nos tables ne connaissent pas.
         self.flags["commune_demandee"] = True
-        return self._say("Vous êtes sur quelle commune ?")
+        return self._say("Vous êtes sur quelle commune ?", verbatim=True)
 
     @staticmethod
     def _normalise(texte: str) -> str:
@@ -655,7 +699,8 @@ class Conversation:
             else:                                          # « non », ou rien d'exploitable
                 self.flags["commune_a_confirmer"] = None
                 self.flags["commune_demandee"] = True
-                return self._say("Vous êtes sur quelle commune ?")
+                # verbatim, comme l'autre occurrence (R56)
+                return self._say("Vous êtes sur quelle commune ?", verbatim=True)
 
         cp = self.slots["code_postal"]
         if cp is None:
@@ -675,14 +720,27 @@ class Conversation:
             #
             # L'appelant garde donc deux chances : la question de `_s1`, puis une relance.
             self.flags["commune_ratees"] = self.flags.get("commune_ratees", 0) + 1
-            if self.flags["commune_ratees"] >= 2:
+            if self.flags["commune_ratees"] >= 3:
                 # On ignore la zone, donc on ne promet aucun RDV : on prend le lead et
                 # Julien rappellera. Un lead exploitable vaut infiniment mieux qu'une
                 # boucle — et c'est déjà ce qu'on fait quand le numéro n'arrive pas.
                 return self._sans_rdv()
             self.flags["commune_demandee"] = True
+            # La SECONDE relance ne répète pas la première : elle demande les cinq
+            # chiffres. C'est la leçon de R43, restée jusqu'ici au journal — le code
+            # postal a sauvé un appel réel que le nom de commune avait perdu deux fois, le
+            # STT entendant « je visite sur Orange » pour « Juvisy-sur-Orge ». Cinq
+            # chiffres résistent à la transcription bien mieux qu'un nom propre.
+            #
+            # C'est aussi ce qui justifie la troisième chance : répéter deux fois la même
+            # question et abandonner n'est pas une conversation. Poser une question
+            # DIFFÉRENTE, si. La borne reste — elle passe de deux tentatives à trois.
+            if self.flags["commune_ratees"] >= 2:
+                return self._say("Je n'arrive pas à situer votre commune. Pouvez-vous me "
+                                 "donner votre code postal, les cinq chiffres ?",
+                                 verbatim=True)
             return self._say("J'ai besoin de votre commune ou code postal pour vérifier "
-                             "qu'on intervient chez vous — vous êtes où ?")
+                             "qu'on intervient chez vous — vous êtes où ?", verbatim=True)
         self.flags["zone"] = self._zone_de(cp)
         if self.flags["zone"] == "hors_zone":
             # NE PAS raccrocher sur une commune glanée au passage. C'est la même règle que
@@ -802,6 +860,13 @@ class Conversation:
                              "sans ça je ne peux pas réserver. Quel est votre numéro ?")
         if not self.slots["tel_confirme"]:
             # correction : un NOUVEAU numéro donné pendant la confirmation remplace l'ancien
+            # `_numero_fr` reste, lui : une mutation de R42 l'avait montré indispensable.
+            # J'y avais AUSSI ajouté la confrontation au texte dit (R55) — inutile, et une
+            # mutation l'a montrée sans effet : `_chiffres_dits` retire déjà tout numéro
+            # suspect de `extracted` avant qu'on arrive ici, et les deux contrôles portent
+            # sur le même texte. Retiré : cinquième fois dans ce projet qu'une mutation
+            # survivante révèle du code mort, et du code mort qui a l'air d'une garantie
+            # est pire que pas de garantie du tout.
             nouveau = self._numero_fr(ex.get("telephone_rappel"))
             if nouveau and nouveau != self.slots["telephone_rappel"]:
                 self.slots["telephone_rappel"] = nouveau

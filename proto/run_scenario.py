@@ -3571,6 +3571,241 @@ def check_creneaux_verbatim() -> bool:
     return True
 
 
+def check_question_commune_verbatim() -> bool:
+    """R56 : la question du secteur est prononcée VERBATIM, et la relance demande les cinq
+    chiffres plutôt que de répéter la même phrase.
+
+    Trouvé par l'éval réelle du 26/08, persona T17 — écrit à partir de l'appel où le STT
+    entendait « je visite sur Orange » pour Juvisy-sur-Orge. Deux passages sur trois :
+
+        client : J'habite je visite sur Orange.
+        agent  : Ah d'accord ! Vous êtes sur Orange. C'est dans le Vaucluse, c'est bien ça ?
+        client : Ben non non, attendez, c'est Zivier-sur-Orge…
+        agent  : Je transmets tout ça à Julien — il vous rappelle sous 2 heures.
+
+    Deux défauts en quatre lignes.
+
+    **Le formuleur a remplacé la question par un quiz de géographie.** L'instruction du
+    contrôleur était « Vous êtes sur quelle commune ? » ; il en a fait une question sur le
+    Vaucluse, et il a nommé « Orange » — un lieu que nos tables ne connaissent pas, ce que
+    R49 interdit au contrôleur mais n'interdisait pas au formuleur. C'est la troisième fois
+    que cette question précise est mutilée (« Pouvez-vous ? Oui, Bonjour… », les
+    re-salutations, le Vaucluse). Une question factuelle de six mots n'a rien à gagner à
+    être reformulée, et beaucoup à perdre. Même remède que R38, R44, R45 : **là où le fond
+    compte, le contrôleur parle lui-même.**
+
+    **Et la borne a lâché pendant que l'appelant insistait.** Deux tentatives, puis repli.
+    R48 avait raison de borner — mais répéter deux fois la même question et abandonner
+    n'est pas une conversation. La relance demande désormais **les cinq chiffres du code
+    postal** : c'est la leçon de R43, où le code postal a sauvé un appel que le nom de
+    commune avait perdu deux fois. Cinq chiffres résistent à la transcription bien mieux
+    qu'un nom propre. Et une troisième chance est accordée, parce que la deuxième question
+    n'est plus la même que la première.
+    """
+    from relais_proto.engine import Conversation
+
+    class FormuleurGeographe(MockLLM):
+        """Double : le formuleur qui transforme la question en quiz, comme au 26/08."""
+        def reply(self, instruction, context):
+            return "Ah d'accord ! Vous êtes sur Orange. C'est dans le Vaucluse, non ?"
+
+    # (a) la question du secteur ne passe plus par le formuleur
+    convo = Conversation(CFG, FormuleurGeographe(), CalendarStub(CFG, now=LUNDI_9H))
+    convo.open()
+    dit = convo.process("j'ai une fuite d'eau dans la salle de bain")
+    if "Vaucluse" in dit or "Orange" in dit:
+        print(f"   le formuleur réécrit encore la question du secteur : « {dit} »")
+        return False
+    if "commune" not in dit.lower():
+        print(f"   la question du secteur n'est plus posée : « {dit} »")
+        return False
+
+    # (b) TROIS chances, et la deuxième relance demande les CINQ CHIFFRES
+    convo2 = Conversation(CFG, MockLLM(), CalendarStub(CFG, now=LUNDI_9H))
+    convo2.open()
+    convo2.process("j'ai une fuite d'eau dans la salle de bain")
+    dites = []
+    for _ in range(5):
+        if convo2.state.value in ("S11", "FIN"):
+            break
+        dites.append(convo2.process("je visite sur Orange"))
+    if len(dites) < 3:
+        print(f"   seulement {len(dites)} tentative(s) avant l'abandon : l'appelant qui "
+              f"insiste n'a pas le temps de se faire comprendre")
+        return False
+    if convo2.state.value not in ("S11", "FIN"):
+        print(f"   la boucle n'est plus bornée ({len(dites)} tours)")
+        return False
+    # la relance ne répète pas la question : elle demande les chiffres
+    if "cinq chiffres" not in dites[1].lower():
+        print(f"   la relance répète la question au lieu de demander les cinq "
+              f"chiffres : « {dites[1]} »")
+        return False
+    if dites[0] == dites[1]:
+        print(f"   les deux relances sont identiques : « {dites[0]} »")
+        return False
+
+    # (c) et l'appelant qui finit par donner ses chiffres au 3ᵉ tour est entendu
+    convo3 = Conversation(CFG, MockLLM(), CalendarStub(CFG, now=LUNDI_9H))
+    convo3.open()
+    convo3.process("j'ai une fuite d'eau dans la salle de bain")
+    convo3.process("je visite sur Orange")
+    convo3.process("Zivier-sur-Orge")
+    convo3.process("le 91260")
+    if convo3.slots["code_postal"] != "91260":
+        print(f"   le code postal donné au 3ᵉ tour n'est pas entendu : "
+              f"{convo3.slots['code_postal']!r}")
+        return False
+    if convo3.flags["categorie"] == "a_rappeler":
+        print("   l'appel est déjà tombé en repli quand le code postal arrive")
+        return False
+
+    # (d) un appelant NORMAL n'est pas ralenti : il répond du premier coup
+    convo4 = Conversation(CFG, MockLLM(), CalendarStub(CFG, now=LUNDI_9H))
+    convo4.open()
+    convo4.process("j'ai une fuite d'eau dans la salle de bain")
+    dit = convo4.process("Nogent-sur-Marne 94130")
+    if "cinq chiffres" in dit.lower() or "commune" in dit.lower():
+        print(f"   un appelant qui répond correctement est relancé : « {dit} »")
+        return False
+    return True
+
+
+def check_numero_confronte_au_dit() -> bool:
+    """R55 : un numéro bien FORMÉ mais tronqué de ce qui a été dit est refusé.
+
+    Trouvé par l'éval réelle du 26/08, sur le persona T14 — écrit exprès à partir de
+    l'appel vocal du matin. Trois passages sur trois, verbatim :
+
+        client : c'est le 06 10 15 47 68 79.
+        agent  : Je répète votre numéro : 06 10 15 47 68, c'est bien ça ?
+        client : Oui c'est bien ça.
+
+    Le défaut de l'appel réel, reproduit à l'identique — alors que R42 était censé le
+    couvrir. Ce que R42 vérifie, c'est la FORME : dix chiffres, commençant par 0, sans
+    lettres. Le modèle, lui, a rendu « 0610154768 » — une forme irréprochable. **Le
+    contrôleur n'avait aucun moyen de savoir que deux chiffres manquaient.**
+
+    C'est la limite de tout contrôle de forme : il ne dit rien de la CORRESPONDANCE entre
+    ce qui est extrait et ce qui a été dit. Il faut donc confronter les deux — et c'est le
+    contrôleur qui le fait, avec le texte brut sous les yeux (règle n°1).
+
+    La signature d'une troncature est nette : le numéro extrait est un **préfixe strict**
+    d'une suite de chiffres présente dans la phrase. « 0610154768 » commence
+    « 061015476879 » et est plus court : suspect. Un numéro donné normalement, lui, est
+    égal à sa suite, pas un morceau de suite.
+
+    Exception nécessaire : un code postal prononcé juste après le numéro allonge la suite
+    sans rien tronquer (« 06 12 34 56 78 94130 »). Les chiffres en excès sont alors
+    exactement le code postal, et on ne signale pas.
+    """
+    from relais_proto.engine import Conversation
+
+    # (a) la confrontation, isolément
+    convo = Conversation(CFG, MockLLM(), CalendarStub(CFG, now=LUNDI_9H))
+    for texte, numero, cp, suspect in (
+            # LE cas : douze chiffres dits, dix extraits
+            ("c'est le 06 10 15 47 68 79", "0610154768", None, True),
+            ("06 10 15 47 68 79", "0610154768", None, True),
+            ("06.10.15.47.68.79", "0610154768", None, True),
+            # un numéro donné normalement n'est jamais suspect
+            ("mon numéro c'est le 06 12 34 56 78", "0612345678", None, False),
+            ("06 12 34 56 78", "0612345678", None, False),
+            ("0612345678", "0612345678", None, False),
+            # d'autres nombres dans la phrase ne rendent rien suspect : ils forment
+            # leurs propres suites, séparées par des mots
+            ("j'ai 2 enfants, mon numéro est 06 12 34 56 78", "0612345678", None, False),
+            ("le 94130, et mon numéro 06 12 34 56 78", "0612345678", "94130", False),
+            # un code postal collé APRÈS le numéro allonge la suite sans la tronquer
+            ("06 12 34 56 78 94130", "0612345678", "94130", False),
+            # mais un vrai chiffre de trop reste suspect, même avec un CP connu
+            ("06 12 34 56 78 9", "0612345678", "94130", True),
+            # une AUTRE suite plus longue, qui ne commence pas par le numéro, ne le rend
+            # pas suspect : un numéro de contrat, un compteur. Sans le `startswith`, tout
+            # long nombre dans la phrase ferait rejeter un numéro parfaitement dicté.
+            ("mon numéro de contrat c'est 123456789012, et mon portable "
+             "06 12 34 56 78", "0612345678", None, False)):
+        vu = convo._numero_suspect(texte, numero, cp)
+        if vu != suspect:
+            print(f"   {texte!r} + {numero!r} : suspect={vu}, attendu {suspect}")
+            return False
+
+    # (b) DE BOUT EN BOUT, la dictée de l'appel réel avec un extracteur qui TRONQUE —
+    # c'est ce que fait le modèle réel, et aucun contrôle de forme ne le voit.
+    class ExtracteurTronqueur(MockLLM):
+        """Double : rend dix chiffres bien formés là où douze ont été dits."""
+        def extract(self, utterance, context):
+            ex = super().extract(utterance, context)
+            if "68 79" in utterance:
+                ex["telephone_rappel"] = "0610154768"
+            return ex
+
+    convo = Conversation(CFG, ExtracteurTronqueur(),
+                         CalendarStub(CFG, now=LUNDI_9H))
+    convo.open()
+    for ligne in ("J'ai une fuite d'eau dans la salle de bain", "Nogent-sur-Marne 94130",
+                  "Roux"):
+        convo.process(ligne)
+    dit = convo.process("mon numéro c'est le 06 10 15 47 68 79")
+    if convo.slots["telephone_rappel"] is not None:
+        print(f"   un numéro TRONQUÉ mais bien formé est retenu : "
+              f"{convo.slots['telephone_rappel']!r}")
+        return False
+    if "06 10 15 47 68" in dit:
+        print(f"   l'agent répète le numéro tronqué : « {dit} »")
+        return False
+    if "pas bien noté" not in dit.lower():
+        print(f"   l'agent ne dit pas qu'il a mal noté : « {dit} »")
+        return False
+
+    # (c) et le vrai numéro, donné ensuite, passe — c'est le déroulé de T14
+    dit = convo.process("pardon, c'est le 06 44 55 66 77")
+    if convo.slots["telephone_rappel"] != "0644556677":
+        print(f"   le numéro corrigé n'est pas retenu : "
+              f"{convo.slots['telephone_rappel']!r} — « {dit} »")
+        return False
+    if "06 44 55 66 77" not in dit:
+        print(f"   le numéro corrigé n'est pas répété verbatim : « {dit} »")
+        return False
+
+    # (c-bis) la CORRECTION en cours de confirmation passe par la même confrontation.
+    # C'est un SECOND chemin d'écriture du slot, et il l'écrit sans repasser par
+    # `_chiffres_dits` : le protéger une fois ne le protège pas deux fois. Exactement la
+    # mutation qui avait survécu sur R42, et qui a resurvécu ici.
+    convo3 = Conversation(CFG, ExtracteurTronqueur(),
+                          CalendarStub(CFG, now=LUNDI_9H))
+    convo3.open()
+    for ligne in ("J'ai une fuite d'eau dans la salle de bain", "Nogent-sur-Marne 94130",
+                  "Roux", "06 44 55 66 77"):
+        convo3.process(ligne)
+    if convo3.slots["telephone_rappel"] != "0644556677":
+        print(f"   préparation : numéro non retenu "
+              f"({convo3.slots['telephone_rappel']!r})")
+        return False
+    dit = convo3.process("non, plutôt le 06 10 15 47 68 79")
+    # Le slot peut légitimement redevenir vide — l'appelant a dit « non », donc effacer et
+    # redemander est juste. Ce qui est INTERDIT, c'est que le numéro tronqué s'installe.
+    # (Première version du test : j'exigeais que l'ancien numéro soit conservé, ce qui
+    # aurait contredit le refus explicite de l'appelant.)
+    if convo3.slots["telephone_rappel"] == "0610154768":
+        print(f"   une CORRECTION tronquée s'est installée : « {dit} »")
+        return False
+    if "06 10 15 47 68" in dit:
+        print(f"   l'agent répète le numéro tronqué après correction : « {dit} »")
+        return False
+
+    # (d) le chemin nominal n'est pas ralenti : un numéro normal passe du premier coup
+    convo2 = Conversation(CFG, MockLLM(), CalendarStub(CFG, now=LUNDI_9H))
+    convo2.open()
+    for ligne in ("J'ai une fuite d'eau dans la salle de bain", "Nogent-sur-Marne 94130",
+                  "Roux"):
+        convo2.process(ligne)
+    if "06 12 34 56 78" not in convo2.process("Roux, 06 12 34 56 78"):
+        print("   un numéro normal n'est plus accepté du premier coup")
+        return False
+    return True
+
+
 def check_correction_apres_refus() -> bool:
     """R54 : on relit le secteur avant de refuser, et ce qui est dit après la clôture est
     conservé.
@@ -3758,7 +3993,7 @@ def check_salutation_nulle_part() -> bool:
     if "bonjour" not in accueil.lower():
         print(f"   l'accueil ne salue plus : « {accueil} »")
         return False
-    dit = convo.process("J'ai une fuite dans la salle de bain")
+    dit = convo.process("Bonjour, j'ai un souci")   # tour encore formulé (cf. R56)
     if "bonjour" in dit.lower():
         print(f"   une salutation passe encore en conversation : « {dit} »")
         return False
@@ -3874,10 +4109,13 @@ def check_une_seule_question() -> bool:
         def reply(self, instruction, context):
             return "Pouvez-vous répéter ? Et sinon, " + instruction
 
+    # Le tour choisi doit passer par le FORMULEUR : depuis R56, la question du secteur
+    # est verbatim, et un double branché dessus ne serait jamais appelé. « j'ai un souci »
+    # tombe sur la demande de précision de S1, qui reste formulée.
     convo2 = Conversation(CFG, FormuleurQuestionneur(),
                           CalendarStub(CFG, now=LUNDI_9H))
     convo2.open()
-    dit = convo2.process("J'ai une fuite dans la salle de bain")
+    dit = convo2.process("Bonjour, j'ai un souci")
     if dit.count("?") > 1:
         print(f"   deux questions passent encore : « {dit} »")
         return False
@@ -3885,7 +4123,7 @@ def check_une_seule_question() -> bool:
         print(f"   la violation n'est pas tracée : {convo2.flags['violations']}")
         return False
     # le repli est bien l'instruction du contrôleur, pas une phrase générique
-    if "commune" not in dit.lower():
+    if "préciser" not in dit.lower():
         print(f"   le repli perd la question du contrôleur : « {dit} »")
         return False
     return True
@@ -4057,9 +4295,12 @@ def check_vouvoiement() -> bool:
         def reply(self, instruction, context):
             return "Alors, dis-moi, tu es où exactement ?"
 
+    # Le tour choisi doit passer par le FORMULEUR : depuis R56, la question du secteur
+    # est verbatim, et un double branché dessus ne serait jamais appelé. « j'ai un souci »
+    # tombe sur la demande de précision de S1, qui reste formulée.
     convo = Conversation(CFG, FormuleurFamilier(), CalendarStub(CFG, now=LUNDI_9H))
     convo.open()
-    dit = convo.process("J'ai une fuite dans la salle de bain")
+    dit = convo.process("Bonjour, j'ai un souci")
     if " tu " in f" {dit} ":
         print(f"   un formuleur qui tutoie passe quand même : « {dit} »")
         return False
@@ -5938,6 +6179,22 @@ def run() -> int:
     if check_correction_apres_refus():
         print("   → le secteur est relu avant tout refus, la correction est "
               "entendue, et ce qui est dit après la clôture est conservé : ✅ PASS")
+    else:
+        print("   → ❌ FAIL")
+        echecs += 1
+
+    print(f"\n──── R55_numero_confronte_au_dit ────")
+    if check_numero_confronte_au_dit():
+        print("   → un numéro bien formé mais tronqué de ce qui a été dit est "
+              "refusé : le contrôleur confronte l'extraction au texte brut : ✅ PASS")
+    else:
+        print("   → ❌ FAIL")
+        echecs += 1
+
+    print(f"\n──── R56_question_commune_verbatim ────")
+    if check_question_commune_verbatim():
+        print("   → la question du secteur est prononcée verbatim, et la relance "
+              "demande les cinq chiffres au lieu de se répéter : ✅ PASS")
     else:
         print("   → ❌ FAIL")
         echecs += 1

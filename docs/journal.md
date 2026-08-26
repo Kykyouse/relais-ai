@@ -22,7 +22,7 @@ point d'entrée du produit. Plus rien d'autre n'est bloqué côté code.
 
 ```bash
 cd proto
-python run_scenario.py                              # 58 tests, ~3 s, sans clé ni base
+python run_scenario.py                              # 60 tests, ~3 s, sans clé ni base
 python semer_artisans.py [--ecrire]                 # amorce la table `artisan`
 python run_depot_pg.py [--migrer]                   # contrat du port contre Supabase
 uvicorn serveur:app --port 8000                     # API HTTP
@@ -50,7 +50,7 @@ python run_llm_eval.py [--mock] [--n 3]             # éval appelant-simulé
 | Homonymes, corrections, boucles bornées (R32) | ✅ | mock, mutations 6/6 |
 | Prestation refusée déclinée (R33) | ✅ | mock, mutations 6/6 |
 | **Éval LLM réelle, 14 personas × 3** | ✅ **42/42** | agent **Haiku 4.5**, appelant Sonnet 5 — 7ᵉ passage, 0 incident de harnais |
-| **19 personas** (5 tirés d'appels vocaux réels) | ⏳ | plomberie 19/19 en mock — **passage réel non joué** |
+| **19 personas** (5 tirés d'appels vocaux réels) | ⚠️ **50/57** | 1ᵉʳ passage réel le 26/08 : 7 échecs, tous dans les 5 nouveaux personas |
 | SMS de confirmation au client, chemin nominal (R27) | ✅ | mock, mutations 5/5 |
 | Table `artisan` + FK sur 5 tables (migration 008) | ✅ | **Supabase réel**, contrat du port |
 | Connexion artisan par code SMS (R28) | ✅ | mock, mutations 7/8 (1 défense en profondeur) |
@@ -73,6 +73,8 @@ python run_llm_eval.py [--mock] [--n 3]             # éval appelant-simulé
 | Aucune salutation en conversation (R52) | ✅ | mock, mutations 7/7 |
 | Une seule question par réplique (R53) | ✅ | mock, *idem* — **contrôle AST de toutes les instructions** |
 | Relecture du secteur avant refus (R54) | ✅ | mock, mutations 8/8 |
+| Numéro confronté à ce qui a été dit (R55) | ✅ | mock, mutations 7/7 |
+| Question du secteur verbatim, relance par les chiffres (R56) | ✅ | mock, *idem* |
 | Identifiant d'appel imposé au dépôt (port) | ✅ | **contrat rejoué sur Supabase** |
 
 ## Ce qui est encore un double (et non un manque caché)
@@ -430,6 +432,90 @@ Trois mesures d'oreille, consignées comme données d'arbitrage :
    courtes, mais **à activer** (`stopSpeakingPlan`) : les tours verbatim longs
    (récapitulatif de RDV, consignes de sécurité) sont exactement ceux qu'un appelant
    pressé voudra couper. Décision réversible, à trancher à l'oreille.
+
+---
+
+## Session du 26/08/2026 (suite) — première éval réelle des nouveaux personas : 50/57
+
+Les cinq personas tirés des appels vocaux ont trouvé, au premier passage, **trois défauts
+que quatorze personas imaginés n'avaient jamais vus** — et les sept échecs sont tous chez
+eux. C'est exactement ce qu'on leur demandait.
+
+### R55 — un numéro bien FORMÉ mais tronqué (T14, 3 échecs sur 3)
+
+    client : c'est le 06 10 15 47 68 79.
+    agent  : Je répète votre numéro : 06 10 15 47 68, c'est bien ça ?
+    client : Oui c'est bien ça.
+
+Le défaut de l'appel vocal du matin, reproduit à l'identique — **alors que R42 était censé
+le couvrir.** R42 vérifie la FORME : dix chiffres, commençant par 0, sans lettres. Le
+modèle a rendu « 0610154768 » : une forme irréprochable, deux chiffres perdus. Le
+contrôleur n'avait aucun moyen de le savoir.
+
+C'est la limite de tout contrôle de forme : il ne dit rien de la **correspondance** entre ce
+qui est extrait et ce qui a été dit. `_numero_suspect` confronte donc les deux — la
+signature d'une troncature est nette, le numéro extrait est un *préfixe strict* d'une suite
+de chiffres de la phrase. Un numéro donné normalement est ÉGAL à sa suite, pas un morceau
+de suite.
+
+Leçon plus large : **R42, R50, R55 sont trois couches sur le même problème** — le
+contrôleur ne peut pas faire confiance à l'extracteur, et chaque couche a été ajoutée après
+qu'un cas réel a franchi la précédente. La forme, la plausibilité, puis la correspondance.
+
+### T15 — mon persona était fautif, pas le produit
+
+L'appelant simulé disait « j'habite à Créteil, le code postal c'est quatre-vingt-quatorze,
+cent trente ». Créteil est **limitrophe** (94000) : le modèle a tranché en faveur de la
+commune, ce qui est défendable sur une entrée contradictoire. Le produit a eu raison ; c'est
+mon rôle qui n'épinglait pas la commune, et l'appelant simulé en a inventé une dont le vrai
+code postal contredisait celui qu'il prononçait.
+
+Deuxième fois qu'un de mes personas dérive ainsi (après T07). La règle, écrite dans le
+persona : **un persona doit épingler tout fait que le verdict affirme.** Si le verdict exige
+`cp=94130`, le rôle doit faire de 94130 la seule réponse cohérente.
+
+### R56 — le formuleur a transformé la question en quiz (T17, 2 échecs sur 3)
+
+    client : J'habite je visite sur Orange.
+    agent  : Ah d'accord ! Vous êtes sur Orange. C'est dans le Vaucluse, c'est bien ça ?
+    client : Ben non non, attendez, c'est Zivier-sur-Orge…
+    agent  : Je transmets tout ça à Julien — il vous rappelle sous 2 heures.
+
+Deux défauts en quatre lignes.
+
+**Le formuleur a remplacé « Vous êtes sur quelle commune ? » par une question de
+géographie**, en nommant au passage un lieu que nos tables ne connaissent pas — ce que R49
+interdit au contrôleur et n'interdisait pas au formuleur. Troisième mutilation de cette
+question précise (« Pouvez-vous ? Oui, Bonjour… », les re-salutations, le Vaucluse). Elle
+est désormais **verbatim** : une question factuelle de six mots n'a rien à gagner à être
+reformulée.
+
+**Et la borne de R48 a lâché pendant que l'appelant insistait.** Deux tentatives, puis
+repli. R48 avait raison de borner, mais répéter deux fois la même question et abandonner
+n'est pas une conversation. La seconde relance demande maintenant **les cinq chiffres du
+code postal** — la leçon de R43, restée jusqu'ici au journal : le code postal a sauvé un
+appel réel que le nom de commune avait perdu deux fois. Cinq chiffres résistent mieux à la
+transcription qu'un nom propre. Et c'est ce qui justifie une troisième chance : poser une
+question DIFFÉRENTE, pas la même.
+
+### Effet de bord révélateur
+
+Rendre cette question verbatim a fait tomber R51, R52 et R53 : leurs doubles de formuleur
+étaient branchés sur ce tour, qui ne l'appelle plus. Il a fallu les déplacer sur la demande
+de précision de S1. C'est une mesure de ce qui reste au formuleur : l'accueil, la
+qualification, la réponse tarifaire et les tours d'empathie. Tout ce qui énonce un fait ou
+un engagement est verbatim.
+
+### Encore du code mort, cinquième fois
+
+J'avais ajouté la confrontation au texte dit **aussi** dans la branche de correction de
+`_s4`. Une mutation l'a montrée sans effet : `_chiffres_dits` retire déjà tout numéro
+suspect avant qu'on y arrive, et les deux contrôles portent sur le même texte. Retiré.
+
+Et une mutation a été supprimée plutôt que forcée (la virgule dans les séparateurs de
+suite) : entre l'inclure et l'exclure, aucun énoncé réaliste ne change de verdict.
+
+Suite : **60 PASS**. Mutations 7/7 (R55/R56), R42 rejouée 10/10, éval mock 19/19.
 
 ---
 
