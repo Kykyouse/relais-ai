@@ -22,7 +22,7 @@ point d'entrée du produit. Plus rien d'autre n'est bloqué côté code.
 
 ```bash
 cd proto
-python run_scenario.py                              # 52 tests, ~3 s, sans clé ni base
+python run_scenario.py                              # 53 tests, ~3 s, sans clé ni base
 python semer_artisans.py [--ecrire]                 # amorce la table `artisan`
 python run_depot_pg.py [--migrer]                   # contrat du port contre Supabase
 uvicorn serveur:app --port 8000                     # API HTTP
@@ -66,6 +66,7 @@ python run_llm_eval.py [--mock] [--n 3]             # éval appelant-simulé
 | Une seule salutation par appel (R46) | ✅ | mock, mutations 7/7 |
 | Nombres prononcés en toutes lettres (R47) | ✅ | mock, mutations 10/11 (1 défense en profondeur) |
 | Question de la commune bornée (R48) | ✅ | mock, *idem* |
+| Code postal avec barre, commune vérifiée (R49) | ✅ | mock, mutations 6/6 |
 | Identifiant d'appel imposé au dépôt (port) | ✅ | **contrat rejoué sur Supabase** |
 
 ## Ce qui est encore un double (et non un manque caché)
@@ -419,6 +420,58 @@ Trois mesures d'oreille, consignées comme données d'arbitrage :
    courtes, mais **à activer** (`stopSpeakingPlan`) : les tours verbatim longs
    (récapitulatif de RDV, consignes de sécurité) sont exactement ceux qu'un appelant
    pressé voudra couper. Décision réversible, à trancher à l'oreille.
+
+---
+
+## Session du 26/08/2026 (suite) — R49 : l'appelant avait raison trois fois
+
+Quatrième appel réel, et le plus frustrant du lot. **L'appelant a donné son code postal
+trois fois, correctement, et n'a jamais été compris.**
+
+    User : J'ai pissé sur Orange le 91/160. Le 91/260.
+    User : Dans l'Essonne. Le 91. Code postal 91/160.
+    User : Dans l'Essonne, 91/160.
+
+La transcription écrit les codes postaux avec une **barre oblique**. R43 tolérait l'espace,
+le point et le tiret ; pas celle-là. Le slot était dans la phrase, trois fois de suite, et
+passait à travers trois fois.
+
+**Et R48 aggrave le symptôme au lieu de le masquer.** Depuis que la question de la commune
+est bornée, on ne boucle plus : **on raccroche poliment sur quelqu'un qui a répondu juste**.
+Une borne est bonne pour l'appelant qui ne sait pas répondre ; elle est cruelle pour celui
+qu'on n'écoute pas. Les deux correctifs devaient arriver ensemble — c'est une leçon sur
+l'ordre dans lequel on corrige, pas seulement sur ce qu'on corrige.
+
+### Second défaut : « n'intervient pas sur Essonne »
+
+L'Essonne est un DÉPARTEMENT. Le nom venait de l'extracteur, et le contrôleur l'a répété
+sans le vérifier.
+
+C'est le pendant exact de R45 : là-bas le formuleur écorchait un nom propre, ici
+l'extracteur en invente la nature. Même règle — **on ne prononce que ce que notre table
+connaît**. Le repli (« votre secteur ») existait déjà ; il n'était simplement jamais
+atteint. La DÉCISION, elle, ne change pas : c'est le code postal qui tranche la zone, pas
+le nom. Une commune hors Île-de-France ne sera donc pas nommée, et c'est volontaire : mieux
+vaut « votre secteur » qu'un nom qu'on ne peut pas vérifier.
+
+### Deux mutations survivantes, un trou de test bien caché
+
+« Supprimer la table Île-de-France » et « ne reconnaître aucune commune » survivaient toutes
+deux. Raison : dans mon test, le nom de commune était DANS la phrase, donc il venait de
+`_resoudre_commune` — le nouveau chemin (`_merge` → `_commune_connue`) n'était jamais
+emprunté. Il a fallu un cas où l'extracteur donne la commune et où le texte brut est trop
+déformé pour la retrouver (« Je suis à Sussi en Bri » → Sucy-en-Brie). Deux chemins mènent
+au même slot ; en tester un ne teste pas l'autre. Troisième fois ce mois-ci.
+
+Une mutation a été retirée plutôt que forcée : entre `{0,3}` et `{0,6}` caractères de
+séparation, aucun énoncé réaliste ne diffère — il faudrait quatre séparateurs consécutifs,
+et ce qui sépare vraiment deux nombres (des lettres) n'est pas dans la classe. Une mutation
+sans objet ne se tue pas, elle se supprime.
+
+### Reste
+
+Ces quatre appels tournaient tous sur du code antérieur. **Redéployer avant de rappeler** :
+la moitié de ce qu'on observe est déjà corrigé dans l'arbre.
 
 ---
 

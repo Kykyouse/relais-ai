@@ -3551,6 +3551,159 @@ def check_creneaux_verbatim() -> bool:
     return True
 
 
+def check_code_postal_barre() -> bool:
+    """R49 : le code postal survit à la ponctuation de la transcription, et un nom de
+    commune qu'on ne connaît pas n'est jamais prononcé.
+
+    Quatrième appel vocal réel du 26/08, et le plus frustrant : **l'appelant a donné son
+    code postal trois fois, correctement, et n'a jamais été compris.**
+
+        User : J'ai pissé sur Orange le 91/160. Le 91/260.
+        User : Dans l'Essonne. Le 91. Code postal 91/160.
+        User : Dans l'Essonne, 91/160.
+
+    La transcription écrit les codes postaux avec une **barre oblique** — « 91/260 ». R43
+    tolérait l'espace, le point et le tiret ; pas celle-là. Le slot était dans la phrase,
+    trois fois, et passait à travers trois fois.
+
+    ⚠️ Et R48 AGGRAVE le symptôme au lieu de le masquer : depuis que la question est
+    bornée, on ne boucle plus — **on raccroche poliment sur quelqu'un qui a répondu
+    juste**. Une borne est bonne pour l'appelant qui ne sait pas répondre ; elle est
+    cruelle pour celui qu'on n'écoute pas. Les deux correctifs devaient arriver ensemble.
+
+    **Second défaut, distinct** : l'agent a dit « Dupont Chauffage n'intervient pas sur
+    Essonne ». L'Essonne est un DÉPARTEMENT. Le nom venait de l'extracteur, et le
+    contrôleur l'a répété sans le vérifier. C'est le pendant de R45 : là-bas le formuleur
+    écorchait un nom propre, ici c'est l'extracteur qui en invente la nature. Même règle —
+    **on ne prononce que ce que notre table connaît**. Le repli existait déjà (« votre
+    secteur ») ; il n'était simplement jamais atteint.
+    """
+    from relais_proto.engine import Conversation
+
+    # (a) la barre oblique, et les autres ponctuations déjà couvertes
+    for texte, attendu in (("Le 91/260.", "91260"),
+                           ("Code postal 91/160", "91160"),
+                           ("91 / 260", "91260"),
+                           ("Dans l'Essonne, 91/160.", "91160"),
+                           ("je suis au 94 130", "94130"),
+                           ("Dans le 91. 260.", "91260"),
+                           ("94-130", "94130"),
+                           ("C'est le 94130", "94130")):
+        vu = MockLLM().extract(texte, {}).get("code_postal")
+        if vu != attendu:
+            print(f"   {texte!r} : code_postal={vu!r} au lieu de {attendu!r}")
+            return False
+
+    # ...et toujours aucune collision avec un numéro de téléphone
+    for texte in ("06 12 34 56 78", "0612345678", "07-88-11-22-33", "06.12.34.56.78"):
+        vu = MockLLM().extract(texte, {}).get("code_postal")
+        if vu is not None:
+            print(f"   {texte!r} pris pour un code postal : {vu!r}")
+            return False
+
+    # (b) DE BOUT EN BOUT : l'appelant est compris DÈS le premier tour où il donne son
+    # code postal. 91260 = Juvisy, réellement hors zone : le refus est la bonne issue.
+    convo = Conversation(CFG, MockLLM(), CalendarStub(CFG, now=LUNDI_9H))
+    convo.open()
+    convo.process("Je suis en train de prendre un rendez-vous, j'ai une fuite d'eau "
+                  "dans la salle de bain")
+    reponse = convo.process("J'ai pissé sur Orange le 91/160. Le 91/260.")
+    if convo.slots["code_postal"] is None:
+        print(f"   code postal avec barre non retenu — « {reponse} »")
+        return False
+    if convo.state.value not in ("S11", "FIN"):
+        print(f"   l'appel n'est pas conclu alors que le CP est connu : "
+              f"{convo.state.value}")
+        return False
+    # ...et surtout PAS par le repli « je transmets à Julien », qui signerait qu'on a
+    # renoncé faute de comprendre (c'est ce que R48 produit quand le CP reste illisible)
+    if "transmets" in reponse.lower():
+        print(f"   on retombe sur le repli sans avoir lu le code postal : « {reponse} »")
+        return False
+
+    # (c) un nom de commune que NOTRE table ne connaît pas n'est jamais prononcé
+    class ExtracteurDepartement(MockLLM):
+        """Double : l'extracteur rend un DÉPARTEMENT là où on attend une commune —
+        exactement ce qu'a fait le modèle réel le 26/08.
+
+        Il délègue tout le reste au mock : un double qui inventerait aussi la prestation
+        enverrait l'appel hors périmètre avant d'atteindre ce qu'on veut vérifier
+        (constaté au premier passage — l'appel se terminait au premier tour)."""
+        def extract(self, utterance, context):
+            if "essonne" in utterance.lower():
+                return {"commune": "Essonne", "code_postal": "91160"}
+            return super().extract(utterance, context)
+
+        def reply(self, instruction, context):
+            return instruction
+
+    convo2 = Conversation(CFG, ExtracteurDepartement(),
+                          CalendarStub(CFG, now=LUNDI_9H))
+    convo2.open()
+    convo2.process("J'ai une fuite d'eau dans la salle de bain")
+    dit = convo2.process("Dans l'Essonne, 91/160.")
+    if "Essonne" in dit:
+        print(f"   un département est prononcé comme une commune : « {dit} »")
+        return False
+    if convo2.slots["commune"] is not None:
+        print(f"   une commune inconnue de notre table est stockée : "
+              f"{convo2.slots['commune']!r}")
+        return False
+    # la DÉCISION, elle, reste juste : c'est le code postal qui tranche, pas le nom
+    if convo2.slots["code_postal"] != "91160":
+        print(f"   le code postal est perdu avec le nom : "
+              f"{convo2.slots['code_postal']!r}")
+        return False
+    if convo2.state.value not in ("S11", "FIN"):
+        print(f"   hors zone non conclu : {convo2.state.value}")
+        return False
+    if "secteur" not in dit.lower():
+        print(f"   le repli « votre secteur » n'est pas utilisé : « {dit} »")
+        return False
+
+    # (d) une commune que la table CONNAÎT reste nommée : on ne perd pas en précision
+    convo3 = Conversation(CFG, MockLLM(), CalendarStub(CFG, now=LUNDI_9H))
+    convo3.open()
+    convo3.process("J'ai une fuite d'eau dans la salle de bain")
+    convo3.process("Nogent-sur-Marne 94130")
+    if convo3.slots["commune"] != "Nogent-sur-marne":
+        print(f"   une commune connue n'est plus nommée : "
+              f"{convo3.slots['commune']!r}")
+        return False
+
+    # (e) le cas qui exerce VRAIMENT le nouveau chemin : la commune vient de
+    # l'EXTRACTEUR, et le texte brut est trop déformé pour que `_resoudre_commune` la
+    # retrouve. En (d) le nom est dans la phrase, donc il vient de la résolution — et deux
+    # mutations survivaient dans ce trou : supprimer la table Île-de-France, ou ne
+    # reconnaître aucune commune, ne changeait rien au test.
+    #
+    # Sucy-en-Brie est dans la table Île-de-France, PAS dans la zone de l'artisan : elle
+    # doit donc être nommée tout en étant refusée. C'est exactement ce qu'on veut — un
+    # refus précis vaut mieux qu'un refus vague.
+    class ExtracteurCommuneSeule(MockLLM):
+        def extract(self, utterance, context):
+            if "sussi" in utterance.lower():
+                return {"commune": "Sucy-en-Brie", "code_postal": "94370"}
+            return super().extract(utterance, context)
+
+        def reply(self, instruction, context):
+            return instruction
+
+    convo4 = Conversation(CFG, ExtracteurCommuneSeule(),
+                          CalendarStub(CFG, now=LUNDI_9H))
+    convo4.open()
+    convo4.process("J'ai une fuite d'eau dans la salle de bain")
+    dit4 = convo4.process("Je suis à Sussi en Bri")
+    if convo4.slots["commune"] != "Sucy En Brie":
+        print(f"   une commune connue de la table IdF, donnée par l'extracteur, n'est "
+              f"pas retenue : {convo4.slots['commune']!r}")
+        return False
+    if "Sucy" not in dit4:
+        print(f"   la commune connue n'est pas nommée dans le refus : « {dit4} »")
+        return False
+    return True
+
+
 def check_nombres_prononces() -> bool:
     """R47 : un code postal ou un numéro DIT EN TOUTES LETTRES est reconnu.
 
@@ -5202,6 +5355,15 @@ def run() -> int:
     if check_commune_bornee():
         print("   → la question de la commune est bornée et retombe sur un lead "
               "à rappeler, sans punir une réponse tardive : ✅ PASS")
+    else:
+        print("   → ❌ FAIL")
+        echecs += 1
+
+    print(f"\n──── R49_code_postal_barre ────")
+    if check_code_postal_barre():
+        print("   → le code postal survit à la ponctuation de la transcription, "
+              "et un nom de commune inconnu de notre table n'est jamais "
+              "prononcé : ✅ PASS")
     else:
         print("   → ❌ FAIL")
         echecs += 1

@@ -157,10 +157,17 @@ class MockLLM:
         # Le découpage est 2+3 et pas n'importe lequel : c'est celui de la prononciation,
         # et surtout c'est celui qui ne peut PAS mordre sur un numéro de téléphone, fait
         # de paires (« 06 12 34 56 78 » n'offre nulle part deux chiffres suivis de trois).
-        # `{0,2}` et non `?` : la transcription rend « Dans le 91. 260 », soit un point
+        # La BARRE OBLIQUE en fait partie : la transcription écrit « 91/260 ».
+        # Découvert au quatrième appel réel, où l'appelant a donné son code postal
+        # TROIS FOIS, correctement, sans jamais être compris. Et depuis que la
+        # question est bornée (R48), on ne boucle plus : on raccroche poliment sur
+        # quelqu'un qui a répondu juste. Une borne est bonne pour l'appelant qui ne
+        # sait pas répondre, cruelle pour celui qu'on n'écoute pas.
+        #
+        # `{0,3}` et non `?` : la transcription rend « Dans le 91. 260 », soit un point
         # ET une espace. Un seul séparateur toléré laissait passer le cas réel — trouvé
         # au deuxième essai, sur la deuxième dictée du même appel.
-        if m := re.search(r"\b(\d{2})[\s.\-]{0,2}(\d{3})\b", u):
+        if m := re.search(r"\b(\d{2})[\s.\-/]{0,3}(\d{3})\b", u):
             out["code_postal"] = m.group(1) + m.group(2)
         # `(?![\s.\-]?\d)` : un chiffre de plus INVALIDE la capture au lieu de la
         # tronquer. Sans lui, « 06 10 15 47 68 79 » (douze chiffres dictés) rendait

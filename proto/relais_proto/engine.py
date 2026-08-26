@@ -154,6 +154,26 @@ class Conversation:
             if tel and self._numero_fr(tel):
                 extracted["telephone_rappel"] = tel
 
+    def _commune_connue(self, nom) -> str | None:
+        """Le nom canonique de la commune si nos tables la connaissent, sinon None.
+
+        Deux tables, comme `_resoudre_commune` : celle de la zone artisan (avec ses alias
+        configurés), puis l'Île-de-France. Rendue capitalisée, parce qu'elle finit dans une
+        phrase dite à l'appelant et dans le SMS de relance à l'artisan.
+
+        Une commune hors Île-de-France est donc « inconnue » et ne sera pas nommée : c'est
+        volontaire. Mieux vaut « votre secteur » qu'un nom qu'on ne peut pas vérifier — et
+        la zone, elle, reste tranchée par le code postal.
+        """
+        cible = self._normalise(str(nom or ""))
+        if not cible:
+            return None
+        for table in (self.cfg["zone"].get("communes", {}), self._communes_idf()):
+            for connu in table:
+                if self._normalise(connu) == cible:
+                    return " ".join(m.capitalize() for m in connu.split())
+        return None
+
     def _merge(self, extracted: dict) -> None:
         for k, v in extracted.items():
             if k not in self.slots or v in (None, ""):
@@ -171,6 +191,20 @@ class Conversation:
             # balaie la phrase entière), pas à remplir le slot directement.
             if k == "commune" and not extracted.get("code_postal"):
                 continue
+            # ...et la commune ne s'écrit QUE si notre table la connaît. Le 26/08, le
+            # modèle a rendu « Essonne » — un DÉPARTEMENT — et l'agent a répondu
+            # « Dupont Chauffage n'intervient pas sur Essonne ». Le nom venait de
+            # l'extracteur et le contrôleur l'a répété sans le vérifier.
+            #
+            # C'est le pendant de R45 : là-bas le formuleur écorchait un nom propre, ici
+            # l'extracteur en invente la nature. Même règle — on ne prononce que ce que
+            # notre table connaît. Le repli (« votre secteur ») existait déjà, il n'était
+            # simplement jamais atteint. La DÉCISION, elle, ne change pas : c'est le code
+            # postal qui tranche la zone, pas le nom.
+            if k == "commune":
+                v = self._commune_connue(v)
+                if v is None:
+                    continue
             if self.slots[k] is None or (k in self.OVERWRITABLE and self.flags["hold"] is None):
                 self.slots[k] = v
         if extracted.get("prestation") and not self.slots["intent"]:
