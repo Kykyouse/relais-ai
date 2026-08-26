@@ -3571,6 +3571,135 @@ def check_creneaux_verbatim() -> bool:
     return True
 
 
+def check_paire_commune_cp_coherente() -> bool:
+    """R57 : la commune doit être COHÉRENTE avec le code postal, et les phrases qui
+    énoncent un fait ne passent plus par le formuleur.
+
+    Deuxième éval réelle du 26/08 (55/57). Deux échecs, trois causes — toutes de la même
+    famille : *une phrase qui énonce un fait est laissée au formuleur, ou un fait est
+    accepté sans être recoupé.*
+
+    ═══ La paire commune / code postal n'était pas vérifiée ═══
+
+        client : C'est Zivier-sur-Orge, avec le code postal, c'est le 91260.
+        agent  : Juste pour être sûr — vous êtes bien à Deuil La Barre ?
+
+    Le lead portait `commune: Orsay, code_postal: 91260`. Orsay est **91400**. Deuil-la-Barre
+    est **95170** — un autre département. Chaque valeur était individuellement valide :
+    R35 exige que commune et CP s'écrivent en PAIRE, R49 que la commune soit connue de nos
+    tables. **Personne ne vérifiait que la paire est cohérente.**
+
+    Le code postal décide de la zone ; c'est donc lui qui fait foi, et une commune qui ne
+    lui correspond pas est écartée. On dit alors « votre secteur », ou on relit les chiffres.
+
+    ═══ Deux phrases de fait encore laissées au formuleur ═══
+
+    **La demande de re-dictée du numéro.** T14 : le contrôleur a refusé douze chiffres
+    (R55 fonctionne) et demandé de redonner le numéro chiffre par chiffre. Le formuleur en
+    a fait une RELECTURE des douze chiffres refusés — « 0-6-1-0-1-5-4-7-6-8-7-9. C'est bien
+    ça ? ». L'appelant a répondu « oui », le contrôleur n'a rien enregistré, et l'appel a
+    fini sans RDV. Le formuleur a fait confirmer un numéro que le contrôleur venait de
+    rejeter.
+
+    **La phrase de refus hors zone.** Elle passait par le formuleur, qui y a glissé
+    « Vous me dites Yvelines, 91260, Zivier-sur-Orge » — un département faux et un nom de
+    commune inexistant, dans la phrase la plus définitive de l'appel.
+
+    Même remède que R38, R44, R45, R56. La liste de ce qui reste au formuleur se réduit à
+    mesure qu'on découvre ce qu'il ne faut pas lui confier : l'accueil, la qualification,
+    la réponse tarifaire, l'empathie.
+    """
+    from relais_proto.engine import Conversation
+
+    # (a) la cohérence de la paire, isolément
+    convo = Conversation(CFG, MockLLM(), CalendarStub(CFG, now=LUNDI_9H))
+    for commune, cp, garde in (("Orsay", "91260", False),        # Orsay = 91400
+                               ("Deuil-la-Barre", "91260", False),
+                               ("Juvisy-sur-Orge", "91260", True),
+                               ("Nogent-sur-Marne", "94130", True),
+                               ("Saint-Maur-des-Fossés", "94100", True),  # multi-CP
+                               ("Créteil", "94000", True),
+                               ("Créteil", "94130", False),
+                               ("Essonne", "91260", False)):     # pas une commune
+        vu = convo._commune_coherente(commune, cp)
+        if bool(vu) != garde:
+            print(f"   ({commune!r}, {cp!r}) : {vu!r}, attendu "
+                  f"{'gardée' if garde else 'écartée'}")
+            return False
+
+    # (b) DE BOUT EN BOUT : un extracteur qui rend une paire incohérente
+    class ExtracteurIncoherent(MockLLM):
+        """Double : commune et code postal individuellement valides, mais qui ne vont pas
+        ensemble — exactement ce que le modèle réel a rendu le 26/08."""
+        def extract(self, utterance, context):
+            ex = super().extract(utterance, context)
+            if "zivier" in utterance.lower():
+                ex["commune"], ex["code_postal"] = "Orsay", "91260"
+            return ex
+
+        def reply(self, instruction, context):
+            return instruction
+
+    convo = Conversation(CFG, ExtracteurIncoherent(),
+                         CalendarStub(CFG, now=LUNDI_9H))
+    convo.open()
+    convo.process("j'ai une fuite d'eau dans la salle de bain")
+    dit = convo.process("C'est Zivier-sur-Orge, le code postal c'est le 91260")
+    if convo.slots["code_postal"] != "91260":
+        print(f"   le code postal est perdu : {convo.slots['code_postal']!r}")
+        return False
+    if convo.slots["commune"] is not None:
+        print(f"   une commune INCOHÉRENTE avec le code postal est retenue : "
+              f"{convo.slots['commune']!r}")
+        return False
+    if "Orsay" in dit or "Deuil" in dit:
+        print(f"   une commune incohérente est prononcée : « {dit} »")
+        return False
+    # ...et c'est bien les CHIFFRES qui sont relus, faute de nom sûr
+    if "91 260" not in dit:
+        print(f"   le code postal n'est pas relu : « {dit} »")
+        return False
+
+    # (c) la phrase de REFUS ne passe plus par le formuleur
+    class FormuleurGeographe(MockLLM):
+        def reply(self, instruction, context):
+            return ("Ah, je comprends ! Vous me dites Yvelines, 91260, Zivier-sur-Orge. "
+                    + instruction)
+
+    convo2 = Conversation(CFG, FormuleurGeographe(), CalendarStub(CFG, now=LUNDI_9H))
+    convo2.open()
+    convo2.process("j'ai une fuite d'eau dans la salle de bain")
+    convo2.process("le 91260")
+    refus = convo2.process("oui")
+    if "Yvelines" in refus or "Zivier" in refus:
+        print(f"   le formuleur réécrit la phrase de refus : « {refus} »")
+        return False
+    if "intervient pas" not in refus:
+        print(f"   le refus n'est plus prononcé : « {refus} »")
+        return False
+
+    # (d) la demande de RE-DICTÉE du numéro ne passe plus par le formuleur : c'est elle
+    # que le formuleur a transformée en relecture des chiffres refusés.
+    class FormuleurRelecteur(MockLLM):
+        def reply(self, instruction, context):
+            return ("Je vais vous le relire pour être sûr : "
+                    "0-6-1-0-1-5-4-7-6-8-7-9. C'est bien ça ?")
+
+    convo3 = Conversation(CFG, FormuleurRelecteur(), CalendarStub(CFG, now=LUNDI_9H))
+    convo3.open()
+    for ligne in ("j'ai une fuite d'eau dans la salle de bain", "Nogent-sur-Marne 94130",
+                  "Roux"):
+        convo3.process(ligne)
+    dit = convo3.process("mon numéro c'est le 06 10 15 47 68 79")
+    if "0-6-1-0" in dit or "1-5-4-7" in dit:
+        print(f"   le formuleur fait confirmer les chiffres refusés : « {dit} »")
+        return False
+    if "pas bien noté" not in dit.lower():
+        print(f"   la demande de re-dictée n'est plus prononcée : « {dit} »")
+        return False
+    return True
+
+
 def check_question_commune_verbatim() -> bool:
     """R56 : la question du secteur est prononcée VERBATIM, et la relance demande les cinq
     chiffres plutôt que de répéter la même phrase.
@@ -6195,6 +6324,14 @@ def run() -> int:
     if check_question_commune_verbatim():
         print("   → la question du secteur est prononcée verbatim, et la relance "
               "demande les cinq chiffres au lieu de se répéter : ✅ PASS")
+    else:
+        print("   → ❌ FAIL")
+        echecs += 1
+
+    print(f"\n──── R57_paire_commune_cp ────")
+    if check_paire_commune_cp_coherente():
+        print("   → une commune incohérente avec le code postal est écartée, et "
+              "refus comme re-dictée du numéro sont prononcés verbatim : ✅ PASS")
     else:
         print("   → ❌ FAIL")
         echecs += 1

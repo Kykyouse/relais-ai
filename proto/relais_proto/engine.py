@@ -246,6 +246,38 @@ class Conversation:
                     return " ".join(m.capitalize() for m in connu.split())
         return None
 
+    def _commune_coherente(self, nom, cp) -> str | None:
+        """Le nom canonique de la commune si nos tables la connaissent ET si son code
+        postal correspond à `cp`. Sinon None.
+
+        `_commune_connue` (R49) vérifiait l'existence, pas la CORRESPONDANCE. Le 26/08, la
+        deuxième éval réelle a produit `commune: Orsay, code_postal: 91260` — Orsay est
+        91400 — et l'agent a relu « vous êtes bien à Deuil La Barre ? », qui est 95170. Un
+        autre département. Chaque valeur était individuellement valide : R35 exige la
+        PAIRE, R49 exige une commune connue, et personne ne vérifiait qu'elles vont
+        ensemble.
+
+        Le code postal décide de la zone : c'est donc lui qui fait foi. Une commune qui ne
+        lui correspond pas est écartée, et on dit « votre secteur » ou on relit les
+        chiffres — ce qui est toujours préférable à nommer une ville au hasard.
+        """
+        canonique = self._commune_connue(nom)
+        # `not cp` est un RACCOURCI, pas une garantie : sans lui la boucle ci-dessous
+        # rendrait None de toute facon (`None in cps` est faux). Il evite seulement de
+        # balayer mille cinq cents entrees a chaque tour. Une mutation l'a montre sans
+        # effet observable, et c'est normal — a distinguer du code mort qui, lui, avait
+        # l'air de proteger quelque chose.
+        if canonique is None or not cp:
+            return None
+        table = {**self.cfg["zone"].get("communes", {}), **self._communes_idf()}
+        cible = self._normalise(str(nom or ""))
+        for connu, v in table.items():
+            if self._normalise(connu) == cible:
+                cps = v if isinstance(v, list) else [v]
+                if cp in cps:
+                    return canonique
+        return None
+
     def _merge(self, extracted: dict) -> None:
         for k, v in extracted.items():
             if k not in self.slots or v in (None, ""):
@@ -280,7 +312,10 @@ class Conversation:
             # simplement jamais atteint. La DÉCISION, elle, ne change pas : c'est le code
             # postal qui tranche la zone, pas le nom.
             if k == "commune":
-                v = self._commune_connue(v)
+                # connue de nos tables (R49) ET cohérente avec le code postal (R57) :
+                # une commune qui ne correspond pas au code postal donné est écartée,
+                # c'est le code postal qui décide de la zone.
+                v = self._commune_coherente(v, extracted.get("code_postal"))
                 if v is None:
                     continue
             if self.slots[k] is None or (k in self.OVERWRITABLE and self.flags["hold"] is None):
@@ -849,15 +884,22 @@ class Conversation:
                 if self.flags["tel_incomplets"] >= 3:
                     return self._sans_rdv()
                 if len(digits) > 10:
+                    # VERBATIM. Le formuleur en a fait une RELECTURE des douze chiffres
+                    # qu'on venait de refuser (« 0-6-1-0-1-5-4-7-6-8-7-9. C'est bien
+                    # ça ? »), l'appelant a dit oui, et rien n'a été enregistré : il a
+                    # fait confirmer un numéro que le contrôleur avait rejeté.
                     return self._say("Je n'ai pas bien noté votre numéro — pouvez-vous "
-                                     "me le redonner, chiffre par chiffre ?")
+                                     "me le redonner, chiffre par chiffre ?",
+                                     verbatim=True)
                 return self._say("Ce numéro me semble incomplet — pouvez-vous me le "
-                                 "redonner en entier, avec les dix chiffres ?")
+                                 "redonner en entier, avec les dix chiffres ?",
+                                 verbatim=True)
             self.flags["tentatives_tel"] += 1
             if self.flags["tentatives_tel"] >= 2:  # 2 tentatives max (T11), puis repli propre
                 return self._sans_rdv()  # invariant 2 : pas de RDV sans rappel
             return self._say("Il me faut un numéro où vous joindre pour la confirmation — "
-                             "sans ça je ne peux pas réserver. Quel est votre numéro ?")
+                             "sans ça je ne peux pas réserver. Quel est votre numéro ?",
+                             verbatim=True)
         if not self.slots["tel_confirme"]:
             # correction : un NOUVEAU numéro donné pendant la confirmation remplace l'ancien
             # `_numero_fr` reste, lui : une mutation de R42 l'avait montré indispensable.
@@ -1052,9 +1094,13 @@ class Conversation:
     def _hors_zone(self) -> str:
         self.flags["zone"] = "hors_zone"
         self.flags["categorie"] = "hors_zone"
+        # VERBATIM : c'est la phrase la plus définitive de l'appel. Elle passait par le
+        # formuleur, qui y a glissé « Vous me dites Yvelines, 91260, Zivier-sur-Orge » —
+        # un département faux et une commune inexistante (éval réelle du 26/08).
         texte = self.cfg["zone"]["message_hors_zone"] or self._say(
             f"Je suis désolé, {self.cfg['entreprise']['nom']} n'intervient pas sur "
-            f"{self.slots['commune'] or 'votre secteur'}. Bonne continuation !")
+            f"{self.slots['commune'] or 'votre secteur'}. Bonne continuation !",
+            verbatim=True)
         self.state = State.S11_CLOTURE
         return texte
 

@@ -22,7 +22,7 @@ point d'entrée du produit. Plus rien d'autre n'est bloqué côté code.
 
 ```bash
 cd proto
-python run_scenario.py                              # 60 tests, ~3 s, sans clé ni base
+python run_scenario.py                              # 61 tests, ~3 s, sans clé ni base
 python semer_artisans.py [--ecrire]                 # amorce la table `artisan`
 python run_depot_pg.py [--migrer]                   # contrat du port contre Supabase
 uvicorn serveur:app --port 8000                     # API HTTP
@@ -50,7 +50,7 @@ python run_llm_eval.py [--mock] [--n 3]             # éval appelant-simulé
 | Homonymes, corrections, boucles bornées (R32) | ✅ | mock, mutations 6/6 |
 | Prestation refusée déclinée (R33) | ✅ | mock, mutations 6/6 |
 | **Éval LLM réelle, 14 personas × 3** | ✅ **42/42** | agent **Haiku 4.5**, appelant Sonnet 5 — 7ᵉ passage, 0 incident de harnais |
-| **19 personas** (5 tirés d'appels vocaux réels) | ⚠️ **50/57** | 1ᵉʳ passage réel le 26/08 : 7 échecs, tous dans les 5 nouveaux personas |
+| **19 personas** (5 tirés d'appels vocaux réels) | ⚠️ **55/57** | 26/08 : 50/57 puis 55/57 après R55/R56 ; R57 corrige les 2 derniers |
 | SMS de confirmation au client, chemin nominal (R27) | ✅ | mock, mutations 5/5 |
 | Table `artisan` + FK sur 5 tables (migration 008) | ✅ | **Supabase réel**, contrat du port |
 | Connexion artisan par code SMS (R28) | ✅ | mock, mutations 7/8 (1 défense en profondeur) |
@@ -75,6 +75,7 @@ python run_llm_eval.py [--mock] [--n 3]             # éval appelant-simulé
 | Relecture du secteur avant refus (R54) | ✅ | mock, mutations 8/8 |
 | Numéro confronté à ce qui a été dit (R55) | ✅ | mock, mutations 7/7 |
 | Question du secteur verbatim, relance par les chiffres (R56) | ✅ | mock, *idem* |
+| Paire commune/CP cohérente, refus verbatim (R57) | ✅ | mock, mutations 5/5 |
 | Identifiant d'appel imposé au dépôt (port) | ✅ | **contrat rejoué sur Supabase** |
 
 ## Ce qui est encore un double (et non un manque caché)
@@ -432,6 +433,61 @@ Trois mesures d'oreille, consignées comme données d'arbitrage :
    courtes, mais **à activer** (`stopSpeakingPlan`) : les tours verbatim longs
    (récapitulatif de RDV, consignes de sécurité) sont exactement ceux qu'un appelant
    pressé voudra couper. Décision réversible, à trancher à l'oreille.
+
+---
+
+## Session du 26/08/2026 (suite) — R57 : la paire commune/CP n'était pas recoupée
+
+Deuxième passage réel : **55/57** (contre 50 avant R55/R56). Deux échecs restants, un sur
+trois chacun, et trois causes — toutes de la même famille : *un fait est accepté sans être
+recoupé, ou une phrase de fait est laissée au formuleur.*
+
+### La paire commune / code postal n'était pas vérifiée
+
+    client : C'est Zivier-sur-Orge, avec le code postal, c'est le 91260.
+    agent  : Juste pour être sûr — vous êtes bien à Deuil La Barre ?
+
+Le lead portait `commune: Orsay, code_postal: 91260`. **Orsay est 91400.** Deuil-la-Barre
+est 95170 — un autre département, et c'est celle qui a été PRONONCÉE.
+
+Chaque valeur était individuellement valide. R35 exige que commune et CP s'écrivent en
+PAIRE ; R49 exige que la commune soit connue de nos tables. **Personne ne vérifiait que la
+paire est cohérente.** Trois règles empilées sur la même donnée, et le trou était entre
+elles.
+
+Le code postal décide de la zone : c'est donc lui qui fait foi. Une commune qui ne lui
+correspond pas est écartée, et on dit « votre secteur » ou on relit les chiffres — toujours
+préférable à nommer une ville au hasard.
+
+### Deux phrases de fait encore laissées au formuleur
+
+**La demande de re-dictée du numéro.** T14 : le contrôleur a refusé douze chiffres (R55
+fonctionne) et demandé de redonner le numéro chiffre par chiffre. Le formuleur en a fait une
+RELECTURE des douze chiffres refusés — « 0-6-1-0-1-5-4-7-6-8-7-9. C'est bien ça ? ».
+L'appelant a dit oui, le contrôleur n'a rien enregistré, l'appel a fini sans RDV. **Le
+formuleur a fait confirmer un numéro que le contrôleur venait de rejeter.**
+
+**La phrase de refus hors zone.** Elle passait par le formuleur, qui y a glissé « Vous me
+dites Yvelines, 91260, Zivier-sur-Orge » : un département faux et une commune inexistante,
+dans la phrase la plus définitive de l'appel.
+
+### Ce que le formuleur a encore le droit de dire
+
+À force de retirer, la liste tient en une ligne : **l'accueil, la qualification, la réponse
+tarifaire, les tours d'empathie.** Tout ce qui énonce un fait, un lieu, un chiffre ou un
+engagement est verbatim. Ce n'est pas une décision prise d'un coup — c'est le résultat de
+R38, R44, R45, R56 et R57, chacune ajoutée après qu'une phrase précise a été mutilée en
+production.
+
+### Une mutation équivalente qui n'est PAS du code mort
+
+`if canonique is None or not cp: return None` : sans le `not cp`, la boucle rendrait None de
+toute façon (`None in cps` est faux). La mutation survit donc, et c'est normal — c'est un
+raccourci qui évite de balayer mille cinq cents entrées à chaque tour, pas un garde qui
+prétendrait protéger quelque chose. Gardé et documenté comme tel, à distinguer des cinq
+retraits de code mort précédents.
+
+Suite : **61 PASS**. Mutations 5/5, éval mock 19/19.
 
 ---
 
