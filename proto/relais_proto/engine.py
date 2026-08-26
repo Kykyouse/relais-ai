@@ -115,6 +115,45 @@ class Conversation:
             return None
         return chiffres
 
+    def _chiffres_dits(self, texte: str, extracted: dict) -> None:
+        """Complète l'extraction avec les nombres PRONONCÉS en toutes lettres.
+
+        Au téléphone, un code postal se dit « quatre-vingt-onze, deux cent soixante » et un
+        numéro « zéro six, douze, trente-quatre… ». La transcription rend des mots ; nos
+        extracteurs cherchaient des chiffres, et le slot passait à travers. Mesuré le 26/08
+        sur trois appels d'affilée — sur le premier, l'appelant a fini par renoncer.
+
+        Ici et pas dans le prompt (règle n°1) : c'est une conversion, pas une
+        interprétation. Le modèle réel y arrive PARFOIS, et « parfois » ne fait pas un
+        produit quand la donnée décide si on envoie quelqu'un chez un client.
+
+        **Complète, n'écrase jamais** : ce que l'extracteur a lu en chiffres fait foi.
+        Et la longueur exacte est exigée (`suite_de_chiffres`), sans quoi on inventerait
+        une donnée à partir de bruit — « cinquante euros » ne fait pas un code postal.
+        """
+        from .nombres import suite_de_chiffres
+
+        # Seulement si AUCUN code postal n'est encore connu. Un numéro de téléphone dicté
+        # en lettres contient une sous-suite de cinq chiffres — « zéro six, douze,
+        # trente-quatre… » donne 61234 — et elle écrasait un code postal déjà établi,
+        # envoyant hors zone un appelant qui n'y était pas. Trouvé en écrivant R47 : le
+        # cas (e) du test faisait tomber le cas (d).
+        #
+        # Ce n'est pas une limitation : une CORRECTION de commune passe par le nom
+        # (`_resoudre_commune`) ou par des chiffres, deux chemins qui restent ouverts.
+        if not extracted.get("code_postal") and self.slots.get("code_postal") is None:
+            cp = suite_de_chiffres(texte, 5)
+            # Un code postal français commence par un département 01–98. Le contrôle est
+            # léger, mais il écarte les suites de cinq chiffres qui n'en sont pas.
+            if cp and "01" <= cp[:2] <= "98":
+                extracted["code_postal"] = cp
+        if not extracted.get("telephone_rappel"):
+            tel = suite_de_chiffres(texte, 10)
+            # `_numero_fr` reste le juge (R42) : on lui soumet un candidat, on ne décide
+            # pas à sa place.
+            if tel and self._numero_fr(tel):
+                extracted["telephone_rappel"] = tel
+
     def _merge(self, extracted: dict) -> None:
         for k, v in extracted.items():
             if k not in self.slots or v in (None, ""):
@@ -261,6 +300,7 @@ class Conversation:
             return texte
 
         extracted = self.llm.extract(user_text, self._ctx)
+        self._chiffres_dits(user_text, extracted)
         self._merge(extracted)
         # `extracted` est passé : c'est lui qui porte le signal de correction
         # (négation, code postal prononcé) qui autorise à réécrire une commune établie.
@@ -523,6 +563,27 @@ class Conversation:
 
         cp = self.slots["code_postal"]
         if cp is None:
+            # BORNÉE. C'est le troisième compteur de cette famille — `tentatives_tel`
+            # borne la demande du numéro, `confirmations_tel` sa confirmation (R32),
+            # `tours_creneaux` les propositions — et la commune n'était bornée par rien.
+            # Le 26/08, avec un STT qui entendait « Orange » pour « Juvisy-sur-Orge »,
+            # l'agent a reposé la même question mot pour mot jusqu'à ce que l'appelant
+            # renonce. Une boucle sans borne au téléphone n'est pas une gêne : c'est un
+            # appel perdu, et un client convaincu que personne ne l'écoute.
+            #
+            # Le compteur monte à CHAQUE passage sans code postal. J'avais d'abord écrit
+            # « seulement si la question a déjà été posée » — condition toujours vraie, car
+            # `_s1` pose la question et lève le drapeau avant qu'on arrive ici. Une
+            # mutation l'a montrée sans effet, et du code mort qui a l'air d'une garantie
+            # est pire que pas de garantie du tout. Troisième fois dans ce projet.
+            #
+            # L'appelant garde donc deux chances : la question de `_s1`, puis une relance.
+            self.flags["commune_ratees"] = self.flags.get("commune_ratees", 0) + 1
+            if self.flags["commune_ratees"] >= 2:
+                # On ignore la zone, donc on ne promet aucun RDV : on prend le lead et
+                # Julien rappellera. Un lead exploitable vaut infiniment mieux qu'une
+                # boucle — et c'est déjà ce qu'on fait quand le numéro n'arrive pas.
+                return self._sans_rdv()
             self.flags["commune_demandee"] = True
             return self._say("J'ai besoin de votre commune ou code postal pour vérifier "
                              "qu'on intervient chez vous — vous êtes où ?")

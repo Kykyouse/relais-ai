@@ -22,7 +22,7 @@ point d'entrée du produit. Plus rien d'autre n'est bloqué côté code.
 
 ```bash
 cd proto
-python run_scenario.py                              # 50 tests, ~3 s, sans clé ni base
+python run_scenario.py                              # 52 tests, ~3 s, sans clé ni base
 python semer_artisans.py [--ecrire]                 # amorce la table `artisan`
 python run_depot_pg.py [--migrer]                   # contrat du port contre Supabase
 uvicorn serveur:app --port 8000                     # API HTTP
@@ -64,6 +64,8 @@ python run_llm_eval.py [--mock] [--n 3]             # éval appelant-simulé
 | Clôture verbatim et stable (R44) | ✅ | mock, mutations 5/5 |
 | Commune canonique prononcée (R45) | ✅ | mock, *idem* |
 | Une seule salutation par appel (R46) | ✅ | mock, mutations 7/7 |
+| Nombres prononcés en toutes lettres (R47) | ✅ | mock, mutations 10/11 (1 défense en profondeur) |
+| Question de la commune bornée (R48) | ✅ | mock, *idem* |
 | Identifiant d'appel imposé au dépôt (port) | ✅ | **contrat rejoué sur Supabase** |
 
 ## Ce qui est encore un double (et non un manque caché)
@@ -417,6 +419,92 @@ Trois mesures d'oreille, consignées comme données d'arbitrage :
    courtes, mais **à activer** (`stopSpeakingPlan`) : les tours verbatim longs
    (récapitulatif de RDV, consignes de sécurité) sont exactement ceux qu'un appelant
    pressé voudra couper. Décision réversible, à trancher à l'oreille.
+
+---
+
+## Session du 26/08/2026 (suite) — trois appels de plus : la parole n'est pas de l'écrit
+
+**⚠️ Ces trois appels tournaient sur du code ANTÉRIEUR au commit `af67d6d`.** Vérifié : les
+quatre re-salutations observées sont toutes interceptées par les garde-fous actuels, y
+compris la pire — celle où l'agent a **redémarré la conversation** (« Bonjour, vous appelez
+Dupont chauffage. Comment puis-je vous aider ? ») au lieu de reposer sa question. R46 la
+remplace par l'instruction du contrôleur. **Redéployer avant de retester**, sans quoi on
+corrigera deux fois les mêmes choses.
+
+Deux défauts étaient malgré tout nouveaux, et tous deux tiennent à la même chose : *la
+parole n'est pas de l'écrit.*
+
+### R47 — un code postal se PRONONCE, il ne s'épelle pas
+
+Trois appels d'affilée, trois façons de dire le même code postal :
+
+    « Quatre-vingt-onze soixante. »              → 91 60 : incomplet, à redemander
+    « Quatre-vingt-onze-deux-cent-soixante. »    → 91260
+    « 91.260. »                                  → déjà des chiffres
+
+Nos extracteurs cherchaient des chiffres. Le slot était dans la phrase et passait à
+travers ; sur l'appel 1, l'appelant a fini par renoncer. **C'est la forme NORMALE de la
+parole**, pas un cas tordu : personne ne dit « neuf quatre un trois zéro ».
+
+`nombres.py` convertit les nombres prononcés, **dans le contrôleur et pas dans le prompt**
+(règle n°1) : c'est une conversion, pas une interprétation. Le modèle réel y arrive
+PARFOIS — une fois sur deux sur ces trois appels — et « parfois » ne fait pas un produit
+quand la donnée décide si on envoie un artisan chez quelqu'un.
+
+Le français rend l'exercice moins trivial qu'il n'y paraît, et deux pièges ont été trouvés
+en écrivant le module :
+
+- **« soixante-dix-huit »** se lisait 70 puis 8. Un numéro de téléphone dicté à voix haute
+  y perdait un chiffre en route.
+- **« quatre cent quatre-vingt-dix »** se lisait 404 puis 30 : dans « quatre cent quatre »
+  le second « quatre » vaut 4, dans « quatre cent quatre-vingt-dix » il ouvre 80. Résolu
+  par une fusion « quatre vingt » → un seul mot AVANT l'analyse, plutôt qu'un cas
+  particulier traîné dans tout l'automate.
+
+Le même mécanisme sert au téléphone (« zéro six, douze, trente-quatre… »), et il reste
+soumis au verrou de R42.
+
+**Un défaut trouvé en écrivant le test, pas après** : la dictée d'un numéro contient une
+sous-suite de cinq chiffres (« zéro six, douze, trente-quatre » → 61234) qui **écrasait un
+code postal déjà établi**, envoyant hors zone un appelant qui n'y était pas. Le cas (e) du
+test faisait tomber le cas (d). On ne cherche donc un code postal en lettres que si l'on
+n'en a aucun ; la correction par le nom ou par les chiffres reste ouverte.
+
+### R48 — la question de la commune n'était bornée par rien
+
+Sur les trois appels, quand la commune n'est pas comprise — et avec un STT qui entend
+« Orange » pour « Juvisy-sur-Orge », cela arrive — l'agent repose la même question, mot
+pour mot, sans fin. Mesuré en mock : six tours identiques, et ça continuerait.
+
+**Troisième compteur manquant de la même famille** : `tentatives_tel` borne la demande du
+numéro, `confirmations_tel` sa confirmation (R32), `tours_creneaux` les propositions de
+créneau — la commune, rien. Une boucle sans borne au téléphone n'est pas une gêne : c'est
+un appel perdu, et un client convaincu que personne ne l'écoute.
+
+Deux chances (la question, puis une relance), puis `_sans_rdv` : on ignore la zone, donc on
+ne promet aucun RDV — on prend le lead et Julien rappellera. Un lead exploitable vaut
+infiniment mieux qu'une boucle.
+
+### Une mutation a encore trouvé du code mort
+
+J'avais écrit « le compteur ne monte que si la question a déjà été posée » — condition
+**toujours vraie**, `_s1` posant la question et levant le drapeau avant qu'on arrive là. La
+mutation qui la neutralise ne changeait rien : elle était équivalente. Retirée. Du code
+mort qui a l'air d'une garantie est pire que pas de garantie du tout, et c'est la troisième
+fois dans ce projet qu'une mutation survivante le révèle.
+
+### Ce qui marchait, dans ces trois appels
+
+L'agent a demandé de répéter sur une transcription incompréhensible (« Je viens de fuir
+donner un sale demain ») au lieu d'inventer. L'appel 2 a conclu hors zone correctement sur
+un code postal dicté en lettres — le modèle réel l'avait converti, cette fois. L'appel 3 a
+conclu sur « 91.260 », que R43 couvre désormais côté contrôleur.
+
+### Reste à faire
+
+Redéployer, puis retester : trois des problèmes observés sont déjà corrigés dans l'arbre.
+Et brancher `endCallPhrases` — sur l'appel 3, l'agent a terminé par « bonne continuation,
+et. », phrase tronquée, sans que personne ne raccroche.
 
 ---
 

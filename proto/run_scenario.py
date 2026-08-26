@@ -3551,6 +3551,195 @@ def check_creneaux_verbatim() -> bool:
     return True
 
 
+def check_nombres_prononces() -> bool:
+    """R47 : un code postal ou un numéro DIT EN TOUTES LETTRES est reconnu.
+
+    Trouvé le 26/08 sur trois appels vocaux d'affilée — c'est la forme NORMALE de la
+    parole, pas un cas tordu. Personne n'épelle « neuf quatre un trois zéro » : on dit
+    « quatre-vingt-onze, deux cent soixante », et la transcription rend des MOTS.
+
+        « Quatre-vingt-onze soixante. »            → 91 60 : incomplet, à redemander
+        « Quatre-vingt-onze-deux-cent-soixante. »  → 91260
+        « 91.260. »                                → déjà des chiffres
+
+    Nos extracteurs cherchaient des chiffres. Le code postal était dans la phrase, et il
+    passait à travers — sur l'appel 1, l'appelant a fini par renoncer.
+
+    **Pourquoi le contrôleur et pas le prompt** (règle n°1) : c'est une conversion, pas une
+    interprétation. Le modèle réel y arrive PARFOIS — une fois sur deux sur ces trois
+    appels — et « parfois » ne fait pas un produit. Un code postal décide si on envoie un
+    artisan chez quelqu'un ; cela ne dépend pas de l'humeur d'un modèle. Même raisonnement
+    que R42 pour le numéro de téléphone, et le même mécanisme sert aux deux.
+    """
+    from relais_proto.engine import Conversation
+    from relais_proto.nombres import groupes_dits, suite_de_chiffres
+
+    # (a) la composition du français, là où elle est piégeuse
+    for texte, attendu in (
+            ("Quatre-vingt-onze soixante", ["91", "60"]),
+            ("Quatre-vingt-onze-deux-cent-soixante", ["91", "260"]),
+            ("quatre-vingt-onze mille deux cent soixante", ["91260"]),
+            ("neuf quatre un trois zéro", ["9", "4", "1", "3", "0"]),
+            # « soixante-dix-huit » = 78, et non 70 puis 8 : sans quoi un numéro dicté
+            # perd un chiffre en route
+            ("soixante-dix-huit", ["78"]),
+            ("quatre-vingt-dix-neuf", ["99"]),
+            ("dix-huit", ["18"]),
+            # « quatre » change de rôle selon ce qui suit
+            ("quatre cent quatre", ["404"]),
+            ("quatre cent quatre-vingt-dix", ["490"]),
+            ("quatre-vingts", ["80"]),
+            # et rien ne doit sortir d'une phrase ordinaire
+            ("j'ai une fuite dans la salle de bain", ["1"]),
+            ("bonjour", [])):
+        vu = groupes_dits(texte)
+        if vu != attendu:
+            print(f"   {texte!r} → {vu} au lieu de {attendu}")
+            return False
+
+    # (b) la longueur EXACTE, seule garantie contre l'invention à partir de bruit
+    if suite_de_chiffres("Quatre-vingt-onze soixante", 5) is not None:
+        print("   quatre chiffres suffisent à faire un code postal")
+        return False
+    if suite_de_chiffres("j'ai deux enfants, j'habite au quatre-vingt-onze deux cent "
+                         "soixante", 5) != "91260":
+        print("   le code postal n'est pas isolé du bruit qui l'entoure")
+        return False
+    if suite_de_chiffres("zéro six douze trente-quatre cinquante-six soixante-dix-huit",
+                         10) != "0612345678":
+        print("   un numéro dicté en toutes lettres n'est pas reconstitué")
+        return False
+
+    # (c) DE BOUT EN BOUT : le tour verbatim de l'appel 2 du 26/08. 91260 = Juvisy,
+    # réellement hors zone : le refus est la bonne issue, et il doit tomber tout de suite.
+    convo = Conversation(CFG, MockLLM(), CalendarStub(CFG, now=LUNDI_9H))
+    convo.open()
+    convo.process("J'ai une fuite de notre sac de bain. Vous m'aidez ?")
+    convo.process("Je suis sur Orange.")
+    reponse = convo.process("Quatre-vingt-onze-deux-cent-soixante.")
+    if convo.slots["code_postal"] != "91260":
+        print(f"   code postal dit en lettres non retenu : "
+              f"{convo.slots['code_postal']!r} — « {reponse} »")
+        return False
+    if convo.state.value not in ("S11", "FIN"):
+        print(f"   hors zone non conclu : {convo.state.value}")
+        return False
+
+    # (d) et un code postal EN ZONE mène bien à la suite
+    convo2 = Conversation(CFG, MockLLM(), CalendarStub(CFG, now=LUNDI_9H))
+    convo2.open()
+    convo2.process("J'ai une fuite d'eau dans la salle de bain")
+    convo2.process("neuf quatre un trois zéro")
+    if convo2.slots["code_postal"] != "94130":
+        print(f"   code postal épelé non retenu : {convo2.slots['code_postal']!r}")
+        return False
+
+    # (e) le numéro de téléphone dicté en lettres, et il passe le verrou de R42
+    convo3 = Conversation(CFG, MockLLM(), CalendarStub(CFG, now=LUNDI_9H))
+    convo3.open()
+    for ligne in ("J'ai une fuite d'eau dans la salle de bain", "Nogent-sur-Marne 94130",
+                  "Geoffrey"):
+        convo3.process(ligne)
+    dit = convo3.process("zéro six douze trente-quatre cinquante-six soixante-dix-huit")
+    if convo3.slots["telephone_rappel"] != "0612345678":
+        print(f"   numéro dicté en lettres non retenu : "
+              f"{convo3.slots['telephone_rappel']!r} — « {dit} »")
+        return False
+    if "06 12 34 56 78" not in dit:
+        print(f"   le numéro n'est pas répété en chiffres : « {dit} »")
+        return False
+
+    # (e-bis) cinq chiffres ne suffisent pas : encore faut-il un département plausible.
+    # « 00 » et « 99 » n'existent pas, et accepter n'importe quelle suite de cinq chiffres
+    # ferait déclarer hors zone un appelant sur un nombre entendu de travers.
+    convo_zz = Conversation(CFG, MockLLM(), CalendarStub(CFG, now=LUNDI_9H))
+    convo_zz.open()
+    convo_zz.process("J'ai une fuite d'eau dans la salle de bain")
+    convo_zz.process("zéro zéro un deux trois")
+    if convo_zz.slots["code_postal"] is not None:
+        print(f"   « zéro zéro un deux trois » est devenu un code postal : "
+              f"{convo_zz.slots['code_postal']!r}")
+        return False
+
+    # (f) un nombre qui n'est PAS un numéro ne doit rien remplir. « cinquante euros » ne
+    # fait ni un code postal ni un téléphone.
+    convo4 = Conversation(CFG, MockLLM(), CalendarStub(CFG, now=LUNDI_9H))
+    convo4.open()
+    convo4.process("J'ai une fuite d'eau dans la salle de bain")
+    convo4.process("ça va me coûter combien, cinquante euros ?")
+    if convo4.slots["code_postal"] is not None:
+        print(f"   « cinquante euros » est devenu un code postal : "
+              f"{convo4.slots['code_postal']!r}")
+        return False
+    return True
+
+
+def check_commune_bornee() -> bool:
+    """R48 : la question de la commune est BORNÉE. On ne la repose pas indéfiniment.
+
+    Trouvé le 26/08 sur les trois appels. Quand la commune n'est pas comprise — et avec un
+    STT qui entend « Orange » pour « Juvisy-sur-Orge », cela arrive — l'agent repose la
+    même question, mot pour mot, sans fin. Sur l'appel 1, l'appelant a renoncé.
+
+    C'est le TROISIÈME compteur manquant de la même famille : `tentatives_tel` borne la
+    demande du numéro, `confirmations_tel` sa confirmation (R32), `tours_creneaux` les
+    propositions de créneau — et la commune, elle, n'était bornée par rien. Une boucle sans
+    borne au téléphone n'est pas une gêne : c'est un appel perdu, et un client qui raccroche
+    sur l'impression que personne ne l'écoute.
+
+    Le repli existait déjà : `_sans_rdv`. On ne sait pas si l'appelant est dans la zone,
+    donc on ne promet pas de RDV — on prend le lead et Julien rappellera. Un lead
+    exploitable vaut infiniment mieux qu'une boucle.
+    """
+    from relais_proto.engine import Conversation
+
+    convo = Conversation(CFG, MockLLM(), CalendarStub(CFG, now=LUNDI_9H))
+    convo.open()
+    convo.process("J'ai une fuite dans la salle de bain")
+
+    vues = []
+    for _ in range(6):
+        if convo.state.value in ("S11", "FIN"):
+            break
+        vues.append(convo.process("Je suis sur Orange"))
+    if convo.state.value not in ("S11", "FIN"):
+        print(f"   la question de la commune est reposée indéfiniment "
+              f"({len(vues)} tours, état {convo.state.value})")
+        return False
+    if len(vues) > 4:
+        print(f"   la borne est trop lâche : {len(vues)} tours avant de conclure")
+        return False
+    # ...et pas trop SERRÉE non plus : la question posée n'est pas un échec, et l'appelant
+    # doit pouvoir se reprendre au moins une fois. Conclure dès la première réponse mal
+    # comprise serait aussi mauvais que boucler — un STT rate souvent le premier essai.
+    if len(vues) < 2:
+        print(f"   la borne est trop serrée : l'appel est clos après {len(vues)} "
+              f"réponse(s), sans laisser de seconde chance")
+        return False
+    # on ne raccroche pas sèchement : le lead est pris, et le rappel promis
+    if convo.flags["categorie"] != "a_rappeler":
+        print(f"   la sortie ne produit pas un lead à rappeler : "
+              f"{convo.flags['categorie']!r}")
+        return False
+    if "rappelle" not in vues[-1].lower():
+        print(f"   aucun rappel promis en sortie : « {vues[-1]} »")
+        return False
+
+    # la borne ne doit PAS punir un appelant qui finit par répondre
+    convo2 = Conversation(CFG, MockLLM(), CalendarStub(CFG, now=LUNDI_9H))
+    convo2.open()
+    convo2.process("J'ai une fuite d'eau dans la salle de bain")
+    convo2.process("Je suis sur Orange")
+    convo2.process("Nogent-sur-Marne 94130")
+    if convo2.slots["code_postal"] != "94130":
+        print("   une réponse tardive n'est plus prise en compte")
+        return False
+    if convo2.state.value in ("S11", "FIN"):
+        print("   l'appel est clos alors que la commune vient d'être donnée")
+        return False
+    return True
+
+
 def check_pas_de_resalutation() -> bool:
     """R46 : l'agent ne dit « bonjour » qu'une fois, et ne coupe pas une phrase juste
     après des chiffres.
@@ -4997,6 +5186,22 @@ def run() -> int:
     if check_pas_de_resalutation():
         print("   → une seule salutation par appel, et aucune coupure de phrase "
               "juste après des chiffres : ✅ PASS")
+    else:
+        print("   → ❌ FAIL")
+        echecs += 1
+
+    print(f"\n──── R47_nombres_prononces ────")
+    if check_nombres_prononces():
+        print("   → un code postal ou un numéro dit en toutes lettres est "
+              "reconstitué par le CONTRÔLEUR, à la longueur exacte : ✅ PASS")
+    else:
+        print("   → ❌ FAIL")
+        echecs += 1
+
+    print(f"\n──── R48_commune_bornee ────")
+    if check_commune_bornee():
+        print("   → la question de la commune est bornée et retombe sur un lead "
+              "à rappeler, sans punir une réponse tardive : ✅ PASS")
     else:
         print("   → ❌ FAIL")
         echecs += 1

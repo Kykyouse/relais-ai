@@ -16,7 +16,7 @@ Cible V1 : plombiers/chauffagistes FR. Solo dev : Geoffrey (binôme Claude) ; ma
 ```bash
 cd proto
 pip install -r requirements.txt     # anthropic, python-dotenv (inutiles en mock)
-python run_scenario.py              # suite de non-régression (mock, sans clé, ~3 s) — 50 tests
+python run_scenario.py              # suite de non-régression (mock, sans clé, ~3 s) — 52 tests
 python run_llm_eval.py --mock       # plomberie de l'éval appelant-simulé (sans clé)
 python run_llm_eval.py [--n 3] [--only T05]   # éval LLM réel → evals/results-*.json
                                     # RELAIS_MODEL = l'agent, RELAIS_MODEL_APPELANT
@@ -81,7 +81,8 @@ agenda · `scoring.py` lead + score 0–5 · `produit.py` config PRODUIT — nom
 (**Nelyo**) et expéditeur SMS unique (**nelyo**), contraintes AF2M vérifiées au
 démarrage ; « Relais » reste le nom de CODE (repo, modules, tables) ·
 `temps.py` instants UTC vs heures de pendule (règle n°7,
-à lire avant de toucher à une échéance) · `config/dupont.json` persona de test de bout en bout.
+à lire avant de toucher à une échéance) · `nombres.py` nombres PRONONCÉS en toutes
+lettres → chiffres (code postal, téléphone ; déterministe, jamais confié au LLM) · `config/dupont.json` persona de test de bout en bout.
 
 Pièges connus : les modèles à réflexion adaptative (Sonnet 5) comptent leurs tokens de réflexion
 dans `max_tokens` (mettre large) et renvoient des ThinkingBlocks (ne lire que les blocs `text`,
