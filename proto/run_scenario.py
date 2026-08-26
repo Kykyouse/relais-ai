@@ -3571,6 +3571,135 @@ def check_creneaux_verbatim() -> bool:
     return True
 
 
+def check_dispo_demain_aujourdhui() -> bool:
+    """R61 : « demain » et « aujourd'hui » sont des contraintes de jour comme les autres.
+
+    Appel réel du 26/08. L'appelant dit, dans sa PREMIÈRE phrase :
+
+        « j'ai une fuite dans la salle de bain, qui habite à Nogent-sur-Marne, voudrais un
+          rendez-vous n'importe quand dans la journée de DEMAIN si possible »
+
+    Et l'agent lui propose : « aujourd'hui entre 17 h et 19 h, ou demain entre 08 h et
+    10 h ». Il a fallu qu'il réponde « **J'ai dit demain.** » pour obtenir ce qu'il avait
+    demandé d'emblée.
+
+    Cause : `_contraintes_dispo` ne reconnaissait que les NOMS DE JOURS (« samedi ») et les
+    moments (« matin »). « demain » n'est pas dans la table des jours de la semaine, donc
+    la contrainte n'existait pas. Elle est pourtant la façon la plus courante de dire un
+    jour au téléphone — bien plus que « mardi ».
+
+    C'est la même famille que R36 (contrainte annoncée tardivement) et R39 (« rien de plus
+    tôt » contre une contrainte nouvelle) : le créneau proposé doit respecter ce que
+    l'appelant a dit, quand il l'a dit. Ici la contrainte était là depuis le premier mot.
+
+    Règle n°7 : « demain » se résout contre l'horloge de l'appel, **en heure de pendule**.
+    Un appel passé à 23 h 30 UTC un lundi est encore lundi à Paris — le lendemain est
+    mardi, pas mercredi.
+    """
+    import datetime as dt
+
+    from relais_proto.engine import Conversation
+    from relais_proto import temps
+
+    # LUNDI_9H est un lundi : demain = mardi (1), après-demain = mercredi (2)
+    local = temps.en_local(LUNDI_9H, CFG)
+    if local.weekday() != 0:
+        print(f"   préparation : LUNDI_9H n'est pas un lundi ({local})")
+        return False
+
+    def contraintes(dispo):
+        convo = Conversation(CFG, MockLLM(), CalendarStub(CFG, now=LUNDI_9H))
+        convo.slots["disponibilites"] = dispo
+        return convo._contraintes_dispo()
+
+    for dispo, jours_attendus, moment_attendu in (
+            ("n'importe quand dans la journée de demain", {1}, None),
+            ("demain", {1}, None),
+            ("demain matin", {1}, "matin"),
+            ("aujourd'hui", {0}, None),
+            ("après-demain", {2}, None),
+            # les noms de jours continuent de fonctionner, et se cumulent
+            ("que le samedi matin", {5}, "matin"),
+            ("mardi ou demain", {1}, None),
+            (None, None, None),
+            ("n'importe quand", None, None)):
+        jours, moment = contraintes(dispo)
+        if jours != jours_attendus or moment != moment_attendu:
+            print(f"   {dispo!r} → jours={jours}, moment={moment!r} "
+                  f"(attendu {jours_attendus}, {moment_attendu!r})")
+            return False
+
+    # « après-demain » CONTIENT « demain » : le plus long doit gagner, sinon un appelant
+    # qui dit après-demain obtient demain.
+    if contraintes("après-demain")[0] == {1}:
+        print("   « après-demain » est lu comme « demain »")
+        return False
+
+    # (a-bis) L'APPEL DE NUIT, et c'est là que la règle n°7 se gagne ou se perd. À
+    # 22 h 30 UTC un lundi, il est 00 h 30 le MARDI à Paris : « demain » vaut donc
+    # mercredi. Calculé sur l'instant UTC, on répondrait mardi — soit la nuit même.
+    #
+    # Un appelant qui a une fuite à minuit et demi et qui dit « demain » n'entend pas
+    # « dans une heure ». À 9 h du matin, UTC et Paris tombent le même jour, et le défaut
+    # est invisible : c'est pour ça qu'une mutation y survivait.
+    nuit = dt.datetime(2026, 8, 24, 22, 30, tzinfo=dt.UTC)          # lundi 22 h 30 UTC
+    local_nuit = temps.en_local(nuit, CFG)
+    if local_nuit.weekday() != 1:
+        print(f"   préparation : {nuit} n'est pas mardi à Paris ({local_nuit})")
+        return False
+    convo_nuit = Conversation(CFG, MockLLM(), CalendarStub(CFG, now=nuit))
+    convo_nuit.slots["disponibilites"] = "demain"
+    jours_nuit, _ = convo_nuit._contraintes_dispo()
+    if jours_nuit != {2}:                                          # mercredi
+        print(f"   appel de nuit : « demain » → {jours_nuit} au lieu de "
+              f"{{2}} (mercredi) — calculé en UTC et non en heure de pendule")
+        return False
+
+    # (b) DE BOUT EN BOUT : le créneau proposé respecte « demain » dès le premier tour
+    convo = Conversation(CFG, MockLLM(), CalendarStub(CFG, now=LUNDI_9H))
+    convo.open()
+    convo.process("J'ai une fuite d'eau dans la salle de bain, j'habite à "
+                  "Nogent-sur-Marne 94130, je voudrais un rendez-vous n'importe quand "
+                  "dans la journée de demain")
+    convo.process("Dupont, 06 30 30 40 45")
+    offre = convo.process("Oui c'est bien ça")
+    if not convo._proposes:
+        print(f"   aucun créneau proposé : « {offre} »")
+        return False
+    demain = (temps.en_local(LUNDI_9H, CFG) + dt.timedelta(days=1)).date().isoformat()
+    for creneau in convo._proposes:
+        if creneau["date"] != demain:
+            print(f"   un créneau hors « demain » est proposé : {creneau['label']} "
+                  f"({creneau['date']}, attendu {demain})")
+            return False
+    if "aujourd'hui" in offre.lower():
+        print(f"   l'agent propose aujourd'hui alors que l'appelant a dit demain : "
+              f"« {offre} »")
+        return False
+
+    # (c) et sans contrainte, on propose toujours au plus tôt — on ne vient pas de
+    # rétrécir le nominal
+    convo2 = Conversation(CFG, MockLLM(), CalendarStub(CFG, now=LUNDI_9H))
+    convo2.open()
+    convo2.process("J'ai une fuite d'eau dans la salle de bain")
+    convo2.process("Nogent-sur-Marne 94130")
+    convo2.process("Dupont, 06 30 30 40 45")
+    convo2.process("Oui c'est bien ça")
+    # Comparé au calendrier SANS contrainte, plutôt qu'à une date écrite à la main : ce
+    # qu'on vérifie, c'est qu'aucun filtre ne s'est glissé là où l'appelant n'a rien
+    # demandé. (Premier jet : j'épinglais « aujourd'hui », et l'assertion était fausse —
+    # le premier créneau non contraint de ce scénario est demain matin.)
+    reference = CalendarStub(CFG, now=LUNDI_9H).get_slots(
+        convo2.slots["prestation"], convo2.flags["zone"] is not None
+        and convo2.slots["intent"] == "urgence", n=2)
+    if [c["label"] for c in convo2._proposes] != [c["label"] for c in reference]:
+        print(f"   sans contrainte, les créneaux diffèrent du calendrier : "
+              f"{[c['label'] for c in convo2._proposes]} vs "
+              f"{[c['label'] for c in reference]}")
+        return False
+    return True
+
+
 def check_rattrapage_des_tours_manques() -> bool:
     """R60 : un tour que nous n'avons pas traité est RATTRAPÉ, pas perdu.
 
@@ -6749,6 +6878,14 @@ def run() -> int:
     if check_rattrapage_des_tours_manques():
         print("   → un tour que nous n'avons pas traité est rattrapé dans l'ordre, "
               "avec une borne, et un rejeu franc ne bouge toujours pas : ✅ PASS")
+    else:
+        print("   → ❌ FAIL")
+        echecs += 1
+
+    print(f"\n──── R61_dispo_demain ────")
+    if check_dispo_demain_aujourdhui():
+        print("   → « demain » et « aujourd'hui » filtrent les créneaux comme un "
+              "nom de jour, résolus en heure de pendule : ✅ PASS")
     else:
         print("   → ❌ FAIL")
         echecs += 1

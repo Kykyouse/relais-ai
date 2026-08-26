@@ -22,7 +22,7 @@ point d'entrée du produit. Plus rien d'autre n'est bloqué côté code.
 
 ```bash
 cd proto
-python run_scenario.py                              # 64 tests, ~3 s, sans clé ni base
+python run_scenario.py                              # 65 tests, ~3 s, sans clé ni base
 python semer_artisans.py [--ecrire]                 # amorce la table `artisan`
 python run_depot_pg.py [--migrer]                   # contrat du port contre Supabase
 uvicorn serveur:app --port 8000                     # API HTTP
@@ -79,6 +79,7 @@ python run_llm_eval.py [--mock] [--n 3]             # éval appelant-simulé
 | Code postal relu en DEUX groupes (R58) | ✅ | mock, mutations 5/5 |
 | Transcription qui se précise ≠ rejeu (R59) | ✅ | mock, mutations 5/5 — **un lead en zone perdu le 26/08** |
 | Rattrapage des tours manqués (R60) | ✅ | mock, mutations 5/5 |
+| « demain » / « aujourd'hui » comme contrainte (R61) | ✅ | mock, mutations 6/6 |
 | Identifiant d'appel imposé au dépôt (port) | ✅ | **contrat rejoué sur Supabase** |
 
 ## Ce qui est encore un double (et non un manque caché)
@@ -436,6 +437,57 @@ Trois mesures d'oreille, consignées comme données d'arbitrage :
    courtes, mais **à activer** (`stopSpeakingPlan`) : les tours verbatim longs
    (récapitulatif de RDV, consignes de sécurité) sont exactement ceux qu'un appelant
    pressé voudra couper. Décision réversible, à trancher à l'oreille.
+
+---
+
+## Session du 26/08/2026 (fin) — R61 : « demain » n'était pas un jour
+
+Appel réel où le RDV est bien pris, mais où l'appelant a dû se répéter. Sa première phrase :
+
+    « j'ai une fuite dans la salle de bain, qui habite à Nogent-sur-Marne, voudrais un
+      rendez-vous n'importe quand dans la journée de DEMAIN si possible »
+
+Et l'agent propose « aujourd'hui entre 17 h et 19 h, ou demain entre 08 h et 10 h ». Il a
+fallu qu'il réponde **« J'ai dit demain. »** pour obtenir ce qu'il avait demandé d'emblée.
+
+`_contraintes_dispo` ne reconnaissait que les NOMS de jours (« samedi ») et les moments
+(« matin »). « demain » n'est pas dans la table des jours de la semaine — la contrainte
+n'existait donc pas. C'est pourtant la façon **la plus courante** de dire un jour au
+téléphone, bien avant « mardi ».
+
+Même famille que R36 (contrainte annoncée tardivement) et R39 (« rien de plus tôt » contre
+une contrainte nouvelle) : le créneau proposé doit respecter ce que l'appelant a dit, quand
+il l'a dit. Ici, la contrainte était là depuis le premier mot.
+
+### La mutation qui a trouvé le vrai piège
+
+« après-demain » contient « demain » : sans un ordre explicite du plus long au plus court,
+un appelant qui dit après-demain obtient demain. Tué du premier coup.
+
+Mais une mutation a survécu : *calculer le jour sur l'instant UTC au lieu de l'heure de
+pendule*. À 9 h du matin, UTC et Paris tombent le même jour — le défaut est invisible. Il
+a fallu **l'appel de nuit** : à 22 h 30 UTC un lundi, il est 00 h 30 le MARDI à Paris, donc
+« demain » vaut mercredi. Calculé en UTC, on répondrait mardi — soit la nuit même.
+
+Un appelant qui a une fuite à minuit et demi et qui dit « demain » n'entend pas « dans une
+heure ». C'est la règle n°7 qui se gagne ou se perd là, et R25 avait déjà payé pour
+l'apprendre.
+
+### Ce que cet appel montre AUSSI, et qui n'est pas de notre ressort
+
+Le début de chaque réplique de l'agent est **coupé à l'audio** : « Se passe-t-il » pour
+« Que se passe-t-il », « je n'ai● », « Je pas bien noté », « Peux vous proposer »,
+« Recevrez un SMS », « Quoi que ce soit coince ». Notre texte est complet et verbatim — la
+troncature est en aval. À rapprocher de `startSpeakingPlan` et du chevauchement déjà
+constaté.
+
+Et une observation d'ergonomie à trancher plus tard : l'appelant a dicté son numéro en
+morceaux (« 0 6. 30 », « 30 », « 4 0 4 5 »), et chaque fragment a reçu **la même phrase de
+refus**, mot pour mot, trois fois. R55 a raison de refuser ; répéter la même phrase à
+quelqu'un qui coopère n'aide pas. Une relance qui varie — « donnez-moi les dix chiffres d'un
+seul coup » — reste à écrire.
+
+Suite : **65 PASS**. Mutations 6/6.
 
 ---
 

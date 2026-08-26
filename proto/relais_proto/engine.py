@@ -11,6 +11,7 @@ Le LLM ne choisit jamais ni l'état ni le contenu engageant (créneaux, prix, pr
 """
 from __future__ import annotations
 
+from . import temps
 from .calendar_stub import CalendarStub
 from .guards import check_output, safe_fallback
 from .states import EMPTY_SLOTS, State, URGENT_PRESTATIONS
@@ -694,13 +695,38 @@ class Conversation:
     JOURS_SEMAINE = {"lundi": 0, "mardi": 1, "mercredi": 2, "jeudi": 3,
                      "vendredi": 4, "samedi": 5, "dimanche": 6}
 
+    # « demain » est un jour, dit autrement — et c'est la façon la PLUS courante de le
+    # dire au téléphone, bien avant « mardi ». Le plus long d'abord : « après-demain »
+    # contient « demain », et un appelant qui dit après-demain ne doit pas obtenir demain.
+    JOURS_RELATIFS = (("apres demain", 2), ("demain", 1), ("aujourd hui", 0))
+
     def _contraintes_dispo(self) -> tuple[set[int] | None, str | None]:
-        """Contraintes de créneaux tirées des disponibilités exprimées par l'appelant."""
+        """Contraintes de créneaux tirées des disponibilités exprimées par l'appelant.
+
+        Trouvé le 26/08 sur un appel réel : l'appelant demandait un rendez-vous
+        « n'importe quand dans la journée de DEMAIN » dès sa première phrase, et l'agent
+        lui proposait « aujourd'hui entre 17 h et 19 h ». Il a fallu qu'il réponde « J'ai
+        dit demain » pour obtenir ce qu'il avait demandé d'emblée. Seuls les NOMS de jours
+        étaient reconnus.
+
+        Règle n°7 : un jour relatif se résout contre l'horloge de l'appel, en heure de
+        PENDULE. Un appel passé à 23 h 30 UTC un lundi est encore lundi à Paris, et son
+        lendemain est mardi — pas mercredi.
+        """
+        import datetime as _dt
+
         d = self._normalise(self.slots.get("disponibilites") or "")
-        jours = {n for nom, n in self.JOURS_SEMAINE.items() if nom in d} or None
+        jours = {n for nom, n in self.JOURS_SEMAINE.items() if nom in d}
+        cal = getattr(self, "cal", None)
+        if cal is not None:
+            local = temps.en_local(cal.now, self.cfg)
+            for mot, delta in self.JOURS_RELATIFS:
+                if mot in d:
+                    jours.add((local + _dt.timedelta(days=delta)).weekday())
+                    break
         moment = ("matin" if "matin" in d
                   else "apres_midi" if ("apres midi" in d or "aprem" in d) else None)
-        return jours, moment
+        return (jours or None), moment
 
     def _zone_de(self, cp: str | None) -> str:
         zone = self.cfg["zone"]
