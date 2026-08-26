@@ -13,8 +13,8 @@
 ## En une phrase
 
 Le produit s'appelle **NELYO**. Le backend de la phase 1 est fonctionnel, vérifié contre
-un vrai Postgres, et l'agent conversationnel passe désormais **42/42** en éval LLM réelle
-sur **14 personas** (19/24 sur 8 personas en début de journée). L'artisan se connecte par code SMS et valide en
+un vrai Postgres, et l'agent conversationnel passe **57/57** en éval LLM réelle sur
+**19 personas**, dont cinq tirés d'appels VOCAUX réels. L'artisan se connecte par code SMS et valide en
 1 tap ; le client est prévenu sur toutes les issues. **Il ne manque que la voix** — le
 point d'entrée du produit. Plus rien d'autre n'est bloqué côté code.
 
@@ -50,7 +50,7 @@ python run_llm_eval.py [--mock] [--n 3]             # éval appelant-simulé
 | Homonymes, corrections, boucles bornées (R32) | ✅ | mock, mutations 6/6 |
 | Prestation refusée déclinée (R33) | ✅ | mock, mutations 6/6 |
 | **Éval LLM réelle, 14 personas × 3** | ✅ **42/42** | agent **Haiku 4.5**, appelant Sonnet 5 — 7ᵉ passage, 0 incident de harnais |
-| **19 personas** (5 tirés d'appels vocaux réels) | ⚠️ **55/57** | 26/08 : 50/57 puis 55/57 après R55/R56 ; R57 corrige les 2 derniers |
+| **19 personas** (5 tirés d'appels vocaux réels) | ✅ **57/57** | agent Haiku 4.5 — 50/57 → 55/57 → **57/57** le 26/08, 0 incident de harnais |
 | SMS de confirmation au client, chemin nominal (R27) | ✅ | mock, mutations 5/5 |
 | Table `artisan` + FK sur 5 tables (migration 008) | ✅ | **Supabase réel**, contrat du port |
 | Connexion artisan par code SMS (R28) | ✅ | mock, mutations 7/8 (1 défense en profondeur) |
@@ -433,6 +433,49 @@ Trois mesures d'oreille, consignées comme données d'arbitrage :
    courtes, mais **à activer** (`stopSpeakingPlan`) : les tours verbatim longs
    (récapitulatif de RDV, consignes de sécurité) sont exactement ceux qu'un appelant
    pressé voudra couper. Décision réversible, à trancher à l'oreille.
+
+---
+
+## Session du 26/08/2026 (fin) — 57/57, et ce que les appels réels ont coûté
+
+Troisième passage : **57/57**, zéro incident de harnais. Trajectoire de la journée sur les
+dix-neuf personas : **50/57 → 55/57 → 57/57**, chaque palier après un lot de correctifs
+tirés des échecs du précédent.
+
+### Le bilan de la journée
+
+Onze défauts, tous trouvés par un appel vocal réel ou par un persona qui en reprenait la
+dictée : R42 (numéro tronqué), R43 (code postal dicté), R44 (clôture verbatim), R45
+(commune canonique), R46 (re-salutation), R47 (nombres prononcés), R48 (commune bornée),
+R49 (barre oblique, commune vérifiée), R50 (code postal validé), R51 (vouvoiement), R52
+(salutation nulle part), R53 (une seule question), R54 (relecture avant refus), R55 (numéro
+confronté au dit), R56 (question verbatim), R57 (paire cohérente).
+
+**Aucun n'avait été vu par les quatorze personas écrits en imaginant des appelants.** C'est
+la leçon la plus solide de la journée : un persona tiré d'un appel réel trouve ce qu'aucune
+imagination ne produit — y compris avant d'être joué, T15 ayant révélé le bug de la virgule
+en mock.
+
+### Les garde-fous travaillent en continu
+
+Sur ce dernier passage, **23 interceptions** sur 57 conversations : 7 re-salutations,
+6 caractères imprononçables, 4 mises en forme markdown, 3 tutoiements, 3 questions
+multiples. Aucune n'a fait échouer un scénario — le repli sur l'instruction du contrôleur
+fonctionne — mais elles disent que le formuleur produirait sans cesse de l'inacceptable si
+on le laissait faire. Les cinq garde-fous nés aujourd'hui tirent tous les trois passages.
+
+### Ce qui reste au formuleur
+
+L'accueil, la qualification, la réponse tarifaire, les tours d'empathie. **Tout ce qui
+énonce un fait, un lieu, un chiffre ou un engagement est verbatim.** Ce n'est pas une
+décision prise d'un coup, c'est le résidu de six correctifs successifs, chacun ajouté après
+qu'une phrase précise a été mutilée au téléphone.
+
+### Prochaine étape
+
+Un appel vocal réel sur l'arbre corrigé, avec `endCallPhrases` branché sur la phrase de fin
+et `stopSpeakingPlan` actif. Les six appels de la journée ont tous été passés avant au moins
+une partie des correctifs : on n'a encore jamais entendu ce produit dans son état actuel.
 
 ---
 
