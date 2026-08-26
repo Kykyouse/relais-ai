@@ -50,6 +50,7 @@ python run_llm_eval.py [--mock] [--n 3]             # éval appelant-simulé
 | Homonymes, corrections, boucles bornées (R32) | ✅ | mock, mutations 6/6 |
 | Prestation refusée déclinée (R33) | ✅ | mock, mutations 6/6 |
 | **Éval LLM réelle, 14 personas × 3** | ✅ **42/42** | agent **Haiku 4.5**, appelant Sonnet 5 — 7ᵉ passage, 0 incident de harnais |
+| **19 personas** (5 tirés d'appels vocaux réels) | ⏳ | plomberie 19/19 en mock — **passage réel non joué** |
 | SMS de confirmation au client, chemin nominal (R27) | ✅ | mock, mutations 5/5 |
 | Table `artisan` + FK sur 5 tables (migration 008) | ✅ | **Supabase réel**, contrat du port |
 | Connexion artisan par code SMS (R28) | ✅ | mock, mutations 7/8 (1 défense en profondeur) |
@@ -424,6 +425,53 @@ Trois mesures d'oreille, consignées comme données d'arbitrage :
    courtes, mais **à activer** (`stopSpeakingPlan`) : les tours verbatim longs
    (récapitulatif de RDV, consignes de sécurité) sont exactement ceux qu'un appelant
    pressé voudra couper. Décision réversible, à trancher à l'oreille.
+
+---
+
+## Session du 26/08/2026 (suite) — cinq personas tirés des appels réels
+
+Les six appels vocaux du 26/08 ont produit dix défauts. Aucun n'était couvert par les
+quatorze personas existants — ils avaient été écrits en imaginant des appelants, pas en
+en écoutant. Cinq personas nouveaux reprennent les dictées **telles qu'elles ont été
+prononcées ou transcrites** :
+
+| Persona | Dictée réelle | Défaut qu'il verrouille |
+|---|---|---|
+| `T14_numero_douze_chiffres` | « 06 10 15 47 68 79 » | R42 — troncature silencieuse |
+| `T15_code_postal_en_lettres` | « quatre-vingt-quatorze, cent trente » | R47 — nombres prononcés |
+| `T16_appelant_se_reprend` | « le quatre-vingt Non, c'est 160 » | R50 — CP invalide qui raccroche |
+| `T17_commune_deformee` | « je visite sur Orange », « Zivier-sur-Orge » | R49 — commune non vérifiée |
+| `T18_premier_tour_incomprehensible` | « Et tu cliques dans la salle de bain » | R52/R53 — réplique brouillonne |
+
+**Le verdict de l'éval sait désormais vérifier le NUMÉRO** (`tel`). Il ne le faisait pas :
+c'est pourtant le seul champ dont une valeur fausse produit un RDV d'apparence
+parfaitement normale — lead complet, score correct, et personne ne peut rappeler le
+client. Aucune autre clé du verdict ne l'aurait vu, et c'est précisément le défaut R42.
+
+**T14 est construit pour être discriminant** : le numéro correct donné après relance
+(`06 44 55 66 77`) n'est PAS un préfixe de la dictée fautive. Une troncature silencieuse
+rendrait `0610154768` — un numéro qui ressemble à s'y méprendre à un numéro valide, et que
+le test aurait accepté si j'avais gardé le même numéro dans les deux tours.
+
+### Un persona a trouvé un défaut avant même d'être joué en réel
+
+`T15` échouait en mock. « quatre-vingt-quatorze, cent trente » — la façon NORMALE de dicter
+94130 — donnait 9400 : la virgule est invisible pour l'analyseur, et « cent » multipliait le
+nombre en cours. Le français « quatre-vingt-quatorze cents » existe, mais ce n'est pas ce
+que dit quelqu'un qui donne son code postal.
+
+**La ponctuation ferme désormais un nombre ; le trait d'union, non.** Le trait d'union est
+interne aux nombres français (« quatre-vingt-onze ») et le premier appel réel l'avait sur
+toute la dictée : « Quatre-vingt-onze-deux-cent-soixante ». S'il coupait, ce cas-là
+casserait.
+
+Un persona qui reprend une vraie dictée trouve des défauts tout seul — c'est l'argument
+pour les écrire à partir d'appels plutôt que d'imagination.
+
+### Non joué
+
+Le passage réel n'est **pas** lancé : 19 personas × 3 coûtent une clé et du temps, et c'est
+une décision qui appartient à Geoffrey. La plomberie est vérifiée (19/19 en mock).
 
 ---
 

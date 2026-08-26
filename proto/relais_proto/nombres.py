@@ -92,48 +92,62 @@ def groupes_dits(texte: str) -> list[str]:
         total, courant = 0, None
         apres_unite = apres_dizaine = apres_cent = apres_dix = False
 
-    for mot in _mots(texte):
-        if mot in LIAISONS:
-            continue
-        if mot in CENT:
-            courant = (courant or 1) * 100
-            apres_cent, apres_unite, apres_dizaine, apres_dix = True, False, False, False
-        elif mot in MILLE:
-            # « mille » ne ferme pas le nombre : « quatre-vingt-onze mille deux cent
-            # soixante » est UN nombre.
-            total += (courant or 1) * 1000
-            courant = None
-            apres_unite = apres_dizaine = apres_cent = apres_dix = False
-        elif mot in DIZAINES:
-            v = DIZAINES[mot]
-            if apres_cent:
-                courant = (courant or 0) + v      # deux cent soixante
-                apres_cent, apres_dizaine = False, True
-            elif courant is None:
-                courant, apres_dizaine = v, True
+    # La PONCTUATION ferme un nombre ; le trait d'union, non.
+    #
+    # « quatre-vingt-quatorze, cent trente » est la façon normale de dicter 94130 : deux
+    # groupes séparés par une pause. Sans cette coupure, « cent » multipliait le nombre en
+    # cours et on lisait 9400 — le français « quatre-vingt-quatorze cents » existe, mais
+    # ce n'est pas ce que dit quelqu'un qui donne son code postal.
+    #
+    # Le trait d'union, lui, est INTERNE aux nombres français (« quatre-vingt-onze ») et
+    # le premier appel réel l'a montré sur toute la dictée : « Quatre-vingt-onze-deux-
+    # cent-soixante ». Il ne doit donc jamais couper.
+    #
+    # Trouvé en écrivant le persona d'éval T15, avant même de le jouer en réel.
+    for segment in re.split(r"[,;:!?…]+|\.(?!\d)", texte or ""):
+        for mot in _mots(segment):
+            if mot in LIAISONS:
+                continue
+            if mot in CENT:
+                courant = (courant or 1) * 100
+                apres_cent, apres_unite, apres_dizaine, apres_dix = True, False, False, False
+            elif mot in MILLE:
+                # « mille » ne ferme pas le nombre : « quatre-vingt-onze mille deux cent
+                # soixante » est UN nombre.
+                total += (courant or 1) * 1000
+                courant = None
+                apres_unite = apres_dizaine = apres_cent = apres_dix = False
+            elif mot in DIZAINES:
+                v = DIZAINES[mot]
+                if apres_cent:
+                    courant = (courant or 0) + v      # deux cent soixante
+                    apres_cent, apres_dizaine = False, True
+                elif courant is None:
+                    courant, apres_dizaine = v, True
+                else:
+                    fermer()
+                    courant, apres_dizaine = v, True
+            elif mot in UNITES:
+                v = UNITES[mot]
+                if apres_dix and v in (7, 8, 9):
+                    # dix-sept, soixante-dix-huit, quatre-vingt-dix-neuf : « dix » n'est pas
+                    # fini tant qu'un 7, 8 ou 9 peut le suivre. Sans cette règle,
+                    # « soixante-dix-huit » se lit 70 puis 8 — et un numéro de téléphone dicté
+                    # à voix haute perd un chiffre en route.
+                    courant = (courant or 0) + v
+                    apres_dix, apres_unite = False, True
+                elif apres_dizaine or apres_cent:
+                    courant = (courant or 0) + v      # soixante-dix, deux cent six
+                    apres_dizaine = apres_cent = False
+                    apres_unite, apres_dix = True, (v == 10)
+                elif apres_unite:
+                    fermer()                          # deux nombres qui se suivent
+                    courant, apres_unite, apres_dix = v, True, (v == 10)
+                else:
+                    courant, apres_unite, apres_dix = v, True, (v == 10)
             else:
-                fermer()
-                courant, apres_dizaine = v, True
-        elif mot in UNITES:
-            v = UNITES[mot]
-            if apres_dix and v in (7, 8, 9):
-                # dix-sept, soixante-dix-huit, quatre-vingt-dix-neuf : « dix » n'est pas
-                # fini tant qu'un 7, 8 ou 9 peut le suivre. Sans cette règle,
-                # « soixante-dix-huit » se lit 70 puis 8 — et un numéro de téléphone dicté
-                # à voix haute perd un chiffre en route.
-                courant = (courant or 0) + v
-                apres_dix, apres_unite = False, True
-            elif apres_dizaine or apres_cent:
-                courant = (courant or 0) + v      # soixante-dix, deux cent six
-                apres_dizaine = apres_cent = False
-                apres_unite, apres_dix = True, (v == 10)
-            elif apres_unite:
-                fermer()                          # deux nombres qui se suivent
-                courant, apres_unite, apres_dix = v, True, (v == 10)
-            else:
-                courant, apres_unite, apres_dix = v, True, (v == 10)
-        else:
-            fermer()                              # un mot ordinaire clôt la suite
+                fermer()                              # un mot ordinaire clôt la suite
+        fermer()          # fin de segment
     fermer()
     return groupes
 

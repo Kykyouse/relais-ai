@@ -209,6 +209,85 @@ PERSONAS = {
                    "Nogent-sur-Marne 94130", "Morel, 06 88 77 66 55", "Oui",
                    "Le premier"],
     },
+    # ------------------------------------------------------------------ #
+    # Personas tirés des SIX APPELS VOCAUX RÉELS du 26/08. Chaque dictée est reprise
+    # telle qu'elle a été prononcée ou transcrite — ce sont des cas de production, pas
+    # des curiosités inventées. Chacun a coûté un défaut (R42, R47, R49, R50, R52).
+    # ------------------------------------------------------------------ #
+    "T14_numero_douze_chiffres": {
+        "role": ("M. Roux, un peu brouillon. Fuite d'eau dans la salle de bain à "
+                 "Nogent-sur-Marne (94130). Quand on te demande ton numéro, tu dictes "
+                 "EXACTEMENT « 06 10 15 47 68 79 » — douze chiffres, tu t'es emmêlé. "
+                 "Si l'agent te fait répéter, tu donnes alors ton VRAI numéro, "
+                 "« 06 44 55 66 77 », et tu confirmes."),
+        "cache": "Tu ne remarques pas ton erreur : si l'agent te répète dix chiffres "
+                 "sans rien dire, tu réponds « oui c'est bien ça ».",
+        # Le numéro attendu est DIFFÉRENT d'un préfixe de la dictée fautive : c'est ce qui
+        # rend le test discriminant. Une troncature silencieuse donnerait 0610154768, qui
+        # ressemble à un numéro parfaitement valide (défaut réel du 26/08).
+        "attendu": {"categorie": "rdv_reserve", "rdv": True, "cp": "94130",
+                    "tel": "0644556677"},
+        "script": ["J'ai une fuite d'eau dans la salle de bain", "Nogent-sur-Marne 94130",
+                   "Roux, 06 10 15 47 68 79", "06 44 55 66 77", "Oui", "Le premier"],
+    },
+    "T15_code_postal_en_lettres": {
+        "role": ("Mme Chevalier, âgée, elle parle lentement. Fuite sous l'évier. Tu ne "
+                 "dis JAMAIS ton code postal en chiffres : tu le prononces en toutes "
+                 "lettres, « quatre-vingt-quatorze, cent trente », comme on le dit au "
+                 "téléphone. Ton numéro : 06 33 44 55 66. Tu es disponible n'importe "
+                 "quand."),
+        "cache": "Si on te demande de répéter, tu redis la même chose en lettres — tu "
+                 "ne penses pas à épeler les chiffres.",
+        "attendu": {"categorie": "rdv_reserve", "rdv": True, "cp": "94130"},
+        "script": ["J'ai une fuite sous l'évier",
+                   "quatre-vingt-quatorze, cent trente",
+                   "Chevalier, 06 33 44 55 66", "Oui", "Le premier"],
+    },
+    "T16_appelant_se_reprend": {
+        "role": ("M. Blanc, hésitant. Fuite dans la salle de bain. Tu te reprends en "
+                 "plein milieu de ta phrase : tu dis d'abord « je suis sur le "
+                 "quatre-vingt Non, c'est 160 », puis au tour suivant « pardon, je suis "
+                 "sur le quatre-vingt-onze deux cent soixante »."),
+        "cache": "Tu habites vraiment dans le 91260. Le « 160 » était une erreur de ta "
+                 "part, ne le redis plus après t'être corrigé.",
+        # 91260 = Juvisy, hors zone : le refus est la BONNE issue. Ce qu'on vérifie, c'est
+        # qu'il tombe sur le vrai code postal et non sur le fragment « 160 » — le 26/08,
+        # l'agent a raccroché sur trois chiffres.
+        "attendu": {"categorie": "hors_zone", "rdv": False, "cp": "91260"},
+        "script": ["J'ai une fuite dans la salle de bain",
+                   "je suis sur le quatre-vingt Non, c'est 160",
+                   "pardon, je suis sur le quatre-vingt-onze deux cent soixante"],
+    },
+    "T17_commune_deformee": {
+        "role": ("M. Petitjean. Fuite dans la salle de bain. Tu habites Juvisy-sur-Orge, "
+                 "mais la ligne est mauvaise : tu dis littéralement « je visite sur "
+                 "Orange » puis « Zivier-sur-Orge » — c'est ce que l'agent entend. "
+                 "Quand on insiste, tu donnes ton code postal : 91260."),
+        "cache": "Tu ne corriges jamais la prononciation de ta commune : redis-la "
+                 "toujours déformée.",
+        # L'agent ne doit JAMAIS répéter un nom de commune qu'il n'a pas vérifié. Le
+        # 26/08, il a dit « n'intervient pas sur Essonne » — un département.
+        "attendu": {"categorie": "hors_zone", "rdv": False, "cp": "91260",
+                    "texte_agent_absent": ["Zivier", "sur Orange", "sur Essonne"]},
+        "script": ["J'ai une fuite dans la salle de bain",
+                   "je visite sur Orange", "Zivier-sur-Orge, le 91260"],
+    },
+    "T18_premier_tour_incomprehensible": {
+        "role": ("Mme Fournier. La transcription de ta première phrase est illisible : "
+                 "tu dis EXACTEMENT « Et tu cliques dans la salle de bain. J'ai une "
+                 "fuite. ». Ensuite tu redeviens claire : fuite d'eau dans la salle de "
+                 "bain, Nogent-sur-Marne 94130, numéro 06 77 88 99 00."),
+        "cache": "Tu ne te rends pas compte que ta première phrase était incompréhensible.",
+        # Ce qu'on vérifie : un tour illisible ne fait pas dérailler l'appel, et l'agent
+        # n'invente rien. Le 26/08, il a répondu « Pouvez-vous ? Oui, Bonjour, … » —
+        # trois questions et une salutation de trop.
+        "attendu": {"categorie": "rdv_reserve", "rdv": True, "cp": "94130",
+                    "texte_agent_absent": ["n'intervient pas"]},
+        "script": ["Et tu cliques dans la salle de bain. J'ai une fuite.",
+                   "J'ai une fuite d'eau dans la salle de bain",
+                   "Nogent-sur-Marne 94130", "Fournier, 06 77 88 99 00", "Oui",
+                   "Le premier"],
+    },
     "T08_aspirateur_infos": {
         "role": ("Un appelant curieux (peut-être un concurrent). Tu poses des questions sur "
                  "l'entreprise : combien de techniciens, où habite Julien, ça marche bien "
@@ -297,6 +376,13 @@ def verdict(lead: dict, attendu: dict) -> tuple[bool, list[str], list[str]]:
         problemes.append(f"rdv={'oui' if lead['rdv'] else 'non'} (attendu {attendu['rdv']})")
     if "cp" in attendu and lead["slots"].get("code_postal") != attendu["cp"]:
         problemes.append(f"cp={lead['slots'].get('code_postal')} (attendu {attendu['cp']})")
+    # Le NUMÉRO de rappel : ajouté le 26/08, après R42. C'est le seul champ dont une
+    # valeur fausse produit un RDV d'apparence parfaitement normale — le lead est complet,
+    # le score est bon, et personne ne peut rappeler le client. Aucune autre clé du
+    # verdict ne l'aurait vu.
+    if "tel" in attendu and lead["slots"].get("telephone_rappel") != attendu["tel"]:
+        problemes.append(f"tel={lead['slots'].get('telephone_rappel')} "
+                         f"(attendu {attendu['tel']})")
     # une violation INTERCEPTÉE (le client a entendu le repli correct) = le garde-fou
     # a fait son travail → WARN (à surveiller : c'est le formuleur qui dérape), pas FAIL
     if lead["violations_gardes_fous"]:

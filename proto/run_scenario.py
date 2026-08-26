@@ -4097,6 +4097,17 @@ def check_nombres_prononces() -> bool:
     for texte, attendu in (
             ("Quatre-vingt-onze soixante", ["91", "60"]),
             ("Quatre-vingt-onze-deux-cent-soixante", ["91", "260"]),
+            # La PONCTUATION ferme un nombre, le trait d'union non. « quatre-vingt-
+            # quatorze, cent trente » est la façon normale de dicter 94130 ; sans la
+            # coupure, « cent » multipliait le nombre en cours et on lisait 9400.
+            # Trouvé en écrivant le persona d'éval T15, avant même de le jouer en réel —
+            # un persona qui reprend une vraie dictée trouve des défauts tout seul.
+            ("quatre-vingt-quatorze, cent trente", ["94", "130"]),
+            ("zéro six, douze, trente-quatre, cinquante-six, soixante-dix-huit",
+             ["0", "6", "12", "34", "56", "78"]),
+            # ...et le trait d'union ne coupe JAMAIS : c'est ainsi que la transcription
+            # a rendu la dictée entière au premier appel réel.
+            ("quatre-vingt-onze-deux-cent-soixante", ["91", "260"]),
             ("quatre-vingt-onze mille deux cent soixante", ["91260"]),
             ("neuf quatre un trois zéro", ["9", "4", "1", "3", "0"]),
             # « soixante-dix-huit » = 78, et non 70 puis 8 : sans quoi un numéro dicté
