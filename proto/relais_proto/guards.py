@@ -83,8 +83,102 @@ _RE_TUTOIEMENT = re.compile(r"\b(tu|te|toi|ton|ta|tes)\b|\bt'(?=[aeiouyéèêà]
                             re.IGNORECASE)
 
 
+# ─────────────────────────────────────────────────────────────────────────────────
+# LES FAITS : ce qu'une réplique FORMULÉE n'a pas le droit d'énoncer.
+#
+# Renversement du 26/08. Jusqu'ici, chaque fois que le formuleur écornait un fait, on
+# figeait la PHRASE entière en `verbatim` : les créneaux (R38), la clôture (R44), la
+# commune (R45), la question du secteur (R56), le refus et la re-dictée (R57). Chacun
+# justifié par un défaut réel — et l'effet cumulé est que l'agent sonne préenregistré.
+# Geoffrey, après l'appel où la même phrase est sortie trois fois : « on vend de l'IA avec
+# notre produit, pas du message préenregistré ».
+#
+# La ligne est déplacée : **le contrôleur ÉNONCE les faits, le formuleur DEMANDE**. Une
+# réplique formulée peut être tournée comme le modèle veut, mais elle ne peut contenni
+# aucun chiffre, aucun jour, aucun nom de lieu. Ce sont exactement les trois choses qu'il
+# a inventées en production :
+#
+#   chiffres   « 0-6-1-0-1-5-4-7-6-8-7-9. C'est bien ça ? »   (numéro refusé, R57)
+#   jours      « je n'ai pas de disponibilité le samedi »      (créneaux niés, R38)
+#   lieux      « Vous êtes sur Orange, dans le Vaucluse ? »    (lieu inventé, R56)
+#
+# Un fait ne se reformule pas : il se cite ou il se tait.
+_RE_CHIFFRE = re.compile(r"\d")
+_RE_JOUR = re.compile(
+    r"\b(lundi|mardi|mercredi|jeudi|vendredi|samedi|dimanche"
+    r"|demain|aujourd'?hui|apr[eè]s-?demain|ce soir|matin|apr[eè]s-?midi)\b",
+    re.IGNORECASE)
+
+
+# Un NOM PROPRE au milieu d'une phrase. C'est le seul critère mécanique qui attrape ce que
+# le formuleur a réellement produit : « Orange » et « Vaucluse » (hors Île-de-France, donc
+# absents de nos tables), « Nogènes-sur-Marne » (qui n'existe pas), « Deuil La Barre »
+# (un autre département), « Essonne » (un département pris pour une commune).
+#
+# Une table de communes ne suffisait pas : elle ne connaît que l'Île-de-France, et le
+# formuleur cite ce qu'il veut. En français, une majuscule en milieu de phrase est
+# presque toujours un nom propre — et un nom propre est un FAIT.
+#
+# `[a-zà-ÿ]{2,}` : capitale suivie de minuscules, donc pas les sigles (« SMS », « RDV »),
+# qui ne sont pas des faits.
+#
+# ⚠️ COMPROMIS ASSUMÉ : la règle ne sait pas distinguer « Orange » d'un mot courant
+# capitalisé au milieu d'une phrase (« Alors, Dites-moi… »). Il faudrait un dictionnaire
+# pour cela. Le faux positif coûte du NATUREL — la réplique replie sur l'instruction du
+# contrôleur, correcte par construction — jamais de la correction. On préfère un agent
+# parfois plus sec à un agent qui invente un nom de ville.
+_RE_NOM_PROPRE = re.compile(r"\b([A-ZÀ-Þ][a-zà-ÿ]{2,})")
+_FINS_DE_PHRASE = ".!?…:"
+# Les civilites portent une majuscule et ne sont pas des faits : personne ne peut
+# se tromper en disant « Monsieur ». Les laisser interdites ferait replier une
+# reponse polie sur l'instruction brute, ce qui est exactement l'inverse du but.
+CIVILITES = frozenset({"monsieur", "madame", "mademoiselle", "messieurs", "mesdames"})
+
+
+def _mots_autorises(config: dict, slots: dict | None) -> set[str]:
+    """Les noms propres que l'agent a le droit de prononcer : les siens, et ceux que le
+    contrôleur a RÉSOLUS. Le nom d'une commune établie ou celui de l'appelant ne sont plus
+    des inventions possibles — ils sont dans l'état."""
+    from . import communes as _c
+
+    sources = [(config.get("entreprise") or {}).get("nom"),
+               (config.get("entreprise") or {}).get("prenom_patron"),
+               (config.get("produit") or {}).get("nom")]
+    for cle in ("commune", "nom"):
+        sources.append((slots or {}).get(cle))
+    mots = set(CIVILITES)
+    for s in sources:
+        mots.update(_c.normaliser(str(s or "")).split())
+    return mots
+
+
+def _faits_enonces(text: str, config: dict, slots: dict | None = None) -> list[str]:
+    """Les FAITS qu'une réplique formulée n'aurait pas dû énoncer."""
+    from . import communes as _c
+
+    violations = []
+    if m := _RE_CHIFFRE.search(text or ""):
+        violations.append(f"chiffre_hors_verbatim:{m.group(0)}")
+    if m := _RE_JOUR.search(text or ""):
+        violations.append(f"jour_hors_verbatim:{m.group(0)}")
+    autorises = _mots_autorises(config, slots)
+    texte = text or ""
+    for m in _RE_NOM_PROPRE.finditer(texte):
+        # une majuscule en DÉBUT de phrase est normale : on ne regarde que celles du
+        # milieu, là où elle signale un nom propre
+        avant = texte[:m.start()].rstrip()
+        if not avant or avant[-1] in _FINS_DE_PHRASE:
+            continue
+        if _c.normaliser(m.group(1)) in autorises:
+            continue
+        violations.append(f"nom_propre_hors_verbatim:{m.group(1)}")
+        break
+    return violations
+
+
 def check_output(text: str, config: dict, rdv_valide: bool = False,
-                 en_conversation: bool = False) -> list[str]:
+                 en_conversation: bool = False,
+                 formule: bool = False, slots: dict | None = None) -> list[str]:
     """Retourne la liste des violations détectées dans une réplique candidate."""
     violations: list[str] = []
 
@@ -112,6 +206,13 @@ def check_output(text: str, config: dict, rdv_valide: bool = False,
     muets = _non_prononcables(text)
     if muets:
         violations.append("caractere_non_prononcable:" + "".join(muets))
+
+    # 9. Les FAITS, dans une réplique FORMULÉE seulement (voir `_faits_enonces`). C'est
+    # le renversement du 26/08 : on n'interdit plus au formuleur de PARLER, on lui interdit
+    # d'ÉNONCER. Il retrouve sa liberté de tournure là où le contrôleur ne fait que poser
+    # une question, et il ne peut plus inventer un chiffre, un jour ou un lieu.
+    if formule:
+        violations.extend(_faits_enonces(text, config, slots))
 
     # 7. Tutoiement. Un artisan ne tutoie pas ses clients.
     #

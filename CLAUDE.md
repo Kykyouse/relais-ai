@@ -16,7 +16,7 @@ Cible V1 : plombiers/chauffagistes FR. Solo dev : Geoffrey (binôme Claude) ; ma
 ```bash
 cd proto
 pip install -r requirements.txt     # anthropic, python-dotenv (inutiles en mock)
-python run_scenario.py              # suite de non-régression (mock, sans clé, ~3 s) — 66 tests
+python run_scenario.py              # suite de non-régression (mock, sans clé, ~3 s) — 67 tests
 python run_llm_eval.py --mock       # plomberie de l'éval appelant-simulé (sans clé)
 python run_llm_eval.py [--n 3] [--only T05]   # éval LLM réel → evals/results-*.json
                                     # 19 personas, dont 5 tirés d'appels vocaux RÉELS
@@ -46,6 +46,9 @@ Clé API : fichier `.env` à la racine (voir `.env.example`). JAMAIS commité, J
    (`engine.py`) et des listes blanches de la config. Le LLM extrait et formule, c'est tout.
 2. **Toute sortie passe par `guards.check_output`** — ne jamais contourner `_say()`.
    Vaut aussi pour l'écrit : les SMS passent par `guards` avant d'entrer en file (`messages.py`).
+   **Le contrôleur ÉNONCE les faits, le formuleur DEMANDE** (R63) : une réplique formulée
+   ne peut contenir ni chiffre, ni jour, ni nom propre hors liste blanche. Ce qui énonce un
+   fait est `verbatim=True` ; ce qui pose une question est laissé au modèle.
 3. **Aucun changement de prompt ou d'engine sans rejouer `run_scenario.py` en entier.**
 4. **Chaque bug trouvé devient un test R<n>** dans `run_scenario.py` avant d'être corrigé
    (le commentaire du test dit qui l'a trouvé et quoi).
@@ -83,7 +86,9 @@ agenda · `scoring.py` lead + score 0–5 · `produit.py` config PRODUIT — nom
 démarrage ; « Relais » reste le nom de CODE (repo, modules, tables) ·
 `temps.py` instants UTC vs heures de pendule (règle n°7,
 à lire avant de toucher à une échéance) · `nombres.py` nombres PRONONCÉS en toutes
-lettres → chiffres (code postal, téléphone ; déterministe, jamais confié au LLM) · `config/dupont.json` persona de test de bout en bout.
+lettres → chiffres (code postal, téléphone ; déterministe, jamais confié au LLM) ·
+`communes.py` table des communes + normalisation, partagée par le contrôleur ET les
+garde-fous · `config/dupont.json` persona de test de bout en bout.
 
 Pièges connus : les modèles à réflexion adaptative (Sonnet 5) comptent leurs tokens de réflexion
 dans `max_tokens` (mettre large) et renvoient des ThinkingBlocks (ne lire que les blocs `text`,

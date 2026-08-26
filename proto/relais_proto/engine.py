@@ -11,7 +11,7 @@ Le LLM ne choisit jamais ni l'état ni le contenu engageant (créneaux, prix, pr
 """
 from __future__ import annotations
 
-from . import temps
+from . import communes, temps
 from .calendar_stub import CalendarStub
 from .guards import check_output, safe_fallback
 from .states import EMPTY_SLOTS, State, URGENT_PRESTATIONS
@@ -78,7 +78,11 @@ class Conversation:
         # reconnaît à ce que rien n'a encore été dit. Tous les tours suivants sont des
         # tours de conversation, où une salutation est déplacée (R46).
         en_conv = bool(self.transcript)
-        violations = check_output(texte, self.cfg, en_conversation=en_conv)
+        # `formule` : le texte vient-il du modèle ? Si oui, il n'a pas le droit d'ÉNONCER
+        # un fait — chiffre, jour, lieu (R63). L'INSTRUCTION du contrôleur, elle, en
+        # contient légitimement : c'est elle qui les énonce.
+        violations = check_output(texte, self.cfg, en_conversation=en_conv,
+                                 formule=not verbatim, slots=self.slots)
         if violations:
             self.flags["violations"].extend(violations)
             # repli = l'instruction du contrôleur elle-même (sûre par construction),
@@ -530,17 +534,17 @@ class Conversation:
         # quiz sur le Vaucluse (« Vous êtes sur Orange. C'est dans le Vaucluse, non ? »)
         # qui nommait au passage un lieu que nos tables ne connaissent pas.
         self.flags["commune_demandee"] = True
-        return self._say("Vous êtes sur quelle commune ?", verbatim=True)
+        # DÉGELÉE le 26/08 : elle était verbatim (R56) uniquement pour empêcher le
+        # formuleur d'y glisser un nom de lieu (« Vous êtes sur Orange, dans le
+        # Vaucluse ? »). Le garde-fou des faits l'interdit désormais directement
+        # (R63), donc la question peut être TOURNÉE librement. C'est une question,
+        # pas une affirmation : rien à énoncer, tout à demander.
+        return self._say("Vous êtes sur quelle commune ?")
 
     @staticmethod
     def _normalise(texte: str) -> str:
-        import re as _re
-        import unicodedata
-        t = unicodedata.normalize("NFD", texte.lower())
-        t = "".join(c for c in t if unicodedata.category(c) != "Mn")  # sans accents
-        # ponctuation → espaces : « c'est Saint-Maur. » doit matcher « saint maur »
-        # (bug LLM-run3 : la virgule/le point cassaient la correspondance)
-        return _re.sub(r"\s+", " ", _re.sub(r"[^a-z0-9]+", " ", t)).strip()
+        """Délègue à `communes.normaliser` (extrait le 26/08, cf. `_communes_idf`)."""
+        return communes.normaliser(texte)
 
     _COMMUNES_IDF: dict | None = None  # table France Île-de-France (base officielle Etalab)
 
@@ -556,28 +560,16 @@ class Conversation:
     # L'exclusion vit ICI et non dans le fichier de données : celui-ci est régénéré depuis
     # la base officielle, et une régénération réintroduirait les homonymes en silence. Le
     # nom COMPLET reste résoluble dans tous les cas (« Vienne-en-Arthies », « Bois-le-Roi »).
-    ALIAS_AMBIGUS = frozenset({
-        "vienne",   # « qu'il vienne », « que quelqu'un vienne » — subjonctif de venir
-        "bois",     # « je bois », « le bois », « sous le bois »
-        "champs",   # « les champs »
-        "bourg",    # « le bourg »
-        # Méré (78490). « C'est pour la chaudière de ma mère » est une des phrases les
-        # plus courantes du métier — beaucoup d'appels sont passés POUR quelqu'un d'autre.
-        # Trouvé le 25/08 par le persona T12, qui visait tout autre chose.
-        "mere",
-    })
+    # La source de vérité est dans `communes.py` (extrait le 26/08) ; l'attribut reste
+    # pour les tests qui le vérifient (R30) et pour la lisibilité du contrôleur.
+    ALIAS_AMBIGUS = communes.ALIAS_AMBIGUS
 
     @classmethod
     def _communes_idf(cls) -> dict:
-        if cls._COMMUNES_IDF is None:
-            import json
-            import pathlib
-            chemin = pathlib.Path(__file__).parent / "data" / "communes_idf.json"
-            brut = json.loads(chemin.read_text(encoding="utf-8")) \
-                if chemin.exists() else {}
-            cls._COMMUNES_IDF = {n: cp for n, cp in brut.items()
-                                 if n not in cls.ALIAS_AMBIGUS}
-        return cls._COMMUNES_IDF
+        """Délègue à `communes.py`, extrait le 26/08 : les garde-fous en ont besoin aussi,
+        pour vérifier qu'une réplique formulée ne nomme pas un lieu (R63). `guards` ne peut
+        pas importer `engine`, d'où le module tiers."""
+        return communes.table_idf()
 
     def _phrase_prix(self) -> str:
         """LA réponse tarifaire autorisée, tirée de la liste blanche de la config.
@@ -760,8 +752,8 @@ class Conversation:
             else:                                          # « non », ou rien d'exploitable
                 self.flags["commune_a_confirmer"] = None
                 self.flags["commune_demandee"] = True
-                # verbatim, comme l'autre occurrence (R56)
-                return self._say("Vous êtes sur quelle commune ?", verbatim=True)
+                # dégelée, cf. l'autre occurrence (R63)
+                return self._say("Vous êtes sur quelle commune ?")
 
         cp = self.slots["code_postal"]
         if cp is None:
@@ -797,11 +789,12 @@ class Conversation:
             # question et abandonner n'est pas une conversation. Poser une question
             # DIFFÉRENTE, si. La borne reste — elle passe de deux tentatives à trois.
             if self.flags["commune_ratees"] >= 2:
+                # dégelée (R63) — « cinq » est un mot, pas un chiffre énoncé
                 return self._say("Je n'arrive pas à situer votre commune. Pouvez-vous me "
-                                 "donner votre code postal, les cinq chiffres ?",
-                                 verbatim=True)
+                                 "donner votre code postal, les cinq chiffres ?")
+            # dégelée (R63) : une question sans fait revient au formuleur
             return self._say("J'ai besoin de votre commune ou code postal pour vérifier "
-                             "qu'on intervient chez vous — vous êtes où ?", verbatim=True)
+                             "qu'on intervient chez vous — vous êtes où ?")
         self.flags["zone"] = self._zone_de(cp)
         if self.flags["zone"] == "hors_zone":
             # NE PAS raccrocher sur une commune glanée au passage. C'est la même règle que
@@ -931,26 +924,31 @@ class Conversation:
                 # lieu d'une. Ce sont les « phrases-tampons pré-approuvées » de
                 # l'arbitrage voix du 25/08, enfin écrites.
                 if self.flags["tel_incomplets"] >= 2:
+                    # DÉGELÉE (R63). C'est la relance qui sonnait le plus robot, et
+                    # elle n'a aucun fait à énoncer : le formuleur peut la tourner comme
+                    # il veut, il ne peut plus y mettre de chiffres.
                     return self._say("Excusez-moi, je n'y arrive pas. Dites-moi les dix "
                                      "chiffres d'un seul coup, sans pause — je vous "
-                                     "écoute.", verbatim=True)
+                                     "écoute.")
                 if len(digits) > 10:
                     # VERBATIM. Le formuleur en a fait une RELECTURE des douze chiffres
                     # qu'on venait de refuser (« 0-6-1-0-1-5-4-7-6-8-7-9. C'est bien
                     # ça ? »), l'appelant a dit oui, et rien n'a été enregistré : il a
                     # fait confirmer un numéro que le contrôleur avait rejeté.
+                    # DÉGELÉE (R63) : elle était figée pour empêcher le formuleur d'en
+                    # faire une relecture des chiffres refusés. Le garde-fou des faits
+                    # l'interdit maintenant, et la phrase redevient une vraie question.
                     return self._say("Je n'ai pas bien noté votre numéro — pouvez-vous "
-                                     "me le redonner, chiffre par chiffre ?",
-                                     verbatim=True)
+                                     "me le redonner, chiffre par chiffre ?")
+                # dégelée (R63)
                 return self._say("Ce numéro me semble incomplet — pouvez-vous me le "
-                                 "redonner en entier, avec les dix chiffres ?",
-                                 verbatim=True)
+                                 "redonner en entier, avec les dix chiffres ?")
             self.flags["tentatives_tel"] += 1
             if self.flags["tentatives_tel"] >= 2:  # 2 tentatives max (T11), puis repli propre
                 return self._sans_rdv()  # invariant 2 : pas de RDV sans rappel
+            # dégelée (R63)
             return self._say("Il me faut un numéro où vous joindre pour la confirmation — "
-                             "sans ça je ne peux pas réserver. Quel est votre numéro ?",
-                             verbatim=True)
+                             "sans ça je ne peux pas réserver. Quel est votre numéro ?")
         if not self.slots["tel_confirme"]:
             # correction : un NOUVEAU numéro donné pendant la confirmation remplace l'ancien
             # `_numero_fr` reste, lui : une mutation de R42 l'avait montré indispensable.
@@ -1138,7 +1136,13 @@ class Conversation:
             (prefix + " " if prefix else "") +
             f"Je regarde si je peux vous passer {self._prenom}… il est en intervention. "
             f"Je lui transmets en priorité : il vous rappelle "
-            f"{self.cfg['accueil']['promesse_rappel']['ouvree']}.")
+            f"{self.cfg['accueil']['promesse_rappel']['ouvree']}.",
+            # VERBATIM : c'est une PROMESSE DE RAPPEL, avec un delai chiffre. `_sans_rdv`
+            # l'etait deja (« engagement jamais reecrit ») ; ce chemin-ci ne l'etait pas.
+            # Incoherence trouvee par le garde-fou des faits (R63) des son premier
+            # passage, sur notre propre code — comme R53 l'avait fait pour la question
+            # double de S1.
+            verbatim=True)
         self.state = State.S11_CLOTURE
         return texte
 

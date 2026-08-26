@@ -22,7 +22,7 @@ point d'entrée du produit. Plus rien d'autre n'est bloqué côté code.
 
 ```bash
 cd proto
-python run_scenario.py                              # 66 tests, ~3 s, sans clé ni base
+python run_scenario.py                              # 67 tests, ~3 s, sans clé ni base
 python semer_artisans.py [--ecrire]                 # amorce la table `artisan`
 python run_depot_pg.py [--migrer]                   # contrat du port contre Supabase
 uvicorn serveur:app --port 8000                     # API HTTP
@@ -81,6 +81,7 @@ python run_llm_eval.py [--mock] [--n 3]             # éval appelant-simulé
 | Rattrapage des tours manqués (R60) | ✅ | mock, mutations 5/5 |
 | « demain » / « aujourd'hui » comme contrainte (R61) | ✅ | mock, mutations 6/6 |
 | Relance du numéro qui varie (R62) | ✅ | mock, mutations 5/5 — **premières phrases-tampons** |
+| **Les faits hors verbatim (R63)** | ✅ | mock, mutations 10/10 — **renversement : 8 questions rendues au formuleur** |
 | Identifiant d'appel imposé au dépôt (port) | ✅ | **contrat rejoué sur Supabase** |
 
 ## Ce qui est encore un double (et non un manque caché)
@@ -139,7 +140,8 @@ python run_llm_eval.py [--mock] [--n 3]             # éval appelant-simulé
 
 ## Dettes et décisions ouvertes
 
-0. **LE COÛT CUMULÉ DES VERBATIM** (ouvert le 26/08, à trancher). Chaque `verbatim=True` a
+0. ~~**LE COÛT CUMULÉ DES VERBATIM**~~ — **traité le 26/08 par R63**, le jour même.
+   Conservé ci-dessous parce que le raisonnement vaut plus que le correctif. Chaque `verbatim=True` a
    été ajouté après un défaut réel — R38, R44, R45, R56, R57 — et l'effet d'ensemble est que
    l'agent sonne préenregistré là où il devrait s'adapter. Geoffrey : *« on vend de l'IA avec
    notre produit, pas du message préenregistré »*. R62 apporte la réponse actuelle : donner
@@ -449,6 +451,76 @@ Trois mesures d'oreille, consignées comme données d'arbitrage :
    courtes, mais **à activer** (`stopSpeakingPlan`) : les tours verbatim longs
    (récapitulatif de RDV, consignes de sécurité) sont exactement ceux qu'un appelant
    pressé voudra couper. Décision réversible, à trancher à l'oreille.
+
+---
+
+## Session du 26/08/2026 (fin) — R63 : le contrôleur énonce, le formuleur demande
+
+Le renversement. Jusqu'ici, chaque fois que le formuleur écornait un fait, on figeait la
+PHRASE entière : les créneaux (R38), la clôture (R44), la commune (R45), la question du
+secteur (R56), le refus et la re-dictée (R57). Chacun justifié par un défaut réel — et
+l'effet cumulé est un agent qui sonne préenregistré, ce que Geoffrey a entendu et nommé.
+
+**La ligne est déplacée** : une réplique formulée peut être tournée comme le modèle veut,
+mais elle ne peut énoncer **aucun fait** — ni chiffre, ni jour, ni nom propre hors liste
+blanche. Ce sont exactement les trois choses qu'il a inventées en production :
+
+    chiffres   « 0-6-1-0-1-5-4-7-6-8-7-9. C'est bien ça ? »   (numéro refusé, R57)
+    jours      « je n'ai pas de disponibilité le samedi »      (créneaux niés, R38)
+    noms       « Vous êtes sur Orange, dans le Vaucluse ? »    (lieu inventé, R56)
+
+**Un fait ne se reformule pas : il se cite ou il se tait.**
+
+### La contrepartie : huit questions rendues au formuleur
+
+La question du secteur, ses deux relances, et les quatre demandes de numéro — dont celle
+qui sonnait le plus robot — sont **dégelées**. Elles étaient figées uniquement pour
+empêcher le modèle d'y glisser un lieu ou des chiffres ; le garde-fou l'interdit désormais
+directement. Ce sont des questions : rien à énoncer, tout à demander.
+
+### Une table de communes ne suffisait pas
+
+Premier essai : interdire les communes de nos tables. Il ne voyait pas « Orange » ni
+« Vaucluse » — ils ne sont pas en Île-de-France. Le formuleur cite ce qu'il veut, pas ce
+que nous connaissons.
+
+Le critère qui marche est plus grossier et plus juste : **une majuscule en milieu de phrase
+est presque toujours un nom propre**, et un nom propre est un fait. Avec une liste blanche
+de ce que le contrôleur a RÉSOLU — le patron, l'entreprise, la commune établie, le nom de
+l'appelant — plus les civilités. Il attrape « Orange », « Vaucluse », « Nogènes-sur-Marne »,
+« Deuil La Barre », « Essonne », et laisse passer « Julien », « Dupont Chauffage »,
+« Monsieur Roux ».
+
+⚠️ **Compromis assumé, écrit dans le code** : la règle ne sait pas distinguer « Orange »
+d'un mot courant capitalisé au milieu d'une phrase. Il faudrait un dictionnaire. Le faux
+positif coûte du NATUREL — la réplique replie sur l'instruction du contrôleur, correcte par
+construction — jamais de la correction. **On préfère un agent parfois plus sec à un agent
+qui invente un nom de ville.**
+
+### Le garde-fou a encore trouvé notre faute avant celle du modèle
+
+Premier passage, un seul test tombe : R07. Cause — la promesse de rappel du **transfert**
+contenait « 2 heures » et n'était pas verbatim, alors que celle de `_sans_rdv` l'était
+(« engagement jamais réécrit »). Une incohérence de notre code, invisible depuis des jours.
+Troisième fois qu'un garde-fou neuf trouve d'abord notre propre faute (après R53 et R57).
+
+### Ce que R63 rend redondant, et pourquoi on le garde quand même
+
+Rejoués après coup, plusieurs bancs de mutation ont des survivants : retirer le `verbatim`
+de la relecture de commune (R45) ou de la phrase de refus (R57) ne casse plus rien — le
+garde-fou des faits rattrape. Ces `verbatim` deviennent de la **défense en profondeur**, et
+ils gardent une autre raison d'être : **ils épargnent un appel au modèle** sur des phrases
+qui n'ont rien à formuler, et garantissent la forme exacte. On les conserve pour la latence
+et l'exactitude, plus pour la protection.
+
+Et deux banc entiers sont **périmés par le dégel** (mut_r55, mut_r62 pour partie) : ils
+testaient un verbatim qu'on a retiré exprès. Leur propriété est reprise par le banc de R63.
+
+`communes.py` est né de ce changement : `guards` a besoin des tables, et il ne peut pas
+importer `engine` (qui importe `guards`).
+
+Suite : **67 PASS**. Mutations 10/10, et les bancs voisins rejoués (R41 14/14, R52 7/7,
+R59 6/6, R60 5/5, R61 6/6). Contrat Postgres rejoué.
 
 ---
 

@@ -3559,14 +3559,171 @@ def check_creneaux_verbatim() -> bool:
     # sinon l'agent perdrait son naturel là où il n'énonce aucun engagement.
     class FormuleurReconnaissable(MockLLM):
         def reply(self, instruction, context):
-            return "MARQUEUR " + instruction
+            return "marqueur. " + instruction
 
     convo3 = Conversation(CFG, FormuleurReconnaissable(),
                           CalendarStub(CFG, now=LUNDI_9H))
     convo3.open()
     dit = convo3.process("Bonjour, j'ai un souci")
-    if "MARQUEUR" not in dit:
+    if "marqueur" not in dit:
         print(f"   une question ordinaire ne passe plus par le formuleur : « {dit} »")
+        return False
+    return True
+
+
+def check_faits_hors_verbatim() -> bool:
+    """R63 : le contrôleur ÉNONCE les faits, le formuleur DEMANDE. Renversement du 26/08.
+
+    Jusqu'ici, chaque fois que le formuleur écornait un fait, on figeait la PHRASE entière :
+    les créneaux (R38), la clôture (R44), la commune (R45), la question du secteur (R56),
+    le refus et la re-dictée (R57). Chacun justifié par un défaut réel — et l'effet cumulé
+    est que l'agent sonne préenregistré. Geoffrey, après l'appel où la même phrase est
+    sortie trois fois : *« on vend de l'IA avec notre produit, pas du message
+    préenregistré »*.
+
+    La ligne est déplacée : une réplique formulée peut être tournée comme le modèle veut,
+    mais elle ne peut énoncer **aucun fait** — ni chiffre, ni jour, ni nom de lieu. Ce sont
+    exactement les trois choses qu'il a inventées en production :
+
+        chiffres  « 0-6-1-0-1-5-4-7-6-8-7-9. C'est bien ça ? »  (numéro refusé, R57)
+        jours     « je n'ai pas de disponibilité le samedi »     (créneaux niés, R38)
+        lieux     « Vous êtes sur Orange, dans le Vaucluse ? »   (lieu inventé, R56)
+
+    **Un fait ne se reformule pas : il se cite ou il se tait.**
+
+    La contrepartie, et c'est tout l'intérêt : les QUESTIONS reviennent au formuleur. La
+    question du secteur et les relances de numéro étaient figées uniquement pour l'empêcher
+    d'y glisser un lieu ou des chiffres — ce que le garde-fou interdit désormais
+    directement. Elles peuvent donc être formulées, et varier d'un appel à l'autre.
+    """
+    from relais_proto.engine import Conversation
+    from relais_proto.guards import check_output
+    from relais_proto.states import State
+
+    # (a) les trois familles de faits sont refusées dans une réplique FORMULÉE
+    for texte, famille in (
+            ("Je répète votre numéro : 06 12 34 56 78, c'est bien ça ?", "chiffre"),
+            ("Je vous propose demain entre 08h et 10h.", "chiffre"),
+            ("Je n'ai pas de disponibilité le samedi matin.", "jour"),
+            ("On pourrait passer demain si vous voulez.", "jour"),
+            ("Vous êtes bien à Nogent-sur-Marne ?", "nom_propre"),
+            ("Ah, Vincennes, c'est noté.", "nom_propre"),
+            # le cas qu'une table de communes ne pouvait PAS attraper : Orange et le
+            # Vaucluse ne sont pas en Île-de-France
+            ("Vous êtes sur Orange, dans le Vaucluse ?", "nom_propre")):
+        violations = [v for v in check_output(texte, CFG, formule=True)
+                      if v.startswith(famille)]
+        if not violations:
+            print(f"   fait « {famille} » non signalé dans une réplique formulée : "
+                  f"« {texte} »")
+            return False
+        # ...et la MÊME phrase, en verbatim, passe : c'est le contrôleur qui l'énonce
+        if [v for v in check_output(texte, CFG)
+                if v.startswith(("chiffre_hors", "jour_hors", "nom_propre_hors"))]:
+            print(f"   une phrase VERBATIM est refusée : « {texte} »")
+            return False
+
+    # (b) et une question sans fait passe, formulée : c'est ce qu'on rend au modèle
+    for texte in ("Vous êtes sur quelle commune ?",
+                  "Pouvez-vous me redonner votre numéro, chiffre par chiffre ?",
+                  "Excusez-moi, je n'y arrive pas — dites-moi les chiffres d'un seul coup.",
+                  "Pouvez-vous me préciser ce qui vous arrive ?",
+                  "Il me faut un numéro où vous joindre pour la confirmation."):
+        violations = [v for v in check_output(texte, CFG, formule=True,
+                                              en_conversation=True)
+                      if v.startswith(("chiffre_hors", "jour_hors", "nom_propre_hors"))]
+        if violations:
+            print(f"   une question sans fait est refusée : « {texte} » → {violations}")
+            return False
+
+    # (b-bis) LA LISTE BLANCHE, et c'est tout l'intérêt du garde-fou : l'agent doit
+    # pouvoir nommer ce que le contrôleur a RÉSOLU — son patron, son entreprise, la
+    # commune établie, le nom de l'appelant. Ce ne sont plus des inventions possibles :
+    # ils sont dans l'état. Sans ce point, deux mutations survivaient en vidant la liste,
+    # et l'agent n'aurait plus eu le droit de dire « Julien ».
+    for texte, slots in (
+            ("Je comprends, Julien est en intervention mais je m'occupe de vous.", {}),
+            ("Vous êtes bien chez Dupont Chauffage, je vous écoute.", {}),
+            ("Très bien, c'est noté pour Nogent-sur-Marne.",
+             {"commune": "Nogent-sur-marne"}),
+            ("Merci Monsieur Roux, je continue.", {"nom": "Roux"}),
+            ("Bien sûr Madame, je vous écoute.", {})):
+        violations = [v for v in check_output(texte, CFG, formule=True,
+                                              en_conversation=True, slots=slots)
+                      if v.startswith("nom_propre_hors_verbatim")]
+        if violations:
+            print(f"   un nom RÉSOLU est refusé au formuleur : « {texte} » → "
+                  f"{violations}")
+            return False
+    # ...mais un nom qui n'est PAS celui de l'état reste interdit
+    if not [v for v in check_output("C'est noté pour Créteil.", CFG, formule=True,
+                                    slots={"commune": "Nogent-sur-marne"})
+            if v.startswith("nom_propre_hors_verbatim")]:
+        print("   une commune AUTRE que celle résolue est acceptée")
+        return False
+
+    # (c) DE BOUT EN BOUT : un formuleur qui invente un lieu est replié, et le contrôleur
+    # reprend la main — sans que la question ait besoin d'être figée.
+    class FormuleurGeographe(MockLLM):
+        def reply(self, instruction, context):
+            return "Ah d'accord ! Vous êtes sur Orange, dans le Vaucluse, c'est ça ?"
+
+    convo = Conversation(CFG, FormuleurGeographe(), CalendarStub(CFG, now=LUNDI_9H))
+    convo.open()
+    dit = convo.process("j'ai une fuite d'eau dans la salle de bain")
+    if "Orange" in dit or "Vaucluse" in dit:
+        print(f"   un lieu inventé passe encore : « {dit} »")
+        return False
+    if not any(v.startswith("nom_propre_hors_verbatim")
+               for v in convo.flags["violations"]):
+        print(f"   la violation n'est pas tracée : {convo.flags['violations']}")
+        return False
+
+    # (d) un formuleur qui invente des CHIFFRES est replié aussi
+    class FormuleurRelecteur(MockLLM):
+        def reply(self, instruction, context):
+            return "Je vous relis votre numéro : 06 99 88 77 66. C'est bien ça ?"
+
+    convo2 = Conversation(CFG, FormuleurRelecteur(), CalendarStub(CFG, now=LUNDI_9H))
+    convo2.open()
+    dit = convo2.process("j'ai une fuite d'eau dans la salle de bain")
+    if "06 99" in dit:
+        print(f"   des chiffres inventés passent encore : « {dit} »")
+        return False
+
+    # (e) LA CONTREPARTIE : la question du secteur est de nouveau FORMULÉE. Elle avait été
+    # figée (R56) uniquement pour empêcher le quiz sur le Vaucluse — ce que (c) interdit
+    # désormais directement. Un formuleur honnête doit pouvoir la tourner à sa façon.
+    class FormuleurHonnete(MockLLM):
+        def reply(self, instruction, context):
+            return "Dites-moi, vous habitez où exactement ?"
+
+    convo3 = Conversation(CFG, FormuleurHonnete(), CalendarStub(CFG, now=LUNDI_9H))
+    convo3.open()
+    dit = convo3.process("j'ai une fuite d'eau dans la salle de bain")
+    if "Dites-moi, vous habitez où exactement ?" not in dit:
+        print(f"   la question du secteur ne passe plus par le formuleur : « {dit} »")
+        return False
+
+    # ...et les relances de numéro aussi
+    convo4 = Conversation(CFG, FormuleurHonnete(), CalendarStub(CFG, now=LUNDI_9H))
+    convo4.open()
+    for ligne in ("j'ai une fuite d'eau dans la salle de bain",
+                  "Nogent-sur-Marne 94130", "Dupont"):
+        convo4.process(ligne)
+    dit = convo4.process("mon numéro c'est le 06 10 15 47 68 79")
+    if "Dites-moi, vous habitez où exactement ?" not in dit:
+        print(f"   la relance du numéro ne passe plus par le formuleur : « {dit} »")
+        return False
+
+    # (f) mais ce qui ÉNONCE reste verbatim : la clôture (pour `endCallPhrases`), les
+    # créneaux, la relecture du secteur, les promesses de rappel.
+    convo5 = Conversation(CFG, FormuleurHonnete(), CalendarStub(CFG, now=LUNDI_9H))
+    convo5.open()
+    convo5.state = State.S11_CLOTURE
+    if convo5.process("allô ?") != "L'appel est terminé. Bonne journée !":
+        print("   la clôture n'est plus verbatim : `endCallPhrases` ne pourra plus "
+              "l'accrocher")
         return False
     return True
 
@@ -3686,22 +3843,22 @@ def check_relance_numero_variee() -> bool:
         print(f"   un refus de numéro n'est plus borné : {convo3.state.value}")
         return False
 
-    # (e) le formuleur n'est TOUJOURS pas consulté sur ces phrases : elles énoncent ce que
-    # le contrôleur a décidé, et c'est ce qui empêche d'inventer des chiffres (R57).
-    class Espion(MockLLM):
-        appels = 0
-
+    # (e) LE MÉCANISME A CHANGÉ le 26/08. Ce point exigeait que ces phrases ne passent
+    # PAS par le formuleur (R57, pour l'empêcher de relire les chiffres refusés). Elles y
+    # repassent — c'est le but de R63 — et la protection est désormais qu'il ne peut pas
+    # ÉNONCER de chiffre. Ce qu'on vérifie : le formuleur parle, ET aucun chiffre ne sort.
+    class FormuleurRelecteur(MockLLM):
         def reply(self, instruction, context):
-            Espion.appels += 1
-            return "LE FORMULEUR A PARLÉ"
+            return "Je vous relis : 0-6-3-0-3-0-4-0-4-5. C'est bien ça ?"
 
-    convo4 = jusqu_au_numero(Espion())
-    avant = Espion.appels
-    convo4.process("mon numéro est de 0 6 30 30 40 40 45")
-    convo4.process("0 6 30 30 40 40 45")
-    if Espion.appels != avant:
-        print(f"   la relance passe par le formuleur ({Espion.appels - avant} appels) : "
-              f"il pourra inventer des chiffres")
+    convo4 = jusqu_au_numero(FormuleurRelecteur())
+    dit = convo4.process("mon numéro est de 0 6 30 30 40 40 45")
+    if any(c.isdigit() for c in dit):
+        print(f"   des chiffres inventés par le formuleur sortent quand même : « {dit} »")
+        return False
+    if not any(v.startswith("chiffre_hors_verbatim")
+               for v in convo4.flags["violations"]):
+        print(f"   la violation n'est pas tracée : {convo4.flags['violations']}")
         return False
     return True
 
@@ -4383,12 +4540,20 @@ def check_question_commune_verbatim() -> bool:
         def reply(self, instruction, context):
             return "Ah d'accord ! Vous êtes sur Orange. C'est dans le Vaucluse, non ?"
 
-    # (a) la question du secteur ne passe plus par le formuleur
+    # (a) la question du secteur ne peut plus NOMMER un lieu.
+    #
+    # ⚠️ CE POINT A CHANGÉ DE MÉCANISME le 26/08. Il exigeait que la question soit
+    # verbatim ; elle est de nouveau FORMULÉE, et c'est le garde-fou des faits (R63) qui
+    # interdit le quiz sur le Vaucluse. Le verbatim protégeait en figeant la phrase, au
+    # prix d'un agent qui sonnait préenregistré ; le garde-fou protège en interdisant
+    # d'énoncer, et rend la tournure au modèle. Ce qu'on vérifie ici est donc l'effet, pas
+    # le moyen — et l'effet est le même.
     convo = Conversation(CFG, FormuleurGeographe(), CalendarStub(CFG, now=LUNDI_9H))
     convo.open()
     dit = convo.process("j'ai une fuite d'eau dans la salle de bain")
     if "Vaucluse" in dit or "Orange" in dit:
-        print(f"   le formuleur réécrit encore la question du secteur : « {dit} »")
+        print(f"   le formuleur nomme encore un lieu dans la question du secteur : "
+              f"« {dit} »")
         return False
     if "commune" not in dit.lower():
         print(f"   la question du secteur n'est plus posée : « {dit} »")
@@ -5667,18 +5832,18 @@ def check_commune_canonique() -> bool:
 
     # le reste de la conversation garde son formuleur : on ne fige que la ligne où la
     # commune est acquittée
-    if "MARQUEUR" in dit:
+    if "marqueur" in dit:
         return False
     class FormuleurReconnaissable:
         def extract(self, utterance, context):
             return {}
 
         def reply(self, instruction, context):
-            return "MARQUEUR " + instruction
+            return "marqueur. " + instruction
     convo2 = Conversation(CFG, FormuleurReconnaissable(),
                           CalendarStub(CFG, now=LUNDI_9H))
     convo2.open()
-    if "MARQUEUR" not in convo2.process("Bonjour, j'ai un souci"):
+    if "marqueur" not in convo2.process("Bonjour, j'ai un souci"):
         print("   une question ordinaire ne passe plus par le formuleur")
         return False
     return True
@@ -7029,6 +7194,15 @@ def run() -> int:
     if check_relance_numero_variee():
         print("   → la relance change de phrase et reconnaît qu'on a déjà "
               "demandé ; une dictée en morceaux n'est plus prise pour un refus : ✅ PASS")
+    else:
+        print("   → ❌ FAIL")
+        echecs += 1
+
+    print(f"\n──── R63_faits_hors_verbatim ────")
+    if check_faits_hors_verbatim():
+        print("   → le contrôleur énonce les faits, le formuleur demande : ni "
+              "chiffre, ni jour, ni lieu hors verbatim — et les questions lui "
+              "sont rendues : ✅ PASS")
     else:
         print("   → ❌ FAIL")
         echecs += 1
