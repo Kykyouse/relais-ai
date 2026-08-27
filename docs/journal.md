@@ -300,6 +300,68 @@ Le spike vocal ne s'ouvre **qu'en session dédiée**. Le Sender ID et l'OAuth Go
 le nom commercial — c'est-à-dire le cousin, pas nous.
 ---
 
+## 27/08 — Mesurer avant d'écrire le vocabulaire (R69, sonde des tournures de temps)
+
+Geoffrey, après R68 : « je commence à me dire que Haiku est trop bête, le problème des
+négations ne devrait même pas être possible. L'IA qui sert d'intelligence est tout sauf
+intelligente. »
+
+**Vérification faite : Haiku n'a jamais été consulté sur les négations.** Le prompt
+d'extraction (`llm.py:30`) ne lui demande qu'une chose — `disponibilites: contraintes de
+dispo si exprimées`, du texte libre, recopié. Il a rendu « pas le samedi » correctement.
+Toute l'interprétation était dans `engine.py:798`, en Python pur, un `in` sur une liste de
+mots. **L'inversion était de nous.** Le seul endroit du produit qui devait être intelligent
+est celui où on n'a demandé son avis à personne — et on n'a donc à ce jour aucune mesure
+disant que Haiku est trop faible pour ce travail. (Ce qui a été mesuré, le 27/08, c'est le
+FORMULEUR : sur les tours en cause, zéro appel au modèle, donc Sonnet aurait émis des
+octets identiques.)
+
+**Décidé : on n'écrit pas encore le vocabulaire fermé, on va d'abord mesurer.** Deux
+raisons. La décisive : le spike voix a pour métier de mesurer la chaîne vocale (latence,
+barge-in, fin de tour, transcription) ; ajouter un champ à l'extraction maintenant
+déplacerait la latence et le taux d'erreur au moment précis où on essaie de les lire, et
+on ne saurait plus attribuer ce qui échoue. L'autre : la liste des valeurs doit sortir
+d'appels RÉELS. Les seize défauts R42→R68 en viennent tous ; les tournures inventées, elles,
+se sont trompées de cible plusieurs fois — encore une fois en écrivant R69, où « dans la
+journée » ne mesurait que la cécité du MockLLM.
+
+Le risque d'attendre est faible : R68 a supprimé le cas nuisible. Ce qui reste est du
+silence — l'agent propose son défaut. C'est sourd, ça se rattrape au tour suivant, ça ne
+donne à personne l'impression qu'on se moque de lui.
+
+**Écrit à la place : `sonde_dispo.py` (R69)**, éteinte par défaut (`RELAIS_SONDE_DISPO`),
+branchée sur les DEUX transports comme `_cloturer_appel`. Une ligne JSON par tour, avec
+trois champs dont l'écart est tout l'intérêt :
+
+    dit     ce que l'appelant a dit (transcription)
+    brut    ce que l'EXTRACTEUR en a retenu   → absent = le LLM a laissé tomber
+    lecture ce que le CONTRÔLEUR en a tiré    → vide  = notre code est sourd
+
+Les deux se corrigent à des endroits différents, et rien d'autre ne permet de les
+distinguer — c'est exactement la question « le modèle est-il trop bête, ou est-ce nous ? »,
+rendue mesurable au lieu d'être discutée.
+
+**Elle n'applique aucun filtre** : chaque tour du client est enregistré. Filtrer sur des
+mots de temps connus reproduirait exactement la cécité qu'on mesure — une tournure absente
+de la liste ne serait pas enregistrée, et on conclurait que personne ne la dit.
+
+La banque de mutations a de nouveau rapporté ce que le test vert cachait : 8/12 au premier
+passage. Deux survivantes disaient la même chose — mon test d'extinction vérifiait
+« aucun fichier dans ce dossier », ce qui laisse passer une sonde qui écrit dans le
+répertoire courant ou qui lève une exception aussitôt avalée. Dans les deux cas, du code
+tournait sur le chemin d'un appel réel pendant qu'un test vert affirmait le contraire.
+**« Éteinte » ne veut pas dire « n'écrit pas ici » : cela veut dire que rien n'est appelé.**
+Vérifié par un espion → 11/12, le douzième étant un témoin qui doit survivre.
+
+Le troisième point verrouillé par R69 est celui qu'on croit avoir sans l'avoir écrit : une
+sonde en panne ne raccroche pas au nez d'un client. L'appel continue, la panne est
+consignée. C'est le seul arbitrage acceptable pour un outil branché sur un appel en cours,
+et il vaut au pire moment — celui où l'on a justement allumé le diagnostic parce que
+quelque chose cloche.
+
+**Prochaine étape sur ce fil** : allumer `RELAIS_SONDE_DISPO=1` avant la prochaine série
+d'appels réels, puis écrire le vocabulaire fermé sur ce que le fichier montre.
+
 ## 27/08 — Ce que l'agent fait des tournures qu'on n'a pas prévues (R68)
 
 Geoffrey : « essaye aussi de voir au-delà de "aujourd'hui" comment ça réagit avec

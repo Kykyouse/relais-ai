@@ -13,6 +13,9 @@ Variables optionnelles :
     RELAIS_COOKIE_SECURE     `false` UNIQUEMENT pour tester en HTTP local depuis un
                              téléphone. Défaut `true` : la production ne doit pas pouvoir
                              régresser par oubli.
+    RELAIS_SONDE_DISPO       allume la sonde des tournures de temps : une ligne par
+                             tour dans dispo.sonde.jsonl (hors produit, cf.
+                             sonde_dispo.py). 1, ou un chemin.
     RELAIS_SONDE_VOIX        allume la sonde de l'étape 0 du chantier voix (route
                              `/voix/sonde`, cf. `sonde_voix.py`). Valeur = chemin du
                              journal, ou `1` pour `proto/sonde-vapi.jsonl`. Absente par
@@ -108,6 +111,23 @@ def _sonde_voix() -> pathlib.Path | None:
     return pathlib.Path(valeur)
 
 
+def _sonde_dispo() -> pathlib.Path | None:
+    """Chemin du journal de la sonde des tournures de temps, ou None — le défaut.
+
+    Même forme que `_sonde_voix`, et pour la même raison : on l'allume depuis un terminal,
+    une fois, avant une série d'appels réels. Elle sert à savoir ce que les gens disent
+    vraiment du temps au téléphone (« dans la journée », « au plus vite »…) et ce que le
+    contrôleur en tire — cf. `sonde_dispo.py`. Le journal contient des conversations :
+    `.gitignore` couvre `*.sonde.jsonl`.
+    """
+    valeur = (os.environ.get("RELAIS_SONDE_DISPO") or "").strip()
+    if not valeur or valeur.lower() in ("0", "false", "non"):
+        return None
+    if valeur.lower() in ("1", "true", "oui"):
+        return RACINE / "dispo.sonde.jsonl"
+    return pathlib.Path(valeur)
+
+
 def construire():
     # même repli que le worker et le lanceur de tests : l'hôte direct de Supabase est en
     # IPv6 et peut être injoignable selon le réseau. Le pooler prend alors le relais.
@@ -148,14 +168,19 @@ def construire():
         print(f"appels vocaux sans numéro appelé → artisan {voix_artisan!r} "
               f"(RELAIS_VOIX_ARTISAN)")
     sonde = _sonde_voix()
+    sonde_dispo = _sonde_dispo()
     # Annoncée au démarrage, comme le réglage du cookie et pour la même raison : un état
     # qu'on ne voit que lorsqu'il est anormal ne se distingue pas d'un réglage non pris en
     # compte. Ici l'enjeu est inverse — c'est l'oubli d'ÉTEINDRE qu'on veut voir.
     if sonde is not None:
         print(f"⚠️  SONDE VOIX ALLUMÉE : POST /voix/sonde → {sonde} "
               f"(diagnostic étape 0 ; à éteindre après usage)")
+    if sonde_dispo is not None:
+        print(f"⚠️  SONDE DISPO ALLUMÉE : une ligne par tour → {sonde_dispo} "
+              f"(elle écrit des conversations ; à éteindre après usage)")
     return creer_app(depot, registre, make_llm, base_url=_exige("RELAIS_BASE_URL"),
                      cookie_secure=secure, envoyeur=envoyeur, sonde_voix=sonde,
+                     sonde_dispo=sonde_dispo,
                      voix_artisan_defaut=voix_artisan, version=version)
 
 

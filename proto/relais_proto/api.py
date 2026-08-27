@@ -21,7 +21,8 @@ from pydantic import BaseModel, Field
 
 import secrets
 
-from . import (connexion, messages, pages, session, sonde_voix as _sonde, temps,
+from . import (connexion, messages, pages, session, sonde_dispo as _sonde_dispo,
+               sonde_voix as _sonde, temps,
                vapi as _vapi)
 from .calendar_stub import CalendarStub, libelle_creneau
 from .confirmation import creer_jeton, empreinte, lien
@@ -109,6 +110,7 @@ def creer_app(depot, registre: Registre, fabrique_llm, horloge=None,
               base_url: str = "https://relais.example",
               cookie_secure: bool = True, envoyeur=None,
               sonde_voix: "pathlib.Path | None" = None,
+              sonde_dispo: "pathlib.Path | None" = None,
               voix_artisan_defaut: str | None = None,
               version: str = "inconnue") -> FastAPI:
     """Collaborateurs injectés explicitement plutôt que par variables globales : les tests
@@ -120,6 +122,9 @@ def creer_app(depot, registre: Registre, fabrique_llm, horloge=None,
     la latence du cron.
 
     `sonde_voix` est le chemin du journal de la sonde de l'étape 0 (`sonde_voix.py`).
+    `sonde_dispo` est celui de la sonde des tournures de temps (`sonde_dispo.py`). Les deux
+    sont absentes par défaut : ce sont des outils de diagnostic, et la seule garantie qui
+    tienne dans le temps est qu'il n'y ait rien à atteindre quand on ne les a pas allumées.
     `None` — le défaut — ne déclare même pas la route : un outil de diagnostic ne doit pas
     pouvoir se retrouver exposé en production par simple oubli de le désactiver.
 
@@ -285,6 +290,29 @@ def creer_app(depot, registre: Registre, fabrique_llm, horloge=None,
             return JSONResponse(
                 _vapi.reponse_openai(_sonde.PHRASE_SONDE, modele or "", t))
 
+    # ---- sonde des tournures de temps (hors produit, éteinte par défaut) ----
+    _chemin_dispo = pathlib.Path(sonde_dispo) if sonde_dispo is not None else None
+
+    def _noter_dispo(appel_id: str, convo) -> None:
+        """Enregistre ce que l'appelant a dit du temps et ce qu'on en a tiré.
+
+        Appelée depuis les DEUX transports, comme `_cloturer_appel` : une sonde qui
+        n'observerait qu'une porte donnerait une image fausse de ce que les gens disent.
+
+        Rien ne remonte d'ici. Une exception dans un outil de diagnostic ferait raccrocher
+        au nez d'un client — c'est le seul arbitrage acceptable, et il vaut aussi pour
+        l'écriture du fichier (disque plein, droits) autant que pour la lecture.
+        """
+        if _chemin_dispo is None:
+            return
+        try:
+            entree = _sonde_dispo.lecture(convo)
+            if entree is not None:
+                entree["appel"] = appel_id
+                _sonde_dispo.journaliser(entree, _chemin_dispo)
+        except Exception:                                            # noqa: BLE001
+            pass
+
     # ---- porte voix : adaptateur de la plateforme vocale ----
     def _cloturer_appel(appel_id: str, convo, artisan, t) -> str | None:
         """Fin d'appel : lead, puis RDV si un créneau a été réservé. Rend l'id du RDV.
@@ -401,6 +429,7 @@ def creer_app(depot, registre: Registre, fabrique_llm, horloge=None,
             if convo.state in (State.S11_CLOTURE, State.FIN):
                 break
         depot.enregistrer_etat(appel_id, convo.to_dict())
+        _noter_dispo(appel_id, convo)          # après la persistance : l'état d'abord
 
         if convo.state in (State.S11_CLOTURE, State.FIN) and appel.fin_a is None:
             _cloturer_appel(appel_id, convo, artisan, t)
@@ -458,6 +487,7 @@ def creer_app(depot, registre: Registre, fabrique_llm, horloge=None,
                                        fabrique_llm())
         texte = convo.process(corps.texte)
         depot.enregistrer_etat(appel_id, convo.to_dict())
+        _noter_dispo(appel_id, convo)          # après la persistance : l'état d'abord
 
         if convo.state not in (State.S11_CLOTURE, State.FIN):
             return TourOut(appel_id=appel_id, texte=texte, termine=False)

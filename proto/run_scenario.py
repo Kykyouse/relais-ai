@@ -3575,6 +3575,164 @@ def check_creneaux_verbatim() -> bool:
     return True
 
 
+def check_sonde_dispo() -> bool:
+    """R69 : la sonde des tournures de temps observe sans jamais peser sur l'appel.
+
+    Écrite le 27/08 après R68. Le sondage de 21 tournures avait laissé une question
+    ouverte, et elle est architecturale : treize formes (« dans la journée », « au plus
+    vite », « la semaine prochaine ») sont simplement IGNORÉES par le contrôleur. La
+    réponse — faire classer le texte libre par le modèle vers un vocabulaire FERMÉ — exige
+    d'abord de savoir ce que les gens disent VRAIMENT au téléphone. Les seize défauts
+    R42→R68 sont tous venus d'appels réels ; les tournures inventées, elles, se sont
+    trompées de cible plusieurs fois.
+
+    Ce que ce test verrouille, et qui compte plus que le format du journal :
+
+    1. **Éteinte par défaut** — sans chemin, rien n'est ouvert, rien n'est écrit. Une
+       sonde de diagnostic ne doit pas pouvoir se retrouver en production par oubli.
+    2. **Elle ne raccroche jamais au nez d'un client** — même en panne franche, l'appel
+       continue et l'appelant reçoit sa réplique. C'est le seul arbitrage acceptable pour
+       un outil branché sur un appel en cours, et c'est le genre de garantie qu'on croit
+       avoir sans l'avoir écrite.
+    3. **Elle distingue les deux cécités possibles** : une tournure que l'EXTRACTEUR a
+       laissé tomber (présente dans `dit`, absente de `brut`) et une tournure que le
+       CONTRÔLEUR ne sait pas lire (présente dans `brut`, sans effet dans `lecture`). Les
+       deux se corrigent à des endroits différents — c'est toute la question « le modèle
+       est-il trop bête, ou est-ce nous ? », et un journal qui les confondrait ne
+       servirait à rien.
+    """
+    try:
+        from fastapi.testclient import TestClient
+    except ImportError:
+        print("   fastapi/httpx absents : pip install -r requirements.txt")
+        return False
+
+    import tempfile
+
+    from relais_proto import sonde_dispo
+    from relais_proto.api import creer_app
+    from relais_proto.registre import Artisan, Registre, empreinte
+
+    SECRET, NUM = "secret-voix", "+33189701234"
+    registre = Registre([Artisan("art-dupont", NUM, empreinte("tok"), CFG)],
+                        empreinte(SECRET))
+    voix = {"X-Relais-Secret": SECRET}
+
+    def appel(chemin, lignes):
+        """Un appel complet par la porte webhook. Rend les répliques de l'agent."""
+        depot = DepotMemoire()
+        app = creer_app(depot, registre, MockLLM, lambda: LUNDI_9H, sonde_dispo=chemin)
+        dits = []
+        with TestClient(app) as c:
+            r = c.post("/webhooks/appel", json={"numero_appele": NUM}, headers=voix)
+            if r.status_code != 200:
+                return None
+            appel_id = r.json()["appel_id"]
+            dits.append(r.json()["texte"])
+            for ligne in lignes:
+                r = c.post(f"/webhooks/appel/{appel_id}/tour",
+                           json={"texte": ligne}, headers=voix)
+                if r.status_code != 200:
+                    return None
+                dits.append(r.json()["texte"])
+        return dits
+
+    LIGNES = ["J'ai une fuite sous l'évier", "Nogent-sur-Marne 94130",
+              "Dupont, 06 06 30 30 11", "oui", "plutôt avant midi"]
+
+    with tempfile.TemporaryDirectory() as tmp:
+        racine = pathlib.Path(tmp)
+
+        # (a) ÉTEINTE PAR DÉFAUT. Vérifié par un ESPION, et non par l'absence de fichier :
+        # deux mutations ont survécu à la première version de ce test. Sans chemin, la
+        # sonde écrivait dans le répertoire courant (invisible depuis le dossier
+        # temporaire) ou levait une exception aussitôt avalée. Dans les deux cas, du code
+        # tournait sur le chemin d'un appel réel pendant qu'un test vert affirmait le
+        # contraire. « Éteinte » ne veut pas dire « n'écrit pas ici » : cela veut dire que
+        # RIEN n'est appelé — ni coût, ni risque, ni surface.
+        observations = []
+        espion = sonde_dispo.lecture
+        sonde_dispo.lecture = lambda convo: observations.append(convo) and None
+        try:
+            eteinte = appel(None, LIGNES)
+        finally:
+            sonde_dispo.lecture = espion
+        if eteinte is None:
+            print("   l'appel échoue alors que la sonde est éteinte")
+            return False
+        if observations:
+            print(f"   sonde éteinte, et pourtant {len(observations)} observations")
+            return False
+        if list(racine.rglob("*.jsonl")):
+            print(f"   sonde éteinte, et pourtant un journal : {list(racine.rglob('*'))}")
+            return False
+
+        # (b) ALLUMÉE : une ligne par tour du client, pas une de plus
+        journal = racine / "dispo.sonde.jsonl"
+        if appel(journal, LIGNES) is None:
+            print("   l'appel échoue alors que la sonde est allumée")
+            return False
+        lignes = [json.loads(l) for l in journal.read_text(encoding="utf-8").splitlines()]
+        if len(lignes) != len(LIGNES):
+            print(f"   {len(lignes)} entrées pour {len(LIGNES)} tours client")
+            return False
+        if [e["dit"] for e in lignes] != LIGNES:
+            print(f"   ce n'est pas ce que le client a dit : {[e['dit'] for e in lignes]}")
+            return False
+        if any(e.get("erreur") for e in lignes):
+            print(f"   la sonde est en panne : {[e.get('erreur') for e in lignes]}")
+            return False
+        # l'appel est identifié : sans cela on ne peut pas recoudre une conversation
+        if any(e.get("appel") is None for e in lignes):
+            print("   les entrées ne portent pas l'identifiant d'appel")
+            return False
+
+        # (c) elle DISTINGUE les deux cécités. « Avant midi » est justement une des treize
+        # tournures que le contrôleur ne sait pas lire, et l'extracteur la retient : `brut`
+        # rempli, `entendu` faux. C'est LA ligne qu'on vient chercher dans ce fichier — si
+        # elle se confondait avec « personne n'a rien dit », la sonde ne servirait à rien.
+        #
+        # Le premier jet de ce test employait « dans la journée », que le MockLLM
+        # n'extrait pas : il mesurait alors la cécité de l'extracteur de TEST et non celle
+        # du contrôleur. Une fixture doit rendre POSSIBLE ce qu'elle vérifie.
+        derniere = lignes[-1]
+        if not derniere["brut"]:
+            print(f"   « avant midi » n'est même pas extrait : {derniere}")
+            return False
+        if derniere["entendu"]:
+            print(f"   « avant midi » compté comme entendu : {derniere['lecture']}")
+            return False
+
+        # et le cas inverse : une tournure que le contrôleur SAIT lire ressort entendue,
+        # sans quoi `entendu` serait faux partout et ne distinguerait rien du tout
+        journal2 = racine / "b.sonde.jsonl"
+        if appel(journal2, LIGNES[:-1] + ["plutôt demain matin"]) is None:
+            print("   l'appel échoue sur la tournure connue")
+            return False
+        derniere = json.loads(journal2.read_text(encoding="utf-8").splitlines()[-1])
+        if not derniere["entendu"] or not derniere["lecture"].get("jours"):
+            print(f"   « demain matin » n'est pas entendu : {derniere}")
+            return False
+
+        # (d) EN PANNE, L'APPEL CONTINUE. Une sonde qui laisse remonter une exception
+        # ferait raccrocher au nez d'un client — et elle le ferait au pire moment, celui
+        # où l'on a justement allumé le diagnostic parce que quelque chose cloche.
+        vraie = sonde_dispo.lecture
+        sonde_dispo.lecture = lambda convo: (_ for _ in ()).throw(RuntimeError("boum"))
+        try:
+            dits = appel(racine / "c.sonde.jsonl", LIGNES)
+        finally:
+            sonde_dispo.lecture = vraie
+        if dits is None:
+            print("   une sonde en panne raccroche au nez du client")
+            return False
+        if not dits[-1] or not dits[-1].strip():
+            print("   l'appelant n'entend plus rien quand la sonde est en panne")
+            return False
+
+    return True
+
+
 def check_dispo_negations() -> bool:
     """R68 : « pas le samedi » ne veut pas dire « samedi ».
 
@@ -7821,6 +7979,15 @@ def run() -> int:
     if check_dispo_negations():
         print("   → une negation n'est plus lue comme une preference : exclusion, "
               "plancher et preference sont distingues : ✅ PASS")
+    else:
+        print("   → ❌ FAIL")
+        echecs += 1
+
+    print(f"\n──── R69_sonde_dispo ────")
+    if check_sonde_dispo():
+        print("   → la sonde des tournures de temps observe sans peser : eteinte par "
+              "defaut, muette en panne, et elle distingue extracteur sourd de "
+              "controleur sourd : ✅ PASS")
     else:
         print("   → ❌ FAIL")
         echecs += 1
