@@ -17,6 +17,9 @@ Variables optionnelles :
                              `/voix/sonde`, cf. `sonde_voix.py`). Valeur = chemin du
                              journal, ou `1` pour `proto/sonde-vapi.jsonl`. Absente par
                              défaut : la route n'est alors même pas déclarée.
+    RELAIS_VERSION           identifiant de la révision déployée, exposé par `/sante`.
+                             Sans elle, il est lu depuis git ; utile quand le dépôt n'est
+                             pas présent (conteneur, archive).
     RELAIS_VOIX_ARTISAN      artisan auquel rattacher les appels vocaux SANS numéro
                              appelé — c'est-à-dire les appels web (`call.type ==
                              "webCall"`), le mode du spike. Sans elle, un tel appel est
@@ -68,6 +71,27 @@ def _cookie_secure() -> bool:
     return (os.environ.get("RELAIS_COOKIE_SECURE") or "true").strip().lower() != "false"
 
 
+def _version() -> str:
+    """Le commit qui tourne, ou « inconnue ».
+
+    Lu depuis git au démarrage, avec un repli sur la variable `RELAIS_VERSION` pour les
+    déploiements où le dépôt n'est pas là (conteneur, archive). Jamais bloquant : une
+    version inconnue ne doit pas empêcher le serveur de démarrer.
+    """
+    depuis_env = (os.environ.get("RELAIS_VERSION") or "").strip()
+    if depuis_env:
+        return depuis_env
+    try:
+        import subprocess
+        r = subprocess.run(["git", "rev-parse", "--short", "HEAD"],
+                           cwd=RACINE.parent, capture_output=True, text=True, timeout=5)
+        if r.returncode == 0 and r.stdout.strip():
+            return r.stdout.strip()
+    except Exception:
+        pass
+    return "inconnue"
+
+
 def _sonde_voix() -> pathlib.Path | None:
     """Chemin du journal de la sonde, ou None — le défaut, qui ne déclare pas la route.
 
@@ -113,6 +137,10 @@ def construire():
     # sélection que le worker (`RELAIS_SMS`), donc même défaut inoffensif.
     envoyeur, mode_sms = choisir_envoyeur()
     print(f"envoi des codes de connexion : {mode_sms}")
+    version = _version()
+    # Annoncée au démarrage, comme le réglage du cookie et la sonde : c'est la première
+    # chose qu'on veut savoir quand un appel se comporte autrement que l'arbre local.
+    print(f"version déployée : {version}")
     voix_artisan = (os.environ.get("RELAIS_VOIX_ARTISAN") or "").strip() or None
     if voix_artisan:
         # annoncé, comme la sonde : c'est un rattachement PAR DÉFAUT, donc exactement le
@@ -128,7 +156,7 @@ def construire():
               f"(diagnostic étape 0 ; à éteindre après usage)")
     return creer_app(depot, registre, make_llm, base_url=_exige("RELAIS_BASE_URL"),
                      cookie_secure=secure, envoyeur=envoyeur, sonde_voix=sonde,
-                     voix_artisan_defaut=voix_artisan)
+                     voix_artisan_defaut=voix_artisan, version=version)
 
 
 app = construire()

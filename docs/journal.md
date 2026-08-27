@@ -22,7 +22,7 @@ point d'entrée du produit. Plus rien d'autre n'est bloqué côté code.
 
 ```bash
 cd proto
-python run_scenario.py                              # 68 tests, ~3 s, sans clé ni base
+python run_scenario.py                              # 69 tests, ~3 s, sans clé ni base
 python semer_artisans.py [--ecrire]                 # amorce la table `artisan`
 python run_depot_pg.py [--migrer]                   # contrat du port contre Supabase
 uvicorn serveur:app --port 8000                     # API HTTP
@@ -83,6 +83,7 @@ python run_llm_eval.py [--mock] [--n 3]             # éval appelant-simulé
 | Relance du numéro qui varie (R62) | ✅ | mock, mutations 5/5 — **premières phrases-tampons** |
 | **Les faits hors verbatim (R63)** | ✅ | mock, mutations 10/10 — **renversement : 8 questions rendues au formuleur** |
 | Numéro dicté chiffre par chiffre (R64) | ✅ | mock, mutations 3/4 (1 défense en profondeur, vérifiée) |
+| Révision déployée exposée par `/sante` (R65) | ✅ | mock, mutations 5/5 |
 | Identifiant d'appel imposé au dépôt (port) | ✅ | **contrat rejoué sur Supabase** |
 
 ## Ce qui est encore un double (et non un manque caché)
@@ -452,6 +453,45 @@ Trois mesures d'oreille, consignées comme données d'arbitrage :
    courtes, mais **à activer** (`stopSpeakingPlan`) : les tours verbatim longs
    (récapitulatif de RDV, consignes de sécurité) sont exactement ceux qu'un appelant
    pressé voudra couper. Décision réversible, à trancher à l'oreille.
+
+---
+
+## Session du 27/08/2026 (suite) — R65 : dater un déploiement ne doit pas être une enquête
+
+Geoffrey conteste une affirmation : *« j'ai du mal à voir comment cet appel tournait sur du
+code précédent, je venais de tout redéployer »*. Il avait raison de pousser — j'avais
+**déduit** la version déployée d'un indice dans un transcript, au lieu de la mesurer.
+
+### Ce que la vérification a donné
+
+**Mesuré** : sur l'arbre courant, cette réplique est impossible — le garde-fou des faits la
+remplace par l'instruction du contrôleur. **Établi** : pour qu'elle existe, la relance doit
+être non-verbatim, ce qui n'était vrai qu'avant R57 (26/08 **10:06**) ou après R63 (12:26) —
+mais après R63 le garde-fou la bloque. Donc le code déployé précédait 10:06, soit **neuf
+commits en arrière**, bien plus vieux que le « l'arbre d'avant » que j'avais écrit.
+
+**Non expliqué** : pourquoi. Un cache, un conteneur non reconstruit, un tunnel pointant sur
+une ancienne instance — je n'ai pas de quoi trancher, et je ne l'invente pas.
+
+### Le vrai problème n'est pas cet appel
+
+**C'est la troisième fois dans la journée que je date un déploiement par raisonnement.** Une
+information qu'on reconstruit trois fois est une information qui manque.
+
+`/sante` expose désormais la révision, et le serveur l'annonce au démarrage — à côté de
+`cookie_secure`, exposé pour exactement la même raison : *un réglage qu'on ne peut pas
+vérifier depuis le téléphone est un réglage qu'on croit connaître*. Lue depuis git, avec
+repli sur `RELAIS_VERSION` pour les déploiements sans dépôt, et jamais bloquante.
+
+### La leçon, qui vaut au-delà de ce correctif
+
+J'ai présenté une déduction comme un fait. Elle se trouvait être juste — et même plus forte
+que ce que j'avais dit — mais je ne l'avais pas vérifiée avant de l'affirmer. **Une
+inférence plausible et une mesure ne se disent pas de la même façon**, et c'est à celui qui
+affirme de faire la différence, pas à celui qui écoute.
+
+Suite : **69 PASS**. Mutations 5/5, dont celle qui exigeait de simuler l'absence de git —
+le chemin de repli n'était emprunté par aucun test, git étant présent sur la machine.
 
 ---
 

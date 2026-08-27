@@ -109,7 +109,8 @@ def creer_app(depot, registre: Registre, fabrique_llm, horloge=None,
               base_url: str = "https://relais.example",
               cookie_secure: bool = True, envoyeur=None,
               sonde_voix: "pathlib.Path | None" = None,
-              voix_artisan_defaut: str | None = None) -> FastAPI:
+              voix_artisan_defaut: str | None = None,
+              version: str = "inconnue") -> FastAPI:
     """Collaborateurs injectés explicitement plutôt que par variables globales : les tests
     passent un dépôt mémoire, un MockLLM et une horloge figée, la prod un dépôt Postgres.
 
@@ -207,8 +208,13 @@ def creer_app(depot, registre: Registre, fabrique_llm, horloge=None,
         # `cookie_secure` y figure volontairement : ce n'est pas un secret, et c'est LE
         # réglage qui décide si une connexion par navigateur peut aboutir en HTTP. Le
         # vérifier depuis le téléphone doit prendre dix secondes, pas un aller-retour.
+        # `version` : le commit qui tourne RÉELLEMENT. Le 27/08, un appel a montré une
+        # réplique impossible sur l'arbre courant, et il a fallu remonter neuf commits par
+        # déduction — trois fois dans la journée, la même enquête. **Dater ce qui tourne
+        # doit être une donnée, pas un raisonnement.** Ce n'est pas un secret : c'est un
+        # identifiant de révision, comme le numéro de version d'un logiciel.
         return {"statut": "ok", "contrat_lead": CONTRAT_LEAD_VERSION,
-                "cookie_secure": cookie_secure}
+                "cookie_secure": cookie_secure, "version": version}
 
     # ---- sonde de l'étape 0 (chantier voix), absente par défaut ----
     if sonde_voix is not None:

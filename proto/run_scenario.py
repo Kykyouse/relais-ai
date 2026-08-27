@@ -3571,6 +3571,105 @@ def check_creneaux_verbatim() -> bool:
     return True
 
 
+def check_version_deployee() -> bool:
+    """R65 : on doit pouvoir DATER ce qui tourne, sans enquête.
+
+    Le 27/08, Geoffrey conteste une de mes affirmations : « j'ai du mal à voir comment cet
+    appel tournait sur du code précédent, je venais de tout redéployer ». Il avait raison
+    de pousser — j'avais **déduit** la version déployée d'un indice dans un transcript, au
+    lieu de la mesurer.
+
+    Ce jour-là, remonter à la vérité a demandé : mesurer que la réplique était impossible
+    sur l'arbre courant, établir qu'elle exigeait une phrase non-verbatim, puis dater le
+    commit qui l'avait figée. Neuf commits en arrière, pour une information qui aurait dû
+    tenir dans une requête HTTP.
+
+    **Troisième fois dans la journée que je date un déploiement par raisonnement.** Une
+    donnée qu'on reconstruit trois fois est une donnée qui manque.
+
+    Ce n'est pas un secret : c'est un identifiant de révision, comme le numéro de version
+    d'un logiciel. Il figure à côté de `cookie_secure`, exposé pour exactement la même
+    raison — un réglage qu'on ne peut pas vérifier depuis le téléphone est un réglage qu'on
+    croit connaître.
+    """
+    try:
+        from fastapi.testclient import TestClient
+    except ImportError:
+        print("   fastapi/httpx absents : pip install -r requirements.txt")
+        return False
+
+    from relais_proto.api import creer_app
+    from relais_proto.registre import Artisan, Registre, empreinte as emp_token
+
+    registre = Registre([Artisan("art-dupont", "+33189701234", emp_token("tok"), CFG)],
+                        emp_token("secret"))
+
+    # (a) la version demandée est celle qui est servie
+    app = creer_app(DepotMemoire(), registre, MockLLM, lambda: LUNDI_9H,
+                    base_url="https://relais.test", cookie_secure=False,
+                    version="abc1234")
+    with TestClient(app) as c:
+        sante = c.get("/sante").json()
+        if sante.get("version") != "abc1234":
+            print(f"   /sante ne rend pas la version : {sante}")
+            return False
+        # les autres indicateurs restent là : `/sante` est le tableau de bord du serveur
+        for cle in ("statut", "contrat_lead", "cookie_secure"):
+            if cle not in sante:
+                print(f"   /sante a perdu « {cle} » : {sante}")
+                return False
+
+    # (b) sans version fournie, le serveur démarre quand même et le dit
+    app2 = creer_app(DepotMemoire(), registre, MockLLM, lambda: LUNDI_9H,
+                     base_url="https://relais.test", cookie_secure=False)
+    with TestClient(app2) as c:
+        if c.get("/sante").json().get("version") != "inconnue":
+            print("   une version absente n'est pas signalée comme inconnue")
+            return False
+
+    # (c) le RÉSOLVEUR de version : variable d'environnement prioritaire, git en repli,
+    # et jamais bloquant. Un déploiement sans dépôt (conteneur, archive) doit démarrer.
+    import os
+
+    import serveur
+
+    avant = os.environ.get("RELAIS_VERSION")
+    try:
+        os.environ["RELAIS_VERSION"] = "deploiement-42"
+        if serveur._version() != "deploiement-42":
+            print(f"   RELAIS_VERSION n'est pas prioritaire : {serveur._version()!r}")
+            return False
+        os.environ["RELAIS_VERSION"] = "   "
+        vu = serveur._version()
+        if not vu or vu == "   ":
+            print(f"   une variable vide n'est pas ignorée : {vu!r}")
+            return False
+        # git ABSENT : c'est le cas pour lequel le repli existe (conteneur, archive).
+        # Sans ce point, la mutation qui remplace « inconnue » par une chaine vide
+        # survivait — le chemin n'etait jamais emprunte, git etant present ici.
+        os.environ.pop("RELAIS_VERSION", None)
+        import subprocess as _sp
+        vrai = _sp.run
+
+        def _echoue(*a, **k):
+            raise FileNotFoundError("git introuvable")
+
+        _sp.run = _echoue
+        try:
+            vu = serveur._version()
+        finally:
+            _sp.run = vrai
+        if vu != "inconnue":
+            print(f"   sans git, la version rendue est {vu!r} au lieu de « inconnue »")
+            return False
+    finally:
+        if avant is None:
+            os.environ.pop("RELAIS_VERSION", None)
+        else:
+            os.environ["RELAIS_VERSION"] = avant
+    return True
+
+
 def check_numero_dicte_chiffre_par_chiffre() -> bool:
     """R64 : dix chiffres dans la phrase font un numéro, quelle que soit leur découpe.
 
@@ -7323,6 +7422,14 @@ def run() -> int:
     if check_numero_dicte_chiffre_par_chiffre():
         print("   → dix chiffres font un numéro quelle que soit leur découpe, et "
               "ce qui n'en est pas un reste refusé : ✅ PASS")
+    else:
+        print("   → ❌ FAIL")
+        echecs += 1
+
+    print(f"\n──── R65_version_deployee ────")
+    if check_version_deployee():
+        print("   → la révision qui tourne est exposée par /sante et annoncée au "
+              "démarrage : dater un déploiement n'est plus une enquête : ✅ PASS")
     else:
         print("   → ❌ FAIL")
         echecs += 1
