@@ -300,6 +300,61 @@ Le spike vocal ne s'ouvre **qu'en session dédiée**. Le Sender ID et l'OAuth Go
 le nom commercial — c'est-à-dire le cousin, pas nous.
 ---
 
+## 27/08 — Ce que l'agent fait des tournures qu'on n'a pas prévues (R68)
+
+Geoffrey : « essaye aussi de voir au-delà de "aujourd'hui" comment ça réagit avec
+"maintenant", "aussi vite que possible", "dans la journée", "dans la semaine"… est-ce que
+l'IA sera capable de comprendre quelque chose qu'on n'a pas forcément prévu en dur d'elle
+même et agir en conséquence ? »
+
+J'ai sondé 21 tournures contre `_contraintes_dispo`. Le résultat se sépare en deux tas,
+et ils n'appellent pas la même réponse.
+
+**Treize sont simplement IGNORÉES** — « maintenant », « tout de suite », « au plus vite »,
+« dès que possible », « dans la journée », « dans la semaine », « cette semaine », « en fin
+de semaine », « début de semaine prochaine », « la semaine prochaine », « avant midi »,
+« après 18 heures », « en soirée ». L'agent propose alors ses créneaux par défaut. Ce n'est
+pas faux, c'est sourd : l'appelant a dit quelque chose, l'agent n'en a rien fait. Sur
+« maintenant » et « au plus vite » le défaut tombe souvent juste (le premier créneau EST le
+plus proche) ; sur « la semaine prochaine » ou « en soirée » il tombe à côté.
+
+**Trois sont INVERSÉES**, et c'est bien pire :
+
+    « pas le samedi »    → proposait samedi 29 août
+    « pas avant jeudi »  → proposait jeudi 3 septembre (le jeudi SUIVANT)
+    « sauf le matin »    → contraignait AU matin
+
+`_contraintes_dispo` cherchait des noms de jours dans le texte sans regarder ce qui les
+précède. Une négation devenait donc une préférence **pour ce qu'on refuse**. Un silence se
+rattrape au tour suivant ; une inversion donne à l'appelant l'impression que l'agent se
+moque de lui, et le fait avec aplomb. Corrigé d'abord, sous **R68**.
+
+Trois formes qu'il fallait distinguer, et qu'un seul champ ne pouvait pas porter :
+**exclusion** (« pas le samedi »), **plancher** (« pas avant jeudi » : ce jour-là ou plus
+tard, ni exclusion ni préférence) et **préférence** (ce qu'on savait déjà lire).
+`_contraintes_dispo` rend désormais une STRUCTURE plutôt qu'un tuple — il s'était allongé à
+chaque forme nouvelle (R61, R67) et ne disait plus ce qu'il portait.
+
+La banque de mutations a rapporté quelque chose que le test vert cachait : 6/12 au premier
+passage. Cinq mutations du calendrier survivaient parce que le test se contentait de
+vérifier l'absence de samedi. « Pas avant jeudi prochain » contrôlé par `weekday() >= 3`
+passe aussi bien avec un plancher inerte (on est jeudi) qu'avec un plancher qui saute une
+semaine. Un plancher se vérifie sur des DATES. Test resserré → **11/12**, le douzième étant
+un témoin sans effet qui DOIT survivre.
+
+**La question de fond reste ouverte, et elle est architecturale.** Allonger la liste de
+mots-clés à chaque tournure nouvelle ne converge pas : le français en a trop, et chaque
+ajout est une occasion d'inverser un sens. La seule réponse qui tienne à l'échelle est
+celle qu'on applique déjà à `prestation` : faire **CLASSER le texte libre par le modèle
+vers un vocabulaire FERMÉ que le contrôleur possède** (`des_que_possible`, `aujourdhui`,
+`cette_semaine`, `semaine_prochaine`, `matin`, `soir`, `exclut:<jour>`, `pas_avant:<jour>`).
+Le LLM ne décide toujours rien — il range dans des cases que le contrôleur a écrites, et
+le contrôleur seul choisit le créneau. C'est la règle n°1 respectée, et c'est la vraie
+réponse à « est-ce qu'elle comprendra ce qu'on n'a pas prévu ». Décision à prendre avec
+Geoffrey avant de l'écrire.
+
+---
+
 ## Session du 25/08/2026 (fin) — sonde de l'étape 0 : demander à la plateforme plutôt que parier
 
 **Fait.** La sonde du chantier voix (`proto/relais_proto/sonde_voix.py`, route

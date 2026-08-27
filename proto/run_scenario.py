@@ -3575,6 +3575,152 @@ def check_creneaux_verbatim() -> bool:
     return True
 
 
+def check_dispo_negations() -> bool:
+    """R68 : « pas le samedi » ne veut pas dire « samedi ».
+
+    Trouvé le 27/08 en sondant, à la demande de Geoffrey, ce que le contrôleur fait des
+    tournures qu'on n'a pas prévues : « maintenant », « au plus vite », « dans la
+    journée », « la semaine prochaine »… La plupart sont IGNORÉES, ce qui est parfois
+    sans conséquence. Mais trois sont **inversées** :
+
+        « pas le samedi »    → proposait samedi 29 août, ou samedi 5 septembre
+        « pas avant jeudi »  → proposait jeudi 3 septembre (le jeudi SUIVANT)
+        « sauf le matin »    → contraignait AU matin
+
+    `_contraintes_dispo` cherchait des noms de jours dans le texte sans regarder ce qui
+    les précède. Une négation devenait donc une préférence **pour ce qu'on refuse** —
+    le pire état possible : l'agent a l'air de se moquer de l'appelant, et il le fait avec
+    aplomb.
+
+    Trois formes distinctes, et il fallait les distinguer :
+
+    - **exclusion** (« pas le samedi », « sauf le matin ») : tout SAUF ça ;
+    - **plancher** (« pas avant jeudi ») : ce jour-là ou plus tard — ce n'est ni une
+      exclusion ni une préférence, c'est une borne ;
+    - **préférence** (« samedi matin ») : celle qu'on savait déjà lire.
+
+    Ce que ce test NE prétend pas : couvrir toutes les tournures. « Dans la journée », « au
+    plus vite », « la semaine prochaine » restent ignorées — consigné au journal, avec la
+    seule réponse qui tienne à l'échelle : faire CLASSER par le modèle vers un vocabulaire
+    fermé que le contrôleur possède, plutôt qu'allonger indéfiniment une liste de mots.
+    """
+    import datetime as dt
+
+    from relais_proto.engine import Conversation
+
+    JEUDI = dt.datetime(2026, 8, 27, 7, 0, tzinfo=dt.UTC)      # jeudi 9 h à Paris
+
+    def contraintes(dispo):
+        convo = Conversation(CFG, MockLLM(), CalendarStub(CFG, now=JEUDI))
+        convo.slots["disponibilites"] = dispo
+        return convo._contraintes_dispo()
+
+    # (a) une NÉGATION n'est jamais une préférence
+    for dispo in ("pas le samedi", "surtout pas le samedi", "sauf le samedi",
+                  "je ne peux pas le samedi"):
+        c = contraintes(dispo)
+        if c["jours"] and 5 in c["jours"]:
+            print(f"   {dispo!r} contraint AU samedi : {c['jours']}")
+            return False
+        if 5 not in (c["jours_exclus"] or set()):
+            print(f"   {dispo!r} n'exclut pas le samedi : {c['jours_exclus']}")
+            return False
+
+    for dispo in ("sauf le matin", "pas le matin"):
+        c = contraintes(dispo)
+        if c["moment"] == "matin":
+            print(f"   {dispo!r} contraint AU matin")
+            return False
+        if c["moment_exclu"] != "matin":
+            print(f"   {dispo!r} n'exclut pas le matin : {c['moment_exclu']!r}")
+            return False
+
+    # (b) « pas avant X » est un PLANCHER, ni une exclusion ni une préférence
+    c = contraintes("pas avant jeudi")
+    if c["jours"] and 3 in c["jours"]:
+        print(f"   « pas avant jeudi » contraint AU jeudi : {c['jours']}")
+        return False
+    if c["pas_avant"] is None:
+        print("   « pas avant jeudi » ne pose aucun plancher")
+        return False
+    if 3 in (c["jours_exclus"] or set()):
+        print("   « pas avant jeudi » EXCLUT le jeudi, alors qu'il l'autorise")
+        return False
+
+    # (b bis) la négation vaut aussi pour les jours RELATIFS. La branche qui les lit est
+    # distincte de celle des noms de jours : elle a sa propre façon de se tromper.
+    c = contraintes("pas demain")
+    if c["jours"] and 4 in c["jours"]:
+        print(f"   « pas demain » contraint À demain : {c['jours']}")
+        return False
+    if 4 not in (c["jours_exclus"] or set()):
+        print(f"   « pas demain » n'exclut pas demain : {c['jours_exclus']}")
+        return False
+
+    # (c) les PRÉFÉRENCES continuent de fonctionner — on n'a rien cassé
+    for dispo, jours_attendus, moment_attendu in (("samedi matin", {5}, "matin"),
+                                                  ("demain", {4}, None),
+                                                  ("aujourd'hui", {3}, None),
+                                                  ("que le samedi", {5}, None)):
+        c = contraintes(dispo)
+        if c["jours"] != jours_attendus or c["moment"] != moment_attendu:
+            print(f"   {dispo!r} : jours={c['jours']}, moment={c['moment']!r} "
+                  f"(attendu {jours_attendus}, {moment_attendu!r})")
+            return False
+        if c["jours_exclus"] or c["moment_exclu"]:
+            print(f"   {dispo!r} produit une exclusion parasite : "
+                  f"{c['jours_exclus']}, {c['moment_exclu']!r}")
+            return False
+
+    # (d) DE BOUT EN BOUT : on ne propose plus ce que l'appelant vient de refuser
+    def propose(dispo):
+        convo = Conversation(CFG, MockLLM(), CalendarStub(CFG, now=JEUDI))
+        convo.open()
+        for ligne in ("J'ai une fuite sous l'évier, c'est urgent",
+                      "Nogent-sur-Marne 94130", "Dupont, 06 06 30 30 11", "oui"):
+            convo.process(ligne)
+        convo.slots["disponibilites"] = dispo
+        convo.flags["contraintes_proposees"] = None
+        return convo._s5({}), convo._proposes
+
+    dit, creneaux = propose("pas le samedi")
+    if not creneaux:
+        print(f"   « pas le samedi » ne propose plus rien : « {dit} »")
+        return False
+    for creneau in creneaux:
+        if dt.date.fromisoformat(creneau["date"]).weekday() == 5:
+            print(f"   samedi proposé à qui n'en veut pas : {creneau['label']}")
+            return False
+
+    # Le plancher se vérifie sur des DATES, pas sur des jours de semaine : « après lundi »
+    # contrôlé par `weekday() >= 0` ne prouve rien, et laissait passer un calendrier qui
+    # n'appliquait aucun plancher. Depuis un JEUDI, « pas avant lundi » doit donner le
+    # lundi 31/08 — ni le vendredi 28 (plancher inerte), ni le lundi 07/09 (semaine sautée).
+    dit, creneaux = propose("pas avant lundi")
+    if not creneaux:
+        print(f"   « pas avant lundi » ne propose plus rien : « {dit} »")
+        return False
+    dates = sorted(dt.date.fromisoformat(c["date"]) for c in creneaux)
+    if dates[0] < dt.date(2026, 8, 31):
+        print(f"   créneau AVANT le plancher : {creneaux[0]['label']}")
+        return False
+    if dates[0] > dt.date(2026, 9, 2):
+        print(f"   le plancher a sauté une semaine : {creneaux[0]['label']}")
+        return False
+
+    # Un moment exclu s'applique aussi au bout de la chaîne : `_moment_est` peut très bien
+    # être juste et n'être appelé nulle part.
+    dit, creneaux = propose("sauf le matin")
+    if not creneaux:
+        print(f"   « sauf le matin » ne propose plus rien : « {dit} »")
+        return False
+    for creneau in creneaux:
+        if int(creneau["de"].split(":")[0]) < 12:
+            print(f"   matin proposé à qui n'en veut pas : {creneau['label']}")
+            return False
+    return True
+
+
 def check_libelle_parle() -> bool:
     """R66 : un créneau se PRONONCE, il ne s'affiche pas.
 
@@ -4330,10 +4476,11 @@ def check_dispo_demain_aujourdhui() -> bool:
     def contraintes(dispo):
         convo = Conversation(CFG, MockLLM(), CalendarStub(CFG, now=LUNDI_9H))
         convo.slots["disponibilites"] = dispo
-        # depuis R67, un triplet : les jours relatifs portent AUSSI une date, parce qu'un
-        # jour relatif désigne UN jour et non tous les jeudis
-        jours, moment, _dates = convo._contraintes_dispo()
-        return jours, moment
+        # depuis R68, une STRUCTURE : aux préférences (jours, moment, dates) s'ajoutent
+        # les négations — exclusions et plancher. Un tuple qui s'allonge à chaque forme
+        # nouvelle finit par ne plus rien dire de ce qu'il porte.
+        r = convo._contraintes_dispo()
+        return r["jours"], r["moment"]
 
     for dispo, jours_attendus, moment_attendu in (
             ("n'importe quand dans la journée de demain", {1}, None),
@@ -4372,7 +4519,7 @@ def check_dispo_demain_aujourdhui() -> bool:
         return False
     convo_nuit = Conversation(CFG, MockLLM(), CalendarStub(CFG, now=nuit))
     convo_nuit.slots["disponibilites"] = "demain"
-    jours_nuit, _, _ = convo_nuit._contraintes_dispo()
+    jours_nuit = convo_nuit._contraintes_dispo()["jours"]
     if jours_nuit != {2}:                                          # mercredi
         print(f"   appel de nuit : « demain » → {jours_nuit} au lieu de "
               f"{{2}} (mercredi) — calculé en UTC et non en heure de pendule")
@@ -7666,6 +7813,14 @@ def run() -> int:
     if check_jour_nomme_est_une_contrainte():
         print("   → un jour nommé en réponse à une proposition contraint le "
               "calendrier au lieu de le faire avancer : ✅ PASS")
+    else:
+        print("   → ❌ FAIL")
+        echecs += 1
+
+    print(f"\n──── R68_dispo_negations ────")
+    if check_dispo_negations():
+        print("   → une negation n'est plus lue comme une preference : exclusion, "
+              "plancher et preference sont distingues : ✅ PASS")
     else:
         print("   → ❌ FAIL")
         echecs += 1

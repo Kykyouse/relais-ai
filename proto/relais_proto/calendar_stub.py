@@ -95,6 +95,33 @@ class CalendarStub:
 
     # ---- interface agent ----
     @staticmethod
+    def _moment_est(h: int, moment: str | None) -> bool:
+        """Cette heure tombe-t-elle DANS ce moment ? Sert aux EXCLUSIONS (« sauf le
+        matin ») : `_moment_ok` répond à la question inverse et laisse tout passer quand
+        aucun moment n'est demandé, ce qui ne convient pas ici."""
+        if moment == "matin":
+            return h < 12
+        if moment == "apres_midi":
+            return h >= 12
+        return False
+
+    @staticmethod
+    def _jour_admis(day, jours, dates, jours_exclus, pas_avant, depart) -> bool:
+        """Ce jour-là est-il compatible avec TOUTES les contraintes exprimées ?"""
+        if jours and day.weekday() not in jours:
+            return False
+        if dates and day.isoformat() not in dates:
+            return False
+        if jours_exclus and day.weekday() in jours_exclus:
+            return False
+        if pas_avant is not None:
+            # « pas avant jeudi » : le premier jeudi à venir, puis tout ce qui suit
+            delta = (pas_avant - depart.weekday()) % 7
+            if day < depart + dt.timedelta(days=delta):
+                return False
+        return True
+
+    @staticmethod
     def _moment_ok(h: int, moment: str | None) -> bool:
         if moment == "matin":
             return h < 12
@@ -104,7 +131,10 @@ class CalendarStub:
 
     def get_slots(self, prestation: str | None, urgent: bool, n: int = 2, skip: int = 0,
                   jours: set[int] | None = None, moment: str | None = None,
-                  dates: set[str] | None = None) -> list[dict]:
+                  dates: set[str] | None = None,
+                  jours_exclus: set[int] | None = None,
+                  moment_exclu: str | None = None,
+                  pas_avant: int | None = None) -> list[dict]:
         """Jusqu'à n fenêtres de 2 h (sautant les `skip` premières), en respectant les
         disponibilités exprimées : `jours` (weekdays 0–6), `moment` (matin/apres_midi) et
         `dates` (ISO, bornantes).
@@ -113,7 +143,12 @@ class CalendarStub:
         un appelant a demandé « aujourd'hui » à 17 h 30 : plus rien ce jour-là, et la
         contrainte — résolue en « jeudi » — a proposé **jeudi 3 septembre**. Une semaine
         plus tard. « Aujourd'hui » ne peut pas vouloir dire jeudi prochain : c'est une
-        DATE, et elle borne la recherche au lieu de la faire boucler."""
+        DATE, et elle borne la recherche au lieu de la faire boucler.
+
+        `jours_exclus`, `moment_exclu` et `pas_avant` portent les NÉGATIONS (R68) : « pas
+        le samedi » proposait samedi, « pas avant jeudi » proposait le jeudi suivant. Une
+        exclusion et un plancher ne se disent pas avec le même vocabulaire qu'une
+        préférence, et les confondre donne à l'appelant exactement ce qu'il refuse."""
         n_total = n + skip
         slots: list[dict] = []
         local = self.local
@@ -123,9 +158,10 @@ class CalendarStub:
             f = self.cfg["urgences"]["fenetres_reservees"][0]
             d = local.date()
             if d.weekday() <= 4 and local.time() < dt.time(17, 0) \
-                    and (not jours or d.weekday() in jours) \
-                    and (not dates or d.isoformat() in dates) \
-                    and self._moment_ok(int(f["de"].split(":")[0]), moment):
+                    and self._jour_admis(d, jours, dates, jours_exclus, pas_avant,
+                                         local.date()) \
+                    and self._moment_ok(int(f["de"].split(":")[0]), moment) \
+                    and not self._moment_est(int(f["de"].split(":")[0]), moment_exclu):
                 slots.append(self._mk(d, f["de"], f["a"], urgence=True))
         # Puis les jours suivants (en sautant les jours "pleins" simulés)
         day = local.date() + dt.timedelta(days=1 + self.jours_pleins)
@@ -137,15 +173,16 @@ class CalendarStub:
             # qui, lui, prétend protéger quelque chose.
             if dates and day.isoformat() > max(dates):
                 break
-            if (not jours or day.weekday() in jours) \
-                    and (not dates or day.isoformat() in dates):
+            if self._jour_admis(day, jours, dates, jours_exclus, pas_avant,
+                                local.date()):
                 for de, a in self._fenetres_du_jour(day):
                     debut = dt.datetime.strptime(de, "%H:%M")
                     # fenêtres de 2 h : matin (ouverture) et après-midi (14h) si couvert
                     for h in (debut.hour, 14):
                         fin_h = h + 2
                         if h >= debut.hour and fin_h <= int(a.split(":")[0]) \
-                                and self._moment_ok(h, moment):
+                                and self._moment_ok(h, moment) \
+                                and not self._moment_est(h, moment_exclu):
                             slots.append(self._mk(day, f"{h:02d}:00", f"{fin_h:02d}:00"))
                             if len(slots) >= n_total:
                                 return slots[skip:skip + n]

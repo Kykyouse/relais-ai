@@ -15,6 +15,18 @@ from . import communes, temps
 from .calendar_stub import CalendarStub
 
 
+def _cle_contraintes(c: dict) -> list:
+    """Une clé comparable pour savoir si les contraintes ont CHANGÉ (cf. `saut`).
+
+    Les valeurs sont des ensembles : il faut les trier pour que deux lectures de la même
+    phrase donnent la même clé.
+    """
+    return [sorted(c["jours"]) if c["jours"] else None, c["moment"],
+            sorted(c["dates"]) if c["dates"] else None,
+            sorted(c["jours_exclus"]) if c["jours_exclus"] else None,
+            c["moment_exclu"], c["pas_avant"]]
+
+
 def _re_chiffres():
     """Les suites de chiffres d'un texte, séparateurs d'écriture compris.
 
@@ -762,7 +774,13 @@ class Conversation:
         mots = [m for m, _ in self.JOURS_RELATIFS] + list(self.JOURS_SEMAINE)
         return texte if any(f" {m} " in f" {d} " for m in mots) else None
 
-    def _contraintes_dispo(self) -> tuple[set[int] | None, str | None]:
+    # Ce qui NIE ce qui suit. « pas », « sauf », « jamais »… Une négation ne se devine pas
+    # d'un mot isolé : c'est ce qui PRÉCÈDE le jour qui décide.
+    NEGATIONS = ("pas", "sauf", "jamais", "hormis", "excepte", "impossible", "aucun")
+    # « pas AVANT jeudi » n'est ni une exclusion ni une préférence : c'est un plancher.
+    PLANCHERS = ("avant", "des", "a partir de", "apres")
+
+    def _contraintes_dispo(self) -> dict:
         """Contraintes de créneaux tirées des disponibilités exprimées par l'appelant.
 
         Trouvé le 26/08 sur un appel réel : l'appelant demandait un rendez-vous
@@ -778,22 +796,72 @@ class Conversation:
         import datetime as _dt
 
         d = self._normalise(self.slots.get("disponibilites") or "")
-        jours = {n for nom, n in self.JOURS_SEMAINE.items() if nom in d}
+        mots = d.split()
+
+        def _nie(cible: str) -> tuple[bool, bool]:
+            """(nié, plancher) : ce qui précède `cible` dans la phrase.
+
+            Une négation devenait une PRÉFÉRENCE pour ce qu'on refuse — « pas le samedi »
+            proposait samedi (R68). On regarde donc les trois mots qui précèdent, ce qui
+            couvre « pas le samedi », « surtout pas le samedi », « je ne peux pas le
+            samedi ». Au-delà, la phrase parle d'autre chose.
+            """
+            debut = mots.index(cible.split()[0]) if cible.split()[0] in mots else -1
+            if debut < 0:
+                return False, False
+            avant = mots[max(0, debut - 3):debut]
+            if not any(n in avant for n in self.NEGATIONS):
+                return False, False
+            # « pas AVANT jeudi » : la négation porte sur l'antériorité, pas sur le jour
+            return True, any(p in " ".join(avant) for p in self.PLANCHERS)
+
+        jours, exclus, plancher = set(), set(), None
+        for nom, n in self.JOURS_SEMAINE.items():
+            if nom not in d:
+                continue
+            nie, est_plancher = _nie(nom)
+            if est_plancher:
+                plancher = n
+            elif nie:
+                exclus.add(n)
+            else:
+                jours.add(n)
+
         dates = set()
         cal = getattr(self, "cal", None)
         if cal is not None:
             local = temps.en_local(cal.now, self.cfg)
             for mot, delta in self.JOURS_RELATIFS:
-                if mot in d:
-                    jour = local + _dt.timedelta(days=delta)
+                if mot not in d:
+                    continue
+                nie, est_plancher = _nie(mot)
+                jour = local + _dt.timedelta(days=delta)
+                if est_plancher:
+                    plancher = jour.weekday()
+                elif nie:
+                    exclus.add(jour.weekday())
+                else:
                     jours.add(jour.weekday())
                     # ...ET la date : un jour relatif désigne UN jour, pas tous les jeudis.
                     # Sans elle, « aujourd'hui » saturé proposait jeudi prochain (R67).
                     dates.add(jour.date().isoformat())
-                    break
-        moment = ("matin" if "matin" in d
-                  else "apres_midi" if ("apres midi" in d or "aprem" in d) else None)
-        return (jours or None), moment, (dates or None)
+                break
+
+        moment = moment_exclu = None
+        for cle, mots_cles in (("matin", ("matin",)),
+                               ("apres_midi", ("apres midi", "aprem"))):
+            for mc in mots_cles:
+                if mc not in d:
+                    continue
+                nie, _ = _nie(mc)
+                if nie:
+                    moment_exclu = cle
+                else:
+                    moment = cle
+                break
+        return {"jours": jours or None, "moment": moment, "dates": dates or None,
+                "jours_exclus": exclus or None, "moment_exclu": moment_exclu,
+                "pas_avant": plancher}
 
     def _zone_de(self, cp: str | None) -> str:
         zone = self.cfg["zone"]
@@ -1093,7 +1161,8 @@ class Conversation:
         # Les contraintes de disponibilité sont lues EN TÊTE : la branche « rien de plus
         # tôt » comme la reproposition en dépendent toutes les deux.
         # ("que le samedi matin" — bug T03-LLM)
-        jours, moment, dates = self._contraintes_dispo()
+        c = self._contraintes_dispo()
+        jours, moment, dates = c["jours"], c["moment"], c["dates"]
         # choix d'un créneau proposé ?
         if self._proposes:
             choix = ex.get("creneau_choisi")
@@ -1133,8 +1202,7 @@ class Conversation:
         # refuser reproposé. Le raccourci ne vaut que si les contraintes n'ont PAS bougé ;
         # sinon c'est une reproposition qu'il faut faire, pas une fin de non-recevoir.
         contraintes_stables = (self.flags.get("contraintes_proposees")
-                               == [sorted(jours) if jours else None, moment,
-                                   sorted(dates) if dates else None])
+                               == _cle_contraintes(c))
         if ex.get("veut_plus_tot") and self._proposes and contraintes_stables:
             self.flags["tours_creneaux"] += 1
             if self.flags["tours_creneaux"] <= 2:
@@ -1162,19 +1230,21 @@ class Conversation:
         #
         # `tours_creneaux`, lui, continue de compter : l'invariant n°6 (deux tours max)
         # n'est pas touché.
-        contraintes = [sorted(jours) if jours else None, moment,
-                       sorted(dates) if dates else None]
+        contraintes = _cle_contraintes(c)
         saut = (0 if self.flags.get("contraintes_proposees") != contraintes
                 else 2 * self.flags["tours_creneaux"])
         self.flags["contraintes_proposees"] = contraintes
         self._proposes = self.cal.get_slots(self.slots["prestation"], urgent, n=2,
                                             skip=saut, jours=jours, moment=moment,
-                                            dates=dates)
+                                            dates=dates,
+                                            jours_exclus=c["jours_exclus"],
+                                            moment_exclu=c["moment_exclu"],
+                                            pas_avant=c["pas_avant"])
         self.flags["tours_creneaux"] += 1
         # Le jour demandé est SATURÉ : on ne perd pas le rendez-vous pour autant. Avant
         # R67, une contrainte impossible menait droit au repli « Julien vous rappellera » —
         # un lead perdu parce que l'appelant avait exprimé une préférence.
-        if not self._proposes and (jours or dates or moment):
+        if not self._proposes and any(c.values()):
             self._proposes = self.cal.get_slots(self.slots["prestation"], urgent, n=1)
             if self._proposes:
                 self.flags["contraintes_proposees"] = contraintes
