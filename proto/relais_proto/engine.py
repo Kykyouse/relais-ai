@@ -68,11 +68,21 @@ class Conversation:
             # "le matin entre 8h et 10h" comme le choix de la proposition n°1 (bug R09-LLM)
             "dernier_agent": next((t for w, t in reversed(self.transcript)
                                    if w == "agent"), ""),
-            "propositions": [s["label"] for s in self._proposes],
+            "propositions": [self._dit(s) for s in self._proposes],
         }
 
     def _dernier_client(self) -> str:
         return next((t for who, t in reversed(self.transcript) if who == "client"), "")
+
+    @staticmethod
+    def _dit(creneau: dict) -> str:
+        """Le créneau tel qu'on le PRONONCE (R66). Le libellé écrit reste dans les SMS et
+        les pages ; la synthèse vocale, elle, lit « 29/08 » comme « 29 barre oblique 08 ».
+
+        Repli sur le libellé écrit : un état sérialisé par une version antérieure ne porte
+        pas encore le jumeau parlé, et un appel en cours ne doit pas devenir muet pour ça.
+        """
+        return creneau.get("label_parle") or creneau["label"]
 
     def _tel_espace(self) -> str:
         tel = self.slots["telephone_rappel"] or ""
@@ -734,6 +744,24 @@ class Conversation:
     # contient « demain », et un appelant qui dit après-demain ne doit pas obtenir demain.
     JOURS_RELATIFS = (("apres demain", 2), ("demain", 1), ("aujourd hui", 0))
 
+    def _jour_dit(self, texte: str) -> str | None:
+        """Le fragment de `texte` qui NOMME un jour, ou None.
+
+        Lu par le contrôleur, pas par l'extracteur (règle n°1, et même leçon que R47 et
+        R64). Le 27/08, un appelant a répondu « Aujourd'hui » à une proposition de
+        créneaux : le slot `disponibilites` est resté vide, `_contraintes_dispo` n'avait
+        rien à lire, et le contrôleur a pris ce tour pour « aucun des deux ». Il a donc
+        AVANCÉ dans le calendrier — samedi et lundi, deux jours plus loin que ce qu'on
+        venait de proposer. **Préciser sa préférence donnait l'inverse de ce qu'on
+        demande.**
+
+        Rendu tel quel : c'est `_contraintes_dispo` qui l'interprète, et lui seul sait
+        résoudre « demain » en heure de pendule (R61).
+        """
+        d = self._normalise(texte or "")
+        mots = [m for m, _ in self.JOURS_RELATIFS] + list(self.JOURS_SEMAINE)
+        return texte if any(f" {m} " in f" {d} " for m in mots) else None
+
     def _contraintes_dispo(self) -> tuple[set[int] | None, str | None]:
         """Contraintes de créneaux tirées des disponibilités exprimées par l'appelant.
 
@@ -751,16 +779,21 @@ class Conversation:
 
         d = self._normalise(self.slots.get("disponibilites") or "")
         jours = {n for nom, n in self.JOURS_SEMAINE.items() if nom in d}
+        dates = set()
         cal = getattr(self, "cal", None)
         if cal is not None:
             local = temps.en_local(cal.now, self.cfg)
             for mot, delta in self.JOURS_RELATIFS:
                 if mot in d:
-                    jours.add((local + _dt.timedelta(days=delta)).weekday())
+                    jour = local + _dt.timedelta(days=delta)
+                    jours.add(jour.weekday())
+                    # ...ET la date : un jour relatif désigne UN jour, pas tous les jeudis.
+                    # Sans elle, « aujourd'hui » saturé proposait jeudi prochain (R67).
+                    dates.add(jour.date().isoformat())
                     break
         moment = ("matin" if "matin" in d
                   else "apres_midi" if ("apres midi" in d or "aprem" in d) else None)
-        return (jours or None), moment
+        return (jours or None), moment, (dates or None)
 
     def _zone_de(self, cp: str | None) -> str:
         zone = self.cfg["zone"]
@@ -1042,10 +1075,25 @@ class Conversation:
         return self._s5({})
 
     def _s5(self, ex: dict) -> str:
+        # UN JOUR NOMMÉ ICI EST UNE CONTRAINTE, pas un refus (R67). La lecture est
+        # cantonnée à `_s5` : ailleurs, « aujourd'hui c'est la catastrophe » décrit une
+        # journée, pas une préférence. Ici, l'agent vient de proposer des créneaux — nommer
+        # un jour ne peut vouloir dire qu'une chose.
+        #
+        # Le slot est REMPLACÉ et non complété : une préférence énoncée maintenant
+        # remplace celle d'avant (« finalement plutôt samedi »).
+        # (j'avais gardé ceci sous `if self.flags["hold"] is None` — condition morte :
+        # `_s5` n'est atteint qu'en état S5, et un créneau bloqué fait passer en S6. Une
+        # mutation l'a montrée sans effet. Sixième fois dans ce projet, et toujours la
+        # même règle : du code mort qui a l'air d'une garantie est pire que rien.)
+        jour = self._jour_dit(self._dernier_client())
+        if jour:
+            self.slots["disponibilites"] = jour
+
         # Les contraintes de disponibilité sont lues EN TÊTE : la branche « rien de plus
         # tôt » comme la reproposition en dépendent toutes les deux.
         # ("que le samedi matin" — bug T03-LLM)
-        jours, moment = self._contraintes_dispo()
+        jours, moment, dates = self._contraintes_dispo()
         # choix d'un créneau proposé ?
         if self._proposes:
             choix = ex.get("creneau_choisi")
@@ -1068,8 +1116,9 @@ class Conversation:
         # les remplacer ferait changer la liste sous les pieds de l'appelant, qui ne
         # pourrait plus répondre « le premier ».
         if self._proposes and self._prix_a_repondre(ex):
-            rappel = (self._proposes[0]["label"] if len(self._proposes) == 1
-                      else f"{self._proposes[0]['label']}, ou {self._proposes[1]['label']}")
+            rappel = (self._dit(self._proposes[0]) if len(self._proposes) == 1
+                      else f"{self._dit(self._proposes[0])}, ou "
+                           f"{self._dit(self._proposes[1])}")
             return self._say(f"{self._phrase_prix()} Pour le rendez-vous, je peux vous "
                              f"proposer {rappel}. Lequel vous arrange ?")
         # "rien de plus tôt ?" n'est PAS un rejet : on re-propose le PREMIER créneau,
@@ -1084,14 +1133,15 @@ class Conversation:
         # refuser reproposé. Le raccourci ne vaut que si les contraintes n'ont PAS bougé ;
         # sinon c'est une reproposition qu'il faut faire, pas une fin de non-recevoir.
         contraintes_stables = (self.flags.get("contraintes_proposees")
-                               == [sorted(jours) if jours else None, moment])
+                               == [sorted(jours) if jours else None, moment,
+                                   sorted(dates) if dates else None])
         if ex.get("veut_plus_tot") and self._proposes and contraintes_stables:
             self.flags["tours_creneaux"] += 1
             if self.flags["tours_creneaux"] <= 2:
                 # verbatim : cette phrase énonce une DATE (cf. le bloc de `_s5` plus bas)
                 return self._say(
                     f"Je n'ai malheureusement rien de plus tôt : le premier créneau "
-                    f"disponible est {self._proposes[0]['label']}. "
+                    f"disponible est {self._dit(self._proposes[0])}. "
                     f"Voulez-vous que je vous le réserve ?", verbatim=True)
         # (re)proposer — max 2 tours (invariant 6)
         if self.flags["tours_creneaux"] >= 2:
@@ -1112,20 +1162,35 @@ class Conversation:
         #
         # `tours_creneaux`, lui, continue de compter : l'invariant n°6 (deux tours max)
         # n'est pas touché.
-        contraintes = [sorted(jours) if jours else None, moment]
+        contraintes = [sorted(jours) if jours else None, moment,
+                       sorted(dates) if dates else None]
         saut = (0 if self.flags.get("contraintes_proposees") != contraintes
                 else 2 * self.flags["tours_creneaux"])
         self.flags["contraintes_proposees"] = contraintes
         self._proposes = self.cal.get_slots(self.slots["prestation"], urgent, n=2,
-                                            skip=saut, jours=jours, moment=moment)
+                                            skip=saut, jours=jours, moment=moment,
+                                            dates=dates)
         self.flags["tours_creneaux"] += 1
+        # Le jour demandé est SATURÉ : on ne perd pas le rendez-vous pour autant. Avant
+        # R67, une contrainte impossible menait droit au repli « Julien vous rappellera » —
+        # un lead perdu parce que l'appelant avait exprimé une préférence.
+        if not self._proposes and (jours or dates or moment):
+            self._proposes = self.cal.get_slots(self.slots["prestation"], urgent, n=1)
+            if self._proposes:
+                self.flags["contraintes_proposees"] = contraintes
+                # verbatim : la phrase énonce une DATE (même règle que l'offre, R38)
+                return self._say(
+                    f"Je n'ai plus rien à ce moment-là. Le plus tôt que je peux vous "
+                    f"proposer, c'est {self._dit(self._proposes[0])}. Ça vous irait ?",
+                    verbatim=True)
         if not self._proposes:
             return self._sans_rdv()
         if len(self._proposes) == 1:
-            offre = f"Je peux vous proposer {self._proposes[0]['label']}. Ça vous irait ?"
+            offre = (f"Je peux vous proposer {self._dit(self._proposes[0])}. "
+                     f"Ça vous irait ?")
         else:
-            offre = (f"Je peux vous proposer {self._proposes[0]['label']}, "
-                     f"ou {self._proposes[1]['label']}. Lequel vous arrange ?")
+            offre = (f"Je peux vous proposer {self._dit(self._proposes[0])}, "
+                     f"ou {self._dit(self._proposes[1])}. Lequel vous arrange ?")
         # VERBATIM. `_reserver` portait déjà cette règle — « date et engagement jamais
         # réécrits » — mais elle n'avait pas été étendue à la PROPOSITION, qui est le même
         # acte : énoncer une date. Le 25/08, le formuleur a répondu « je n'ai pas de
@@ -1153,7 +1218,7 @@ class Conversation:
         self.flags["categorie"] = "rdv_reserve"
         # LA phrase du script : "réservé" + SMS de confirmation, jamais "confirmé"
         texte = self._say(
-            f"Parfait, je vous réserve {slot['label']}. Vous recevrez un SMS de "
+            f"Parfait, je vous réserve {self._dit(slot)}. Vous recevrez un SMS de "
             f"confirmation de {self._prenom} d'ici {delai} {heures}. "
             f"Si quoi que ce soit coince, on vous rappelle. Bonne journée !",
             verbatim=True)  # LA phrase du script : date et engagement jamais réécrits

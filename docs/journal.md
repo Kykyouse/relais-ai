@@ -22,7 +22,7 @@ point d'entrée du produit. Plus rien d'autre n'est bloqué côté code.
 
 ```bash
 cd proto
-python run_scenario.py                              # 69 tests, ~3 s, sans clé ni base
+python run_scenario.py                              # 71 tests, ~3 s, sans clé ni base
 python semer_artisans.py [--ecrire]                 # amorce la table `artisan`
 python run_depot_pg.py [--migrer]                   # contrat du port contre Supabase
 uvicorn serveur:app --port 8000                     # API HTTP
@@ -84,6 +84,8 @@ python run_llm_eval.py [--mock] [--n 3]             # éval appelant-simulé
 | **Les faits hors verbatim (R63)** | ✅ | mock, mutations 10/10 — **renversement : 8 questions rendues au formuleur** |
 | Numéro dicté chiffre par chiffre (R64) | ✅ | mock, mutations 3/4 (1 défense en profondeur, vérifiée) |
 | Révision déployée exposée par `/sante` (R65) | ✅ | mock, mutations 5/5 |
+| Créneau PRONONCÉ vs écrit (R66) | ✅ | mock, mutations 8/8 |
+| Un jour nommé est une contrainte (R67) | ✅ | mock, *idem* |
 | Identifiant d'appel imposé au dépôt (port) | ✅ | **contrat rejoué sur Supabase** |
 
 ## Ce qui est encore un double (et non un manque caché)
@@ -453,6 +455,70 @@ Trois mesures d'oreille, consignées comme données d'arbitrage :
    courtes, mais **à activer** (`stopSpeakingPlan`) : les tours verbatim longs
    (récapitulatif de RDV, consignes de sécurité) sont exactement ceux qu'un appelant
    pressé voudra couper. Décision réversible, à trancher à l'oreille.
+
+---
+
+## Session du 27/08/2026 (suite) — R66/R67 : « barre oblique », et le jour qui recule
+
+Geoffrey, après un appel : *« il dit vraiment "zéro huit H" et aussi les barres obliques, au
+secours. Il faut que je change de transcripteur pour ça ? »*
+
+**Non.** L'agent a dit « je vous réserve samedi 29 BARRE OBLIQUE 0 8 entre 0 9 H et
+11 heures » — ce n'était pas la transcription, c'était **notre libellé**, `samedi 29/08
+entre 09h et 11h`, lu littéralement par la synthèse. Exactement R58 pour le code postal :
+*ce qu'on écrit est ce qu'elle dit.*
+
+### R66 — un jumeau parlé, pas une réécriture
+
+Le libellé écrit part aussi dans les SMS, où « août » ferait basculer le message en UCS-2 —
+soixante-dix caractères au lieu de cent soixante (R23). Le mois en toutes lettres est bon
+pour l'oreille et coûteux pour l'écrit. **Une seule source de données, deux rendus** :
+`samedi 29 août entre 9 heures et 11 heures` à l'oral, `samedi 29/08 entre 09h et 11h` dans
+le SMS et sur les pages.
+
+Trois tests ont dû suivre : ils épinglaient le libellé ÉCRIT dans une réplique PARLÉE. C'est
+le bon sens de la correction — ce qu'on compare à ce que l'agent dit, c'est ce qui est dit.
+
+### R67 — l'appelant demande aujourd'hui, on lui propose samedi
+
+Le même appel, plus grave :
+
+    Agent : Je peux vous proposer demain entre 8 h et 10 h, ou demain entre 14 h et 16 h.
+    User  : Aujourd'hui,
+    Agent : Je peux vous proposer samedi 29 août…, ou lundi 31 août…
+
+**Deux jours plus LOIN que ce qu'on venait de proposer.** Trois causes empilées :
+
+1. « Aujourd'hui » n'était pas extrait comme disponibilité — le slot restait vide, donc
+   R61 n'avait rien à lire. R61 savait résoudre « demain » ; encore fallait-il que
+   quelqu'un le mette dans le slot. Le contrôleur le lit maintenant lui-même, et seulement
+   pendant le choix d'un créneau : ailleurs, « aujourd'hui c'est la catastrophe » décrit
+   une journée, pas une préférence.
+2. Faute de contrainte, le tour était lu comme « aucun des deux » : le calendrier
+   AVANÇAIT. Préciser sa préférence donnait l'inverse de ce qu'on demande.
+3. Et une fois la contrainte lue, elle était fausse en nature : **un jour relatif est une
+   DATE, pas un jour de la semaine.** À 17 h 30 il n'y avait plus rien ce jeudi-là, et
+   « aujourd'hui » résolu en « jeudi » proposait **jeudi 3 septembre**. Une semaine plus
+   tard. `get_slots` accepte désormais des dates bornantes.
+
+**Et un jour saturé ne fait plus perdre le rendez-vous** : au lieu du repli « Julien vous
+rappellera », l'agent dit « je n'ai plus rien à ce moment-là » et propose le plus tôt
+possible. Un lead perdu parce que l'appelant avait exprimé une préférence, c'était le pire
+des deux mondes.
+
+### Ce que les fixtures ont encore appris
+
+Mon montage de test ouvrait sur « une fuite d'eau dans la salle de bain » — que le mock
+classe en `devis_sdb`, donc NON urgente, donc sans créneau le jour même. Le test ne pouvait
+pas vérifier ce qu'il prétendait. **Une fixture doit rendre POSSIBLE ce qu'elle vérifie** —
+c'est la leçon des personas sous-spécifiés (T07, T15), appliquée à mes propres montages.
+
+Et deux mutations survivantes de plus, toutes deux équivalentes : le garde `hold` de `_s5`
+(code mort — `_s5` n'est jamais atteint avec un créneau bloqué, **sixième fois**) et le
+`break` des dates (un raccourci : le garde-fou des 21 jours arrête déjà la boucle). La
+distinction compte — l'un prétendait protéger, l'autre non.
+
+Suite : **71 PASS**. Mutations 8/8, éval mock 19/19, contrat Postgres rejoué.
 
 ---
 

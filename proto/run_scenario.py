@@ -2867,7 +2867,9 @@ def check_question_prix_creneau() -> bool:
         print(f"   pas de créneaux proposés : « {reponse} »")
         return False
     tours_avant = convo.flags["tours_creneaux"]
-    creneaux_avant = [s["label"] for s in convo._proposes]
+    # libellés PARLÉS (R66) : ce qu'on compare à la réplique, c'est ce qui est DIT.
+    # Le libellé écrit (« 29/08 », « 09h ») reste dans les SMS et les pages.
+    creneaux_avant = [s["label_parle"] for s in convo._proposes]
 
     # DEUX questions de prix d'affilée — exactement ce qui faisait perdre le RDV
     for i, question in enumerate(("Ça coûte combien en gros ?",
@@ -2883,9 +2885,9 @@ def check_question_prix_creneau() -> bool:
             return False
         # et les créneaux déjà proposés sont RAPPELÉS, pas remplacés : l'appelant doit
         # pouvoir répondre « le premier » sans que la liste ait changé sous ses pieds
-        if [s["label"] for s in convo._proposes] != creneaux_avant:
+        if [s["label_parle"] for s in convo._proposes] != creneaux_avant:
             print(f"   les créneaux ont changé pendant une question de prix : "
-                  f"{[s['label'] for s in convo._proposes]}")
+                  f"{[s['label_parle'] for s in convo._proposes]}")
             return False
         if creneaux_avant[0] not in reponse:
             print(f"   les créneaux ne sont pas rappelés : « {reponse} »")
@@ -3530,7 +3532,9 @@ def check_creneaux_verbatim() -> bool:
         print("   aucun créneau proposé par le contrôleur")
         return False
     dit = convo.transcript[-1][1]
-    label = convo._proposes[0]["label"]
+    # le libellé PARLÉ (R66) : la synthèse vocale lirait « 29/08 » comme « 29 barre
+    # oblique 08 » — entendu le 27/08. L'écrit reste pour les SMS et les pages.
+    label = convo._proposes[0]["label_parle"]
     if label not in dit:
         print(f"   le créneau {label!r} n'est pas prononcé tel quel : « {dit} »")
         return False
@@ -3542,13 +3546,13 @@ def check_creneaux_verbatim() -> bool:
     convo.process("Non, aucun des deux")
     if convo._proposes:
         dit = convo.transcript[-1][1]
-        if convo._proposes[0]["label"] not in dit:
+        if convo._proposes[0]["label_parle"] not in dit:
             print(f"   la reproposition n'est pas verbatim : « {dit} »")
             return False
 
     # (c) « rien de plus tôt » énonce AUSSI une date : même règle
     convo2 = jusqu_aux_creneaux(FormuleurMenteur())
-    premier = convo2._proposes[0]["label"]
+    premier = convo2._proposes[0]["label_parle"]
     convo2.process("Vous n'avez rien de plus tôt ?")
     dit = convo2.transcript[-1][1]
     if premier not in dit:
@@ -3567,6 +3571,219 @@ def check_creneaux_verbatim() -> bool:
     dit = convo3.process("Bonjour, j'ai un souci")
     if "marqueur" not in dit:
         print(f"   une question ordinaire ne passe plus par le formuleur : « {dit} »")
+        return False
+    return True
+
+
+def check_libelle_parle() -> bool:
+    """R66 : un créneau se PRONONCE, il ne s'affiche pas.
+
+    Appel réel du 27/08. L'agent a dit, mot pour mot :
+
+        « je vous réserve samedi 29 BARRE OBLIQUE 0 8 entre 0 9 H et 11 heures »
+
+    Geoffrey : « il dit vraiment "zéro huit H" et aussi les barres obliques, au secours.
+    Il faut que je change de transcripteur pour ça ? » Non — **ce n'était pas la
+    transcription, c'était notre libellé**, « samedi 29/08 entre 09h et 11h », lu
+    littéralement par la synthèse. Comme pour le code postal (R58), *ce qu'on écrit est ce
+    qu'elle dit*.
+
+    Un JUMEAU parlé plutôt qu'une réécriture : le libellé écrit part aussi dans les SMS, où
+    « août » ferait basculer le message en UCS-2 — soixante-dix caractères au lieu de cent
+    soixante (R23). Le mois en toutes lettres est bon pour l'oreille et coûteux pour
+    l'écrit. **Une seule source de données, deux rendus.**
+    """
+    import datetime as dt
+
+    from relais_proto.calendar_stub import libelle_creneau, libelle_parle
+    from relais_proto.engine import Conversation
+
+    aujourd_hui = dt.date(2026, 8, 27)          # jeudi
+    for d, de, a, ecrit, parle in (
+            (dt.date(2026, 8, 29), "09:00", "11:00",
+             "samedi 29/08 entre 09h et 11h",
+             "samedi 29 août entre 9 heures et 11 heures"),
+            (dt.date(2026, 8, 31), "08:00", "10:00",
+             "lundi 31/08 entre 08h et 10h",
+             "lundi 31 août entre 8 heures et 10 heures"),
+            # « aujourd'hui » et « demain » se disent déjà bien : on n'y touche pas
+            (aujourd_hui, "17:00", "19:00",
+             "aujourd'hui entre 17h et 19h",
+             "aujourd'hui entre 17 heures et 19 heures"),
+            (dt.date(2026, 8, 28), "14:00", "16:00",
+             "demain entre 14h et 16h",
+             "demain entre 14 heures et 16 heures"),
+            # le premier du mois se dit « premier »
+            (dt.date(2026, 9, 1), "08:00", "10:00",
+             "mardi 01/09 entre 08h et 10h",
+             "mardi 1er septembre entre 8 heures et 10 heures")):
+        vu_e = libelle_creneau(d, de, a, aujourd_hui)
+        vu_p = libelle_parle(d, de, a, aujourd_hui)
+        if vu_e != ecrit:
+            print(f"   libellé ÉCRIT modifié : {vu_e!r} au lieu de {ecrit!r}")
+            return False
+        if vu_p != parle:
+            print(f"   libellé PARLÉ : {vu_p!r} au lieu de {parle!r}")
+            return False
+
+    # aucune barre oblique, aucun zéro de cadrage dans ce qui est prononcé
+    parle = libelle_parle(dt.date(2026, 8, 29), "09:00", "11:00", aujourd_hui)
+    for interdit in ("/", "09h", "08h", "0 8"):
+        if interdit in parle:
+            print(f"   « {interdit} » figure encore dans le libellé parlé : « {parle} »")
+            return False
+
+    # (b) DE BOUT EN BOUT : l'agent prononce le libellé parlé, le SMS garde l'écrit
+    convo = Conversation(CFG, MockLLM(),
+                         CalendarStub(CFG, now=dt.datetime(2026, 8, 27, 15, 30,
+                                                           tzinfo=dt.UTC)))
+    convo.open()
+    for ligne in ("J'ai une fuite d'eau dans la salle de bain", "Nogent-sur-Marne 94130",
+                  "Dupont, 06 06 30 30 11", "oui"):
+        offre = convo.process(ligne)
+    if "/" in offre or "h et" in offre:
+        print(f"   l'offre parlée contient encore de l'écrit : « {offre} »")
+        return False
+    resa = convo.process("le premier")
+    if "/" in resa:
+        print(f"   la réservation prononcée contient une barre oblique : « {resa} »")
+        return False
+    # ...et le créneau RÉSERVÉ garde son libellé écrit, celui qui part en SMS
+    if "/" not in convo.flags["hold"]["label"] and "aujourd'hui" not in \
+            convo.flags["hold"]["label"] and "demain" not in convo.flags["hold"]["label"]:
+        print(f"   le libellé écrit a été perdu : {convo.flags['hold']['label']!r}")
+        return False
+    return True
+
+
+def check_jour_nomme_est_une_contrainte() -> bool:
+    """R67 : un jour NOMMÉ en réponse à une proposition est une contrainte, pas un refus.
+
+    Appel réel du 27/08 :
+
+        Agent : Je peux vous proposer demain entre 8 h et 10 h, ou demain entre 14 h et 16 h.
+        User  : Aujourd'hui,
+        Agent : Je peux vous proposer samedi 29 août entre 9 h et 11 h, ou lundi 31 août…
+
+    L'appelant demande **aujourd'hui** et on l'envoie à **samedi**. Deux jours plus LOIN
+    que ce qu'on venait de lui proposer.
+
+    Deux causes empilées :
+
+    1. « Aujourd'hui » n'était pas extrait comme disponibilité — le slot restait vide, donc
+       `_contraintes_dispo` (R61) n'avait rien à lire. R61 savait résoudre « demain » en
+       jour de la semaine, mais encore fallait-il que quelqu'un le mette dans le slot.
+    2. Et faute de contrainte, le contrôleur a lu ce tour comme « aucun des deux » : il a
+       AVANCÉ dans le calendrier. Un appelant qui précise sa préférence obtient donc
+       l'inverse de ce qu'il demande.
+
+    Même leçon que R47 et R64 : ce que l'appelant a dit se lit dans le CONTRÔLEUR, sans
+    dépendre de l'humeur d'un extracteur. Ici la lecture est cantonnée au moment où l'on
+    parle de créneaux — ailleurs, « aujourd'hui c'est la catastrophe » n'est pas une
+    disponibilité.
+    """
+    import datetime as dt
+
+    from relais_proto.engine import Conversation
+    from relais_proto import temps
+
+    # jeudi 27/08/2026 — deux heures d'appel, parce qu'elles ne racontent pas la même
+    # chose : à 9 h la journée a encore de la place, à 17 h 30 elle n'en a plus.
+    MATIN = dt.datetime(2026, 8, 27, 7, 0, tzinfo=dt.UTC)     # 9 h à Paris
+    APPEL = dt.datetime(2026, 8, 27, 15, 30, tzinfo=dt.UTC)   # 17 h 30 — l'heure réelle
+    local = temps.en_local(APPEL, CFG)
+
+    def jusqu_aux_creneaux(quand=None):
+        convo = Conversation(CFG, MockLLM(), CalendarStub(CFG, now=quand or APPEL))
+        convo.open()
+        # « sous l'évier » et non « salle de bain » : le mock classe la seconde en
+        # `devis_sdb`, donc NON urgente, et il n'y a alors aucun creneau le jour meme —
+        # le montage ne testerait plus rien. (Meme piege que les personas
+        # sous-specifies : une fixture doit rendre possible ce qu'elle verifie.)
+        for ligne in ("J'ai une fuite sous l'évier, c'est urgent",
+                      "Nogent-sur-Marne 94130", "Dupont, 06 06 30 30 11", "oui"):
+            convo.process(ligne)
+        return convo
+
+    # (a) « Aujourd'hui » quand la journée a encore de la place : on y reste
+    convo = jusqu_aux_creneaux(MATIN)
+    reponse = convo.process("Aujourd'hui")
+    if convo.slots["disponibilites"] is None:
+        print("   « Aujourd'hui » n'est pas lu comme une disponibilité")
+        return False
+    if not convo._proposes:
+        print(f"   plus aucun créneau après « Aujourd'hui » : « {reponse} »")
+        return False
+    ce_jour = temps.en_local(MATIN, CFG).date().isoformat()
+    for creneau in convo._proposes:
+        if creneau["date"] != ce_jour:
+            print(f"   « Aujourd'hui » propose {creneau['label']} "
+                  f"({creneau['date']}, attendu {ce_jour})")
+            return False
+
+    # (a-bis) LE CAS RÉEL : la journée est saturée. On ne propose SURTOUT pas le même jour
+    # de la semaine suivante — « aujourd'hui » ne peut pas vouloir dire jeudi prochain — et
+    # on ne perd pas le rendez-vous : on offre le plus tôt possible.
+    convo = jusqu_aux_creneaux()
+    reponse = convo.process("Aujourd'hui")
+    if not convo._proposes:
+        print(f"   jour saturé : le rendez-vous est perdu — « {reponse} »")
+        return False
+    saut_semaine = (dt.date.fromisoformat(local.date().isoformat())
+                    + dt.timedelta(days=7)).isoformat()
+    for creneau in convo._proposes:
+        if creneau["date"] >= saut_semaine:
+            print(f"   « Aujourd'hui » saturé propose {creneau['label']} — une semaine "
+                  f"plus tard")
+            return False
+    if "plus rien" not in reponse.lower():
+        print(f"   on ne dit pas à l'appelant que son jour est complet : « {reponse} »")
+        return False
+
+    # (b) un NOM DE JOUR fait pareil
+    convo2 = jusqu_aux_creneaux()
+    convo2.process("plutôt samedi si c'est possible")
+    if not convo2._proposes:
+        print("   plus aucun créneau après « samedi »")
+        return False
+    for creneau in convo2._proposes:
+        jour = dt.date.fromisoformat(creneau["date"]).weekday()
+        if jour != 5:
+            print(f"   « samedi » propose {creneau['label']} (jour {jour})")
+            return False
+
+    # (c) ce qui N'EST PAS un jour continue de faire avancer le calendrier : un vrai
+    # refus doit toujours donner d'autres créneaux (invariant n°6, deux tours max)
+    convo3 = jusqu_aux_creneaux()
+    avant3 = [c["label"] for c in convo3._proposes]
+    convo3.process("non, aucun des deux")
+    if not convo3._proposes:
+        print("   un refus ne propose plus rien")
+        return False
+    if [c["label"] for c in convo3._proposes] == avant3:
+        print("   un refus ne fait plus avancer le calendrier")
+        return False
+
+    # (d) et un CHOIX reste un choix : « le premier » ne devient pas une contrainte
+    convo4 = jusqu_aux_creneaux()
+    attendu = convo4._proposes[0]["label"]
+    convo4.process("le premier")
+    if convo4.flags["hold"] is None:
+        print("   « le premier » ne réserve plus")
+        return False
+    if convo4.flags["hold"]["label"] != attendu:
+        print(f"   « le premier » réserve {convo4.flags['hold']['label']!r} "
+              f"au lieu de {attendu!r}")
+        return False
+
+    # (e) hors du choix de créneau, un jour nommé n'est PAS une disponibilité :
+    # « aujourd'hui c'est la catastrophe » décrit une journée, pas une préférence
+    convo5 = Conversation(CFG, MockLLM(), CalendarStub(CFG, now=APPEL))
+    convo5.open()
+    convo5.process("aujourd'hui c'est la catastrophe, j'ai une fuite d'eau")
+    if convo5.slots["disponibilites"] is not None:
+        print(f"   un jour cité hors du choix de créneau devient une contrainte : "
+              f"{convo5.slots['disponibilites']!r}")
         return False
     return True
 
@@ -4113,7 +4330,10 @@ def check_dispo_demain_aujourdhui() -> bool:
     def contraintes(dispo):
         convo = Conversation(CFG, MockLLM(), CalendarStub(CFG, now=LUNDI_9H))
         convo.slots["disponibilites"] = dispo
-        return convo._contraintes_dispo()
+        # depuis R67, un triplet : les jours relatifs portent AUSSI une date, parce qu'un
+        # jour relatif désigne UN jour et non tous les jeudis
+        jours, moment, _dates = convo._contraintes_dispo()
+        return jours, moment
 
     for dispo, jours_attendus, moment_attendu in (
             ("n'importe quand dans la journée de demain", {1}, None),
@@ -4152,7 +4372,7 @@ def check_dispo_demain_aujourdhui() -> bool:
         return False
     convo_nuit = Conversation(CFG, MockLLM(), CalendarStub(CFG, now=nuit))
     convo_nuit.slots["disponibilites"] = "demain"
-    jours_nuit, _ = convo_nuit._contraintes_dispo()
+    jours_nuit, _, _ = convo_nuit._contraintes_dispo()
     if jours_nuit != {2}:                                          # mercredi
         print(f"   appel de nuit : « demain » → {jours_nuit} au lieu de "
               f"{{2}} (mercredi) — calculé en UTC et non en heure de pendule")
@@ -6926,13 +7146,13 @@ def check_contrainte_prime_sur_plus_tot() -> bool:
     # (b) SANS changement de contrainte, le raccourci garde son rôle : on ne doit pas
     # avancer dans le calendrier quand l'appelant demande plus tôt (bug T01/R09-LLM).
     convo2 = jusqu_aux_creneaux()
-    premier = convo2._proposes[0]["label"]
+    premier = convo2._proposes[0]["label_parle"]      # ce qui est PRONONCÉ (R66)
     reponse = convo2._s5({"veut_plus_tot": True})
     if premier not in reponse:
         print(f"   « plus tôt » sans contrainte nouvelle : le premier créneau {premier!r} "
               f"a disparu — « {reponse} »")
         return False
-    if [s["label"] for s in convo2._proposes][0] != premier:
+    if [s["label_parle"] for s in convo2._proposes][0] != premier:
         print("   le calendrier a avancé alors que l'appelant voulait plus tôt")
         return False
     return True
@@ -7430,6 +7650,22 @@ def run() -> int:
     if check_version_deployee():
         print("   → la révision qui tourne est exposée par /sante et annoncée au "
               "démarrage : dater un déploiement n'est plus une enquête : ✅ PASS")
+    else:
+        print("   → ❌ FAIL")
+        echecs += 1
+
+    print(f"\n──── R66_libelle_parle ────")
+    if check_libelle_parle():
+        print("   → un créneau se prononce (« samedi 29 août entre 9 heures ») et "
+              "s'écrit autrement dans le SMS : ✅ PASS")
+    else:
+        print("   → ❌ FAIL")
+        echecs += 1
+
+    print(f"\n──── R67_jour_nomme_contrainte ────")
+    if check_jour_nomme_est_une_contrainte():
+        print("   → un jour nommé en réponse à une proposition contraint le "
+              "calendrier au lieu de le faire avancer : ✅ PASS")
     else:
         print("   → ❌ FAIL")
         echecs += 1
