@@ -22,7 +22,7 @@ point d'entrée du produit. Plus rien d'autre n'est bloqué côté code.
 
 ```bash
 cd proto
-python run_scenario.py                              # 67 tests, ~3 s, sans clé ni base
+python run_scenario.py                              # 68 tests, ~3 s, sans clé ni base
 python semer_artisans.py [--ecrire]                 # amorce la table `artisan`
 python run_depot_pg.py [--migrer]                   # contrat du port contre Supabase
 uvicorn serveur:app --port 8000                     # API HTTP
@@ -82,6 +82,7 @@ python run_llm_eval.py [--mock] [--n 3]             # éval appelant-simulé
 | « demain » / « aujourd'hui » comme contrainte (R61) | ✅ | mock, mutations 6/6 |
 | Relance du numéro qui varie (R62) | ✅ | mock, mutations 5/5 — **premières phrases-tampons** |
 | **Les faits hors verbatim (R63)** | ✅ | mock, mutations 10/10 — **renversement : 8 questions rendues au formuleur** |
+| Numéro dicté chiffre par chiffre (R64) | ✅ | mock, mutations 3/4 (1 défense en profondeur, vérifiée) |
 | Identifiant d'appel imposé au dépôt (port) | ✅ | **contrat rejoué sur Supabase** |
 
 ## Ce qui est encore un double (et non un manque caché)
@@ -451,6 +452,55 @@ Trois mesures d'oreille, consignées comme données d'arbitrage :
    courtes, mais **à activer** (`stopSpeakingPlan`) : les tours verbatim longs
    (récapitulatif de RDV, consignes de sécurité) sont exactement ceux qu'un appelant
    pressé voudra couper. Décision réversible, à trancher à l'oreille.
+
+---
+
+## Session du 27/08/2026 — R64 : la seule réponse qu'on ne savait pas lire
+
+L'appel le plus absurde de la série. L'appelant dicte son numéro chiffre par chiffre —
+**ce que l'agent venait précisément de lui demander** :
+
+    Agent : Dites-moi les dix chiffres d'un seul coup, sans pause…
+    User  : 0 6 0 6 3 0 3 0 1 1.
+    Agent : Dites-moi les dix chiffres d'un seul coup, sans pause…
+    User  : 0 6 0 6 3 0 3 0 1.
+    Agent : Dites-moi les dix chiffres d'un seul coup, sans pause…
+
+Dix chiffres, valides, refusés — avec « ce numéro me semble **incomplet** ».
+
+Cause : la reconnaissance reposait sur une expression régulière qui présuppose des PAIRES
+(`0\d` puis quatre groupes de deux). « 0 6 0 6 3 0 3 0 1 1 » n'en a pas ; « 0 6. 0 6 30.
+30 11 » non plus. **La réponse à notre propre consigne était la seule que nous ne savions
+pas lire.**
+
+Même leçon que R47 pour le code postal : *le découpage appartient à celui qui parle*. Le
+contrôleur lit les chiffres, pas leur mise en forme — sur des suites MAXIMALES, donc sans
+jamais tronquer (R55), et `_numero_fr` reste le juge (R42).
+
+### Deux observations, une seule à corriger
+
+Le transcript montrait aussi une relance reformulée en « les **10** chiffres » — un chiffre
+dans une réplique formulée. Vérifié : **R63 l'attrape déjà**. Cet appel tournait sur l'arbre
+d'avant. Il fallait le mesurer plutôt que de corriger deux fois la même chose.
+
+### Une décision épinglée sans être déduite
+
+Deux numéros valides dans un même tour : le PREMIER gagne, comme `re.search` dans
+l'extracteur dont ce chemin est le filet. **Je n'ai aucune observation réelle de ce cas.**
+Le test épingle donc le comportement actuel sans prétendre à une règle — sans lui, le choix
+basculerait en silence au prochain refactor ; avec lui, il faudra le changer exprès. Mon
+premier jet inventait la règle inverse (« le dernier gagne, c'est une correction ») à partir
+d'un cas de code postal qui, lui, se passait sur DEUX tours. Ce n'était pas la même chose.
+
+### Trois bancs de mutation mal visés
+
+Une mutation de R48 survivait depuis R56 : son ancre `commune_ratees >= 2` désigne désormais
+l'ESCALADE (« les cinq chiffres ») et non la borne. Elle survivait en retirant l'escalade,
+que ce test-là ne regarde pas. La borne, visée correctement, est tuée. **Une mutation mal
+visée ne prouve rien — et elle rassure à tort**, ce qui est pire que pas de mutation.
+
+Suite : **68 PASS**. Mutations 3/4 (la survivante est la défense en profondeur de `_merge`,
+vérifiée : `060630301`, `061015476879` et `1234567890` sont tous refusés à l'entrée du slot).
 
 ---
 

@@ -3571,6 +3571,118 @@ def check_creneaux_verbatim() -> bool:
     return True
 
 
+def check_numero_dicte_chiffre_par_chiffre() -> bool:
+    """R64 : dix chiffres dans la phrase font un numéro, quelle que soit leur découpe.
+
+    Appel réel du 26/08, et le plus absurde de la série. L'appelant dicte son numéro
+    chiffre par chiffre — ce que l'agent venait précisément de lui demander :
+
+        Agent : Dites-moi les dix chiffres d'un seul coup, sans pause…
+        User  : 0 6 0 6 3 0 3 0 1 1.
+        Agent : Dites-moi les dix chiffres d'un seul coup, sans pause…
+        User  : 0 6 0 6 3 0 3 0 1.
+        Agent : Dites-moi les dix chiffres d'un seul coup, sans pause…
+
+    **Dix chiffres, valides, refusés.** Et le refus disait « ce numéro me semble
+    incomplet » — sur un numéro complet.
+
+    Cause : la reconnaissance d'un numéro reposait sur une expression régulière qui
+    présuppose la découpe en PAIRES (`0\\d` puis quatre groupes de deux). « 0 6 0 6 3 0 3
+    0 1 1 » n'a pas de paires ; « 0 6. 0 6 30. 30 11 » non plus. Or c'est exactement ce
+    qu'on obtient quand on demande à quelqu'un d'épeler — donc la réponse à notre propre
+    consigne était la seule que nous ne savions pas lire.
+
+    Même leçon que R47 pour le code postal : **le découpage appartient à celui qui parle**,
+    et le contrôleur doit lire les chiffres, pas leur mise en forme. Ce qui compte est
+    qu'il y en ait dix et qu'ils forment un numéro français — c'est `_numero_fr` qui juge,
+    comme toujours.
+    """
+    from relais_proto.engine import Conversation
+
+    def jusqu_au_numero(llm=None):
+        convo = Conversation(CFG, llm or MockLLM(), CalendarStub(CFG, now=LUNDI_9H))
+        convo.open()
+        for ligne in ("J'ai une fuite d'eau dans la salle de bain",
+                      "Nogent-sur-Marne 94130", "Dupont"):
+            convo.process(ligne)
+        return convo
+
+    # (a) toutes les découpes d'un même numéro mènent au même slot
+    for dictee in ("0 6 0 6 3 0 3 0 1 1.",              # chiffre par chiffre
+                   "0 6. 0 6 30. 30 11.",               # la dictée du 26/08
+                   "06 06 30 30 11",                    # paires
+                   "06.06.30.30.11",
+                   "06-06-30-30-11",
+                   "0606303011",                        # d'un bloc
+                   "mon numéro c'est le 0 6 0 6 3 0 3 0 1 1"):
+        convo = jusqu_au_numero()
+        dit = convo.process(dictee)
+        if convo.slots["telephone_rappel"] != "0606303011":
+            print(f"   {dictee!r} → {convo.slots['telephone_rappel']!r} "
+                  f"(attendu '0606303011') — « {dit} »")
+            return False
+        # ...et le numéro est relu, en paires, comme on le prononce
+        if "06 06 30 30 11" not in dit:
+            print(f"   le numéro n'est pas relu en paires : « {dit} »")
+            return False
+
+    # (b) ce qui n'est PAS un numéro reste refusé — R42, R50 et R55 tiennent
+    for dictee, raison in (("0 6 0 6 3 0 3 0 1", "neuf chiffres"),
+                           ("0 6 1 0 1 5 4 7 6 8 7 9", "douze chiffres"),
+                           ("1 2 3 4 5 6 7 8 9 0", "ne commence pas par 0")):
+        convo = jusqu_au_numero()
+        convo.process(dictee)
+        if convo.slots["telephone_rappel"] is not None:
+            print(f"   {raison} accepté : {dictee!r} → "
+                  f"{convo.slots['telephone_rappel']!r}")
+            return False
+
+    # (b-bis) DEUX numéros valides dans un tour : le PREMIER gagne.
+    #
+    # ⚠️ Ce point épingle le comportement ACTUEL, il ne déduit pas une règle. Je n'ai aucune
+    # observation réelle de ce cas, et rien ne dit que le premier vaut mieux que le
+    # dernier. Sans ce test, le choix pourrait basculer en silence au prochain refactor ;
+    # avec lui, il faudra le changer exprès.
+    convo = jusqu_au_numero()
+    # dictee chiffre par chiffre : l'extracteur echoue, donc c'est bien le chemin des
+    # suites de chiffres qui est exerce (avec des paires, la regex du mock prend le premier
+    # et ce chemin ne tourne pas du tout)
+    convo.process("mes numéros sont le 0 6 1 2 3 4 5 6 7 8 et le 0 6 9 8 7 6 5 4 3 2")
+    if convo.slots["telephone_rappel"] != "0612345678":
+        print(f"   deux numéros dans un tour : {convo.slots['telephone_rappel']!r} "
+              f"au lieu du premier")
+        return False
+
+    # (c) un CODE POSTAL dans la même phrase ne fabrique pas un numéro, et réciproquement
+    convo = Conversation(CFG, MockLLM(), CalendarStub(CFG, now=LUNDI_9H))
+    convo.open()
+    convo.process("J'ai une fuite d'eau dans la salle de bain")
+    convo.process("Nogent-sur-Marne 94130")
+    convo.process("Dupont, 0 6 0 6 3 0 3 0 1 1")
+    if convo.slots["code_postal"] != "94130":
+        print(f"   le code postal a été écrasé : {convo.slots['code_postal']!r}")
+        return False
+    if convo.slots["telephone_rappel"] != "0606303011":
+        print(f"   le numéro dicté n'est pas retenu : "
+              f"{convo.slots['telephone_rappel']!r}")
+        return False
+
+    # (d) DE BOUT EN BOUT : le déroulé de l'appel du 26/08 aboutit désormais à un RDV
+    convo = Conversation(CFG, MockLLM(), CalendarStub(CFG, now=LUNDI_9H))
+    convo.open()
+    convo.process("Une fuite dans la salle de bain. J'habite à Nogent-sur-Marne "
+                  "et mon numéro est le 0 6. 0 6 30. 30 11.")
+    if convo.slots["telephone_rappel"] != "0606303011":
+        print(f"   le numéro donné dans la PREMIÈRE phrase est perdu : "
+              f"{convo.slots['telephone_rappel']!r}")
+        return False
+    convo.process("oui c'est bien ça")
+    if not convo._proposes:
+        print("   aucun créneau proposé après confirmation du numéro")
+        return False
+    return True
+
+
 def check_faits_hors_verbatim() -> bool:
     """R63 : le contrôleur ÉNONCE les faits, le formuleur DEMANDE. Renversement du 26/08.
 
@@ -7203,6 +7315,14 @@ def run() -> int:
         print("   → le contrôleur énonce les faits, le formuleur demande : ni "
               "chiffre, ni jour, ni lieu hors verbatim — et les questions lui "
               "sont rendues : ✅ PASS")
+    else:
+        print("   → ❌ FAIL")
+        echecs += 1
+
+    print(f"\n──── R64_numero_chiffre_par_chiffre ────")
+    if check_numero_dicte_chiffre_par_chiffre():
+        print("   → dix chiffres font un numéro quelle que soit leur découpe, et "
+              "ce qui n'en est pas un reste refusé : ✅ PASS")
     else:
         print("   → ❌ FAIL")
         echecs += 1

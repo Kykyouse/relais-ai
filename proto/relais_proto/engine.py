@@ -13,6 +13,19 @@ from __future__ import annotations
 
 from . import communes, temps
 from .calendar_stub import CalendarStub
+
+
+def _re_chiffres():
+    """Les suites de chiffres d'un texte, séparateurs d'écriture compris.
+
+    Une SUITE est ce qu'on prononce d'un trait : « 0 6. 0 6 30. 30 11 » en est une seule.
+    La virgule n'y figure pas — elle sépare des choses, elle ne les compose pas (R55).
+    Partagée par la lecture d'un numéro (R64) et par la détection d'une troncature (R55) :
+    deux définitions divergeraient, et c'est précisément sur cette découpe que les deux
+    raisonnent.
+    """
+    import re as _re
+    return _re.compile(r"\d[\d\s.\-]*\d|\d")
 from .guards import check_output, safe_fallback
 from .states import EMPTY_SLOTS, State, URGENT_PRESTATIONS
 
@@ -98,6 +111,7 @@ class Conversation:
 
     @staticmethod
     def _numero_suspect(texte: str, numero: str, cp: str | None = None) -> bool:
+        # (la découpe des suites est partagée avec `_chiffres_dits` : cf. `_re_chiffres`)
         """Vrai si `numero` a l'air TRONQUÉ de ce qui a été dit dans `texte`.
 
         La limite de tout contrôle de FORME (`_numero_fr`) : il ne dit rien de la
@@ -118,10 +132,8 @@ class Conversation:
         Exception : un code postal prononcé juste après le numéro allonge la suite sans
         rien tronquer. Les chiffres en excès sont alors exactement le code postal.
         """
-        import re as _re
-
-        for suite in _re.findall(r"\d[\d\s.\-]*\d|\d", texte or ""):
-            chiffres = _re.sub(r"\D", "", suite)
+        for suite in _re_chiffres().findall(texte or ""):
+            chiffres = "".join(c for c in suite if c.isdigit())
             if len(chiffres) > len(numero) and chiffres.startswith(numero):
                 if cp and chiffres[len(numero):] == cp:
                     continue
@@ -224,6 +236,36 @@ class Conversation:
         rendu = self._numero_fr(extracted.get("telephone_rappel"))
         if rendu and self._numero_suspect(texte, rendu, extracted.get("code_postal")):
             extracted.pop("telephone_rappel", None)
+        if not extracted.get("telephone_rappel"):
+            # LES CHIFFRES ÉCRITS, quelle que soit leur découpe. La reconnaissance d'un
+            # numéro reposait sur une expression régulière qui présuppose des PAIRES
+            # (`0\d` puis quatre groupes de deux). « 0 6 0 6 3 0 3 0 1 1 » n'en a pas ;
+            # « 0 6. 0 6 30. 30 11 » non plus.
+            #
+            # Or c'est exactement ce qu'on obtient quand on demande à quelqu'un d'épeler —
+            # donc la réponse à NOTRE PROPRE consigne (« dites-moi les dix chiffres d'un
+            # seul coup ») était la seule qu'on ne savait pas lire. Le 26/08, un appelant
+            # a dicté dix chiffres valides quatre fois de suite, et s'est entendu répondre
+            # « ce numéro me semble incomplet ».
+            #
+            # Même leçon que R47 pour le code postal : **le découpage appartient à celui
+            # qui parle.** Le contrôleur lit les chiffres, pas leur mise en forme — et
+            # `_numero_fr` reste le juge (R42), sur des suites MAXIMALES, donc sans jamais
+            # tronquer (R55).
+            # Le PREMIER numéro valide gagne — comme `re.search` dans l'extracteur, dont
+            # ce chemin est le filet. Deux numéros valides dans un même tour sont rares, et
+            # je n'ai AUCUNE observation pour trancher entre le premier et le dernier : une
+            # reprise dans la même phrase (« … ah non pardon, le … ») passe de toute façon
+            # par la branche de confirmation de `_s4`, qui l'entend comme un refus.
+            #
+            # Le test épingle donc le comportement ACTUEL, pas une règle qu'on aurait
+            # déduite. Le jour où un appel réel montrera l'autre cas, il faudra le changer
+            # exprès — et le test le dira.
+            for suite in _re_chiffres().findall(texte or ""):
+                candidat = self._numero_fr("".join(c for c in suite if c.isdigit()))
+                if candidat:
+                    extracted["telephone_rappel"] = candidat
+                    break
         if not extracted.get("telephone_rappel"):
             tel = suite_de_chiffres(texte, 10)
             # `_numero_fr` reste le juge (R42) : on lui soumet un candidat, on ne décide
