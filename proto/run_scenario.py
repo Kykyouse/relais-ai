@@ -3575,6 +3575,169 @@ def check_creneaux_verbatim() -> bool:
     return True
 
 
+def check_transcription_qui_se_precise() -> bool:
+    """R70 : une transcription qui se précise ne consomme pas un tour de parole.
+
+    APPEL RÉEL du 27/08, le premier passé avec la sonde des disponibilités allumée. Elle
+    a écrit ceci, et c'est le journal qui a donné le diagnostic en cinq lignes :
+
+        t1  S2_LOCALISER   « Bonjour, j'ai une fuite dans la salle de bain. »
+        t2  S4_IDENTITE    « … Je suis à Nogent-sur-Marne, et mon numéro est le 0 6 »
+        t3  S4_IDENTITE    « … le 0 6 0 6 »
+        t4  S4_IDENTITE    « … le 0 6 0 6 30 »
+        t5  S11_CLOTURE    « … le 0 6 0 6 30 11. »
+
+    Geoffrey a dit UNE phrase. Le contrôleur a compté CINQ tours, puis a raccroché :
+    « Je transmets tout ça à Julien — il vous rappelle sous 2 heures. Bonne journée ! »
+
+    Le mécanisme, mesuré et non déduit : la plateforme envoie la transcription plusieurs
+    fois en la précisant. R59 a établi qu'un texte qui s'allonge n'est PAS un rejeu — il
+    portait la commune, et la jeter avait coûté un client en zone le 26/08. Mais le
+    remède traitait la version affinée comme un tour NOUVEAU : `convo.process()` avance
+    la machine à états et incrémente les compteurs. Chaque affinage portait des chiffres
+    (« 0 6 », « 0 6 0 6 », « 0 6 0 6 30 ») ; `_s4` y a vu trois numéros incomplets
+    successifs, et à trois il appelle `_sans_rdv()`.
+
+    Autrement dit : **le seul appelant qui a tout dit du premier coup est celui que
+    l'agent a raccroché.** Plus il parlait clairement, plus la transcription se précisait
+    par petits pas, et plus vite il épuisait son quota.
+
+    Ce que ce test verrouille :
+
+    1. une phrase = UN tour, quel que soit le nombre d'affinages ;
+    2. R59 tient toujours — la commune arrivée dans un affinage est bien acquise ;
+    3. un tour RÉELLEMENT nouveau continue d'avancer (sans quoi le correctif rendrait
+       l'agent sourd, ce qui serait pire que le défaut qu'il corrige).
+    """
+    try:
+        from fastapi.testclient import TestClient
+    except ImportError:
+        print("   fastapi/httpx absents : pip install -r requirements.txt")
+        return False
+
+    from relais_proto.api import creer_app
+    from relais_proto.registre import Artisan, Registre, empreinte as emp_token
+
+    SECRET = "secret-voix"
+    APPEL = "01a04493-a16d-7b0e-9c4f-1d2e3f4a5b6c"
+    AUTH = {"Authorization": f"Bearer {SECRET}"}
+
+    registre = Registre([Artisan("art-dupont", "+33189701234",
+                                 emp_token("tok"), CFG)], emp_token(SECRET))
+    depot = DepotMemoire()
+    app = creer_app(depot, registre, MockLLM, lambda: LUNDI_9H,
+                    voix_artisan_defaut="art-dupont")
+
+    def charge(textes):
+        """La plateforme renvoie tout l'historique ; ici UN seul message utilisateur,
+        celui qui se précise d'une requête à l'autre."""
+        return {"model": "gpt-4", "stream": True,
+                "messages": [{"role": "system", "content": "You are Riley."}]
+                            + [{"role": "user", "content": t} for t in textes],
+                "call": {"id": APPEL, "type": "webCall"}}
+
+    def dire(client, textes):
+        r = client.post("/voix/vapi/chat/completions", json=charge(textes), headers=AUTH)
+        if r.status_code != 200:
+            return None
+        morceaux = []
+        for ligne in r.text.splitlines():
+            if ligne.startswith("data: ") and ligne[6:].strip() != "[DONE]":
+                bloc = json.loads(ligne[6:])
+                morceaux.append(bloc["choices"][0].get("delta", {}).get("content") or "")
+        return "".join(morceaux)
+
+    # les cinq transcriptions, telles que la sonde les a enregistrées
+    DEBUT = "Bonjour, j'ai une fuite dans la salle de bain."
+    SUITE = " Je suis à Nogent-sur-Marne, et mon numéro est le 0 6"
+    AFFINAGES = [DEBUT, DEBUT + SUITE, DEBUT + SUITE + " 0 6",
+                 DEBUT + SUITE + " 0 6 30", DEBUT + SUITE + " 0 6 30 11."]
+
+    with TestClient(app) as c:
+        if dire(c, []) is None:
+            print("   l'ouverture échoue")
+            return False
+        derniere = None
+        for texte in AFFINAGES:
+            derniere = dire(c, [texte])
+            if derniere is None:
+                print(f"   la requête échoue sur « …{texte[-20:]} »")
+                return False
+
+        etat = depot.appel(APPEL).etat_conversation
+        clients = [t for r, t in etat["transcript"] if r == "client"]
+
+        # (1) UNE phrase, UN tour. C'est tout le défaut : cinq requêtes pour une phrase.
+        if len(clients) != 1:
+            print(f"   {len(clients)} tours client pour une seule phrase : {clients}")
+            return False
+        # et c'est la version la PLUS COMPLÈTE qui est retenue, pas la première
+        if clients[0] != AFFINAGES[-1]:
+            print(f"   le tour retenu n'est pas la transcription finale : {clients[0]!r}")
+            return False
+
+        # (2) l'appel n'est pas raccroché, et le compteur n'a pas été brûlé par les
+        # affinages. Le numéro dicté est réellement incomplet (huit chiffres : la
+        # transcription a perdu un « 30 ») — une relance est donc juste, trois non.
+        if etat["state"] == "S11":
+            print(f"   l'agent a raccroché : « {derniere} »")
+            return False
+        if etat["flags"].get("tel_incomplets", 0) > 1:
+            print(f"   compteur brûlé par les affinages : "
+                  f"{etat['flags'].get('tel_incomplets')}")
+            return False
+
+        # (3) R59 TIENT : la commune n'est arrivée qu'au deuxième affinage. Si le
+        # correctif la perdait, il rejouerait le défaut qui a coûté un client le 26/08.
+        if not (etat["slots"].get("commune") or "").lower().startswith("nogent"):
+            print(f"   la commune de l'affinage est perdue : "
+                  f"{etat['slots'].get('commune')!r}")
+            return False
+
+        # (4) un tour RÉELLEMENT nouveau avance encore. Un correctif qui rendrait l'agent
+        # sourd aux tours suivants serait pire que le défaut corrigé.
+        avant = len([t for r, t in etat["transcript"] if r == "client"])
+        # Volontairement PLUS LONG que le dernier affinage : ce qui distingue un tour neuf
+        # d'un affinage, c'est le nombre de messages, jamais la longueur du texte. Avec un
+        # tour plus court, les deux mutations qui confondent les deux cas passaient
+        # inaperçues — le test ne pouvait pas les voir.
+        NEUF = ("Alors mon nom c'est Dupont, et je vous redonne mon numéro en entier "
+                "cette fois : 06 06 30 30 11, désolé pour la confusion.")
+        if len(NEUF) <= len(AFFINAGES[-1]):
+            print("   fixture : le tour neuf doit être plus long que l'affinage")
+            return False
+        if dire(c, [AFFINAGES[-1], NEUF]) is None:
+            print("   la requête échoue sur le tour suivant")
+            return False
+        etat = depot.appel(APPEL).etat_conversation
+        clients = [t for r, t in etat["transcript"] if r == "client"]
+        if len(clients) != avant + 1:
+            print(f"   un tour neuf n'avance plus : {clients}")
+            return False
+        if etat["slots"].get("telephone_rappel") != "0606303011":
+            print(f"   le numéro complet n'est pas acquis : "
+                  f"{etat['slots'].get('telephone_rappel')!r}")
+            return False
+        # et le point de rembobinage a AVANCÉ : il vaut désormais l'état d'avant ce
+        # tour-ci, pas d'avant la phrase précédente. Sans cette vérification, prendre un
+        # tour neuf pour un affinage passait inaperçu — l'état final était le même, mais
+        # le tour précédent était rejoué (extraction refaite, réponses regénérées puis
+        # jetées) et le prochain affinage aurait rembobiné un tour trop loin.
+        if len([t for r, t in (etat.get("__avant") or {}).get("transcript", [])
+                if r == "client"]) != avant:
+            print("   le point de rembobinage n'a pas suivi le tour neuf")
+            return False
+        # (5) et il ne s'emboîte pas en lui-même. C'est le tour NOUVEAU qui repose le
+        # point de rembobinage — donc le seul endroit où l'emboîtement peut naître. Sans
+        # cette borne, le blob double à chaque tour : invisible sur un appel de test,
+        # fatal sur un appel de vingt tours.
+        if "__avant" in (etat.get("__avant") or {}):
+            print("   l'instantané s'emboîte : l'état enfle à chaque tour")
+            return False
+
+    return True
+
+
 def check_sonde_dispo() -> bool:
     """R69 : la sonde des tournures de temps observe sans jamais peser sur l'appel.
 
@@ -7988,6 +8151,14 @@ def run() -> int:
         print("   → la sonde des tournures de temps observe sans peser : eteinte par "
               "defaut, muette en panne, et elle distingue extracteur sourd de "
               "controleur sourd : ✅ PASS")
+    else:
+        print("   → ❌ FAIL")
+        echecs += 1
+
+    print(f"\n──── R70_transcription_qui_se_precise ────")
+    if check_transcription_qui_se_precise():
+        print("   → une transcription qui se précise ne consomme plus un tour : "
+              "l'appelant qui dit tout d'un coup n'est plus raccroché : ✅ PASS")
     else:
         print("   → ❌ FAIL")
         echecs += 1

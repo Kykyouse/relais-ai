@@ -385,8 +385,14 @@ def creer_app(depot, registre: Registre, fabrique_llm, horloge=None,
             depot.enregistrer_etat(appel_id, convo.to_dict())
             return _repondre_voix(texte, modele, t, corps)
 
-        convo = Conversation.from_dict(appel.etat_conversation, artisan.config,
-                                       fabrique_llm())
+        # `__avant` : l'état tel qu'il était AVANT le dernier tour client. Rangé dans le
+        # même blob que l'état courant plutôt que dans une colonne — le dépôt stocke un
+        # JSON opaque, `Conversation.from_dict` ignore les clés qu'il ne connaît pas, et
+        # les tests qui lisent `etat_conversation["transcript"]` continuent de marcher.
+        # Il sert au REMBOBINAGE (R70) et à rien d'autre.
+        brut = appel.etat_conversation
+        instantane_avant = brut.get("__avant")
+        convo = Conversation.from_dict(brut, artisan.config, fabrique_llm())
         # tours DÉJÀ traités = ce que notre transcript contient, pas ce que la plateforme
         # raconte. C'est notre état qui fait foi.
         traites = sum(1 for r, _ in convo.transcript if r == "client")
@@ -404,18 +410,37 @@ def creer_app(depot, registre: Registre, fabrique_llm, horloge=None,
                            None)
             return _repondre_voix(dernier or convo.open(), modele, t, corps)
 
-        # RATTRAPAGE. La plateforme renvoie tout l'historique ; nous ne lisions que le
-        # dernier message. Si une requête est perdue (réseau, 500, expiration), la suivante
-        # arrive avec deux tours d'avance et le tour du milieu était **définitivement
-        # perdu** — alors que son texte était dans la charge utile. Mesuré le 26/08 : la
-        # commune, le code postal et le problème disparaissaient, seul le numéro restait.
+        # REMBOBINAGE (R70). La transcription du tour en cours se précise : l'appelant n'a
+        # parlé qu'une fois. On repart donc de l'état d'AVANT ce tour et on le rejoue avec
+        # la meilleure version du texte, au lieu d'empiler un tour de plus. Sans cela,
+        # celui qui dit tout d'un coup — problème, commune, numéro — voyait chaque
+        # affinage compter pour un numéro incomplet, et se faisait raccrocher au nez.
         #
-        # Et l'appelant, lui, n'a aucune raison de redire ce qu'il a déjà dit : c'est le
-        # « Déjà dit. » de R59, vu par un autre chemin.
+        # Faute d'instantané (état écrit avant R70, ou tout premier tour), on retombe sur
+        # l'ancien comportement : mieux vaut un tour de trop qu'un appel perdu.
         textes = _vapi.messages_utilisateur(corps)
-        # `textes[traites:]` = ce qui nous manque. Vide quand la transcription du tour
-        # courant se précise sans en ajouter (R59) : on retraite alors ce tour-là.
-        a_traiter = textes[traites:] or textes[-1:]
+        if _vapi.est_un_affinage(corps, traites, dernier) and instantane_avant is not None:
+            convo = Conversation.from_dict(instantane_avant, artisan.config,
+                                           fabrique_llm())
+            # le MÊME tour, dans sa meilleure version. Le point de rembobinage ne bouge
+            # pas : l'affinage suivant devra repartir d'ici, pas d'ici plus un tour.
+            a_traiter = textes[-1:]
+        else:
+            # tour NOUVEAU : c'est l'état courant qui devient le point de rembobinage.
+            # Sans retirer `__avant`, l'instantané s'emboîterait en lui-même et le blob
+            # enflerait à chaque tour.
+            instantane_avant = {c: v for c, v in brut.items() if c != "__avant"}
+            # RATTRAPAGE. La plateforme renvoie tout l'historique ; nous ne lisions que
+            # le dernier message. Si une requête est perdue (réseau, 500, expiration), la
+            # suivante arrive avec deux tours d'avance et le tour du milieu était
+            # **définitivement perdu** — alors que son texte était dans la charge utile.
+            # Mesuré le 26/08 : la commune, le code postal et le problème disparaissaient,
+            # seul le numéro restait. Et l'appelant, lui, n'a aucune raison de redire ce
+            # qu'il a déjà dit : c'est le « Déjà dit. » de R59, vu par un autre chemin.
+            #
+            # Le repli sur le dernier message couvre l'état écrit AVANT R70, où aucun
+            # instantané n'existe et où l'on ne peut donc pas rembobiner.
+            a_traiter = textes[traites:] or textes[-1:]
         # BORNE. Un retard de un ou deux vient d'une requête perdue, ce qui arrive. Un
         # retard de dix voudrait dire que plusieurs requêtes consécutives ont échoué, et
         # rejouer dix tours dans une seule requête HTTP ferait expirer l'appel — le client
@@ -428,7 +453,8 @@ def creer_app(depot, registre: Registre, fabrique_llm, horloge=None,
             texte = convo.process(ligne)
             if convo.state in (State.S11_CLOTURE, State.FIN):
                 break
-        depot.enregistrer_etat(appel_id, convo.to_dict())
+        depot.enregistrer_etat(appel_id, {**convo.to_dict(),
+                                          "__avant": instantane_avant})
         _noter_dispo(appel_id, convo)          # après la persistance : l'état d'abord
 
         if convo.state in (State.S11_CLOTURE, State.FIN) and appel.fin_a is None:

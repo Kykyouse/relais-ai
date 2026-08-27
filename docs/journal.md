@@ -300,6 +300,68 @@ Le spike vocal ne s'ouvre **qu'en session dédiée**. Le Sender ID et l'OAuth Go
 le nom commercial — c'est-à-dire le cousin, pas nous.
 ---
 
+## 27/08 — L'appelant le plus clair était celui qu'on raccrochait (R70)
+
+Premier appel réel avec la sonde des disponibilités allumée. Geoffrey a dit UNE phrase :
+« Bonjour, j'ai une fuite dans la salle de bain. Je suis à Nogent-sur-Marne, et mon numéro
+est le 0 6 0 6 30 11. » L'agent a répondu : « Je transmets tout ça à Julien — il vous
+rappelle sous 2 heures. Bonne journée ! » Fin de l'appel, sans rendez-vous.
+
+**La sonde a donné le diagnostic en cinq lignes, le jour même de sa mise en service :**
+
+    t1  S2_LOCALISER   « Bonjour, j'ai une fuite dans la salle de bain. »
+    t2  S4_IDENTITE    « … Je suis à Nogent-sur-Marne, et mon numéro est le 0 6 »
+    t3  S4_IDENTITE    « … le 0 6 0 6 »
+    t4  S4_IDENTITE    « … le 0 6 0 6 30 »
+    t5  S11_CLOTURE    « … le 0 6 0 6 30 11. »
+
+Une phrase, cinq tours. La plateforme réémet la transcription du tour en cours à mesure
+qu'elle se stabilise. R59 avait établi qu'un texte qui s'allonge n'est pas un rejeu — il
+portait la commune, et la jeter avait coûté un client en zone le 26/08. Mais le remède
+traitait la version affinée comme un tour **nouveau** : `convo.process()` avance la
+machine à états et incrémente les compteurs. Chaque affinage portait des chiffres
+(« 0 6 », « 0 6 0 6 », « 0 6 0 6 30 »), `_s4` y a vu trois numéros incomplets successifs,
+et à trois il appelle `_sans_rdv()`.
+
+**Le défaut avait donc exactement la mauvaise polarité : plus l'appelant parlait
+clairement, plus la transcription se précisait par petits pas, et plus vite il épuisait
+son quota. Le seul appelant qui a tout dit du premier coup est celui qu'on a raccroché.**
+
+Corrigé par un REMBOBINAGE : quand la transcription du tour en cours se précise, on repart
+de l'état d'AVANT ce tour et on le rejoue avec la meilleure version du texte. L'instantané
+voyage dans le même blob que l'état courant, sous la clé `__avant` — le dépôt stocke un
+JSON opaque, `Conversation.from_dict` ignore les clés inconnues, et les tests qui lisent
+`etat_conversation["transcript"]` continuent de marcher. Pas de migration.
+
+`est_un_affinage` est désormais la seule définition, et `est_un_rejeu` s'en déduit
+(`not est_un_affinage`). Les deux notions étaient écrites deux fois, chacune avec sa
+version de « plus long » ; les faire dériver aurait suffi à rejouer R59 ou R70.
+
+Rejeu de l'appel réel après correctif : **1 tour au lieu de 5**, pas de raccroché, commune
+de l'affinage toujours acquise.
+
+**Ce que la banque de mutations a rapporté, et qui vaut d'être noté** : 5/9 au premier
+passage, test vert. Trois survivantes, trois enseignements différents.
+
+- Une ligne de code MORT : le recalcul de `traites` après rembobinage ne changeait jamais
+  rien, le repli `or textes[-1:]` donnant déjà le même résultat. Supprimée, et chaque
+  branche dit maintenant explicitement ce qu'elle traite.
+- Une fixture qui ne rendait pas possible ce qu'elle vérifie : mon tour « neuf » de test
+  était plus COURT que le dernier affinage. Or c'est la longueur qui distingue les deux
+  cas — ce tour-là ne pouvait donc rien révéler, et deux mutations passaient au travers.
+  Troisième fois cette semaine que ce piège se referme.
+- Une borne manquante : sans retrait de `__avant`, l'instantané s'emboîte en lui-même et
+  le blob double à chaque tour. Invisible sur un appel de test, fatal sur un appel de
+  vingt tours.
+
+Test resserré → **7/8**, le huitième étant un témoin qui doit survivre.
+
+**Reste côté plateforme, et ce n'est pas nous** : cinq requêtes pour une phrase, c'est un
+découpage de tour (endpointing) qui se déclenche en plein milieu. R70 rend le serveur
+insensible à ce comportement, mais la cause est dans le réglage Vapi
+(`startSpeakingPlan` / smart endpointing). À regarder avec le `stopSpeakingPlan` déjà en
+attente.
+
 ## 27/08 — Mesurer avant d'écrire le vocabulaire (R69, sonde des tournures de temps)
 
 Geoffrey, après R68 : « je commence à me dire que Haiku est trop bête, le problème des

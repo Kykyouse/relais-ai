@@ -117,14 +117,38 @@ def est_un_rejeu(corps: dict, tours_traites: int,
 
     Sans `dernier_traite`, le comportement d'avant : le comptage seul.
     """
+    if len(messages_utilisateur(corps)) > tours_traites:
+        return False
+    # Un rejeu est exactement ce qui n'est PAS un affinage. Les deux notions étaient
+    # écrites deux fois, chacune avec sa version de « plus long » ; les faire dériver
+    # aurait suffi à rejouer R59 ou R70. Une seule définition, et l'autre s'en déduit.
+    return not est_un_affinage(corps, tours_traites, dernier_traite)
+
+
+def est_un_affinage(corps: dict, tours_traites: int,
+                    dernier_traite: str | None = None) -> bool:
+    """Le dernier message est-il une version PLUS PRÉCISE du tour déjà traité ?
+
+    La plateforme réémet la transcription du tour en cours à mesure qu'elle se stabilise :
+    même nombre de messages, texte plus long. R59 a établi que ce n'était pas un rejeu —
+    la version affinée portait la commune, et la jeter avait coûté un client en zone.
+
+    Mais ce n'est pas non plus un tour NOUVEAU, et c'est ce que R70 a coûté : traité comme
+    tel, chaque affinage faisait avancer la machine à états et brûlait un compteur. Le
+    27/08, un appelant qui avait tout dit d'une seule phrase — problème, commune, numéro —
+    s'est fait raccrocher au nez en cinq requêtes. **Plus il parlait clairement, plus la
+    transcription se précisait par petits pas, et plus vite il épuisait son quota.**
+
+    L'appelant a parlé UNE fois. L'appel doit donc être rembobiné avant ce tour-là, puis
+    rejoué avec la meilleure transcription disponible : c'est le seul traitement qui garde
+    l'acquis de R59 sans consommer un tour.
+    """
     textes = messages_utilisateur(corps)
+    if not textes or dernier_traite is None:
+        return False
     if len(textes) > tours_traites:
-        return False
-    if dernier_traite is not None and textes \
-            and len(textes[-1].strip()) > len(dernier_traite.strip()):
-        # même tour, transcription plus complète : à traiter, pas à jeter
-        return False
-    return True
+        return False              # il y a des messages en plus : ce sont de vrais tours
+    return len(textes[-1].strip()) > len(dernier_traite.strip())
 
 
 def artisan_de_l_appel(corps: dict, registre, artisan_par_defaut: str | None):
