@@ -16,7 +16,7 @@ Cible V1 : plombiers/chauffagistes FR. Solo dev : Geoffrey (binôme Claude) ; ma
 ```bash
 cd proto
 pip install -r requirements.txt     # anthropic, python-dotenv (inutiles en mock)
-python run_scenario.py              # suite de non-régression (mock, sans clé, ~3 s) — 75 tests
+python run_scenario.py              # suite de non-régression (mock, sans clé, ~3 s) — 78 tests
 python run_llm_eval.py --mock       # plomberie de l'éval appelant-simulé (sans clé)
 python run_extract_eval.py [--mock] [--only plus_tot]
                                     # tests unitaires d'EXTRACTION : (phrase + contexte)
@@ -83,7 +83,11 @@ Clé API : fichier `.env` à la racine (voir `.env.example`). JAMAIS commité, J
 4. **Chaque bug trouvé devient un test R<n>** dans `run_scenario.py` avant d'être corrigé
    (le commentaire du test dit qui l'a trouvé et quoi).
 5. Annonce IA en ouverture (AI Act art. 50) et téléphone confirmé avant tout RDV : intouchables.
-5bis. **Jamais de repli « on vous rappelle » tant que l'appelant coopère.** Une
+5bis. **Jamais de repli « on vous rappelle » tant que l'appelant coopère.** Une CONTRAINTE
+   (« pas le samedi ») coopère autant qu'un silence : elle ne consomme pas le quota de
+   l'invariant n°6, qui borne la NÉGOCIATION — le nombre de fois où l'on fait défiler le
+   calendrier devant quelqu'un qui dit non. Une contrainte ne fait pas défiler le
+   calendrier, elle le RESSERRE (R72). Une
    incompréhension déclenche une CLARIFICATION, pas un abandon. Le 01/09, deux « le plus
    vite possible » d'un client pressé et coopérant ont suffi à convertir une réservation
    en rappel à faire. `pas_clair` fait répéter, puis reprend le fil en reproposant ; le

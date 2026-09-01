@@ -3575,6 +3575,262 @@ def check_creneaux_verbatim() -> bool:
     return True
 
 
+def check_json_de_lextracteur() -> bool:
+    """R74 : un modèle serviable qui répond avant de donner son JSON ne doit pas coûter un tour.
+
+    Trouvé le 01/09 par le banc d'extraction, sur un cas que j'y avais ajouté pour R73 :
+    « Demain c'est mercredi ? Alors va pour le matin. » Le modèle répond parfois par le bon
+    JSON — `{"action": "choisir", "rang": 1}` — et parfois en RÉPONDANT d'abord à la
+    question, parce que la phrase en contenait une et qu'un modèle serviable y répond.
+
+    Le nettoyage ne savait retirer que des clôtures ```json. Un préambule en prose faisait
+    échouer `json.loads`, l'extraction rendait {}, et le tour partait en `pas_clair` : on
+    faisait répéter quelqu'un qui venait de répondre juste. La dégradation était SÛRE, elle
+    n'était pas gratuite.
+
+    Sorti dans une fonction PURE (`json_de`) plutôt que laissé dans `AnthropicLLM.extract` :
+    une lecture de JSON n'a aucune raison d'exiger le réseau pour être testée, et c'est
+    exactement le genre de code où les cas tordus se vérifient à froid, un par un.
+
+    Le parcours cherche le premier objet ÉQUILIBRÉ, pas une expression régulière : un JSON
+    contient des accolades imbriquées, et `.*` s'arrêterait à la première fermante. Une
+    accolade DANS une chaîne — un `probleme` où le client dit « { » — ne compte pas non
+    plus.
+    """
+    from relais_proto.llm import json_de
+
+    CAS = [
+        ('{"action": "choisir", "rang": 1}', {"action": "choisir", "rang": 1}, "nu"),
+        ('```json\n{"action": "choisir", "rang": 1}\n```',
+         {"action": "choisir", "rang": 1}, "clôture ```json"),
+        ('```\n{"action": "plus_tot"}\n```', {"action": "plus_tot"}, "clôture nue"),
+        # LE CAS DU 01/09 : le modèle répond à la question avant de donner le JSON
+        ('Oui, demain c\'est mercredi ! Voici l\'extraction :\n'
+         '{"action": "choisir", "rang": 1}',
+         {"action": "choisir", "rang": 1}, "préambule en prose"),
+        ('{"a": {"b": 1}, "action": "plus_tot"}',
+         {"a": {"b": 1}, "action": "plus_tot"}, "objets imbriqués"),
+        ('{"probleme": "fuite { bizarre", "action": "refuser"}',
+         {"probleme": "fuite { bizarre", "action": "refuser"}, "accolade dans une chaîne"),
+        ('{"probleme": "il a dit \\"stop\\"", "action": "refuser"}',
+         {"probleme": 'il a dit "stop"', "action": "refuser"}, "guillemet échappé"),
+        # tout le reste doit rendre {} — c'est `actions.valider` qui en fera `pas_clair`,
+        # donc une demande de répétition, jamais un abandon
+        ("je ne sais pas", {}, "aucun JSON"),
+        ("[1, 2, 3]", {}, "une liste, pas un objet"),
+        ('{"action": "choisir"', {}, "objet non fermé"),
+        ("", {}, "vide"),
+        (None, {}, "None"),
+    ]
+    for texte, attendu, libelle in CAS:
+        try:
+            obtenu = json_de(texte)
+        except Exception as exc:                                  # noqa: BLE001
+            print(f"   {libelle} : `json_de` lève {exc!r} — jamais une exception")
+            return False
+        if obtenu != attendu:
+            print(f"   {libelle} : {obtenu!r} au lieu de {attendu!r}")
+            return False
+
+    # ET LE BOUT DE LA CHAÎNE : une action valide survit au préambule. Sans cela on
+    # testerait un lecteur de JSON, pas le comportement qui a coûté le tour.
+    from relais_proto import actions
+    brut = json_de('Bien sûr !\n{"action": "choisir", "rang": 2}')
+    if actions.valider(brut, "S5_CRENEAU", 2) != (actions.CHOISIR, 2):
+        print(f"   l'action ne survit pas au préambule : {brut!r}")
+        return False
+    return True
+
+
+def check_jour_courant_dans_le_contexte() -> bool:
+    """R73 : l'extracteur doit savoir quel jour on est.
+
+    Question de Geoffrey le 01/09 : « l'IA est-elle au courant du jour courant ? »
+    Vérification faite : non. Le contexte de l'extracteur contenait `metier`,
+    `nom_entreprise`, `prestations`, `dernier_tour`, `dernier_agent`, `propositions`,
+    `etat` — ni date, ni jour de semaine, ni heure.
+
+    Ça ne se voyait pas, parce que les propositions lui arrivent en libellés
+    auto-descriptifs (« demain entre 8 heures et 10 heures ») et que les jours relatifs
+    sont résolus par le contrôleur. Mais l'appel réel du 01/09, 15 h 18, en montre le
+    coût : l'appelant dit « en tout cas, pas le vendredi », et le modèle ne peut PAS savoir
+    que « demain » est un mercredi — donc il ne peut pas voir que la contrainte ne change
+    rien, ni le dire. Et c'est bloquant pour la suite : « la semaine prochaine », « avant
+    vendredi », « d'ici la fin du mois » sont inrésolvables sans la date du jour.
+
+    RÈGLE N°7, et c'est tout l'enjeu de ce test : ce qu'on donne au modèle est une heure de
+    PENDULE, dérivée de l'horloge de l'appel par `temps.en_local`. Pas `datetime.now()` —
+    interdit hors `api.py`/`worker.py` — et pas l'instant UTC brut : un appel passé à
+    23 h 30 UTC un lundi est encore lundi à Paris, et son lendemain est mardi. Un extracteur
+    qui croit qu'on est mardi placerait « demain » un jour trop loin, et ce serait invisible
+    partout ailleurs que dans la tête de l'appelant.
+    """
+    import datetime as dt
+
+    from relais_proto.engine import Conversation
+
+    # 23 h 30 UTC un LUNDI : minuit est passé à Paris… non, justement pas — il est
+    # 1 h 30 mardi. Ce cas est là parce qu'il distingue les deux lectures possibles.
+    # (lundi 31 août 2026, 23 h 30 UTC = mardi 1er septembre, 1 h 30 à Paris)
+    LUNDI_TARD = dt.datetime(2026, 8, 31, 23, 30, tzinfo=dt.UTC)
+    # et un cas simple : mardi 1er septembre 2026, 9 h à Paris
+    MARDI_9H = dt.datetime(2026, 9, 1, 7, 0, tzinfo=dt.UTC)
+
+    for quand, jour_attendu, quantieme, mois in ((MARDI_9H, "mardi", "1", "septembre"),
+                                                 (LUNDI_TARD, "mardi", "1", "septembre")):
+        convo = Conversation(CFG, MockLLM(), CalendarStub(CFG, now=quand))
+        ctx = convo._ctx
+        aujourdhui = ctx.get("aujourdhui")
+        if not aujourdhui:
+            print(f"   le contexte ne porte pas le jour courant : {sorted(ctx)}")
+            return False
+        for morceau in (jour_attendu, quantieme, mois):
+            if morceau not in aujourdhui.lower():
+                print(f"   {quand.isoformat()} → {aujourdhui!r} "
+                      f"(attendu contient {morceau!r})")
+                return False
+
+    # L'HEURE DE PENDULE, pas l'instant UTC. À 23 h 30 UTC le lundi, il est 1 h 30 mardi à
+    # Paris : un contexte qui dirait « lundi » ferait décaler tous les jours relatifs d'un
+    # cran dans la tête du modèle.
+    convo = Conversation(CFG, MockLLM(), CalendarStub(CFG, now=LUNDI_TARD))
+    if "lundi" in convo._ctx["aujourdhui"].lower():
+        print(f"   l'instant UTC est servi tel quel : {convo._ctx['aujourdhui']!r}")
+        return False
+
+    # Et le contexte reste utilisable SANS calendrier : `_ctx` est appelé partout, y
+    # compris là où aucune horloge n'a été injectée. Une clé absente vaut mieux qu'une
+    # exception au milieu d'un appel.
+    convo = Conversation(CFG, MockLLM(), CalendarStub(CFG, now=MARDI_9H))
+    convo.cal = None
+    try:
+        ctx = convo._ctx
+    except Exception as exc:                                      # noqa: BLE001
+        print(f"   `_ctx` casse sans calendrier : {exc!r}")
+        return False
+    if ctx.get("aujourdhui"):
+        print(f"   une date est inventée sans horloge : {ctx['aujourdhui']!r}")
+        return False
+
+    # Le PROMPT le porte vraiment : un contexte enrichi que le prompt n'utilise pas ne
+    # sert à rien, et c'est le genre d'oubli qui ne se voit nulle part.
+    from relais_proto.llm import EXTRACT_SYSTEM
+    if "{aujourdhui}" not in EXTRACT_SYSTEM:
+        print("   le prompt d'extraction n'utilise pas le jour courant")
+        return False
+
+    return True
+
+
+def check_contrainte_ne_brule_pas_le_quota() -> bool:
+    """R72 : donner une contrainte, c'est COOPÉRER — pas refuser.
+
+    APPEL RÉEL du 01/09, 15 h 18, perdu :
+
+        AGENT  : demain entre 8 h et 10 h, ou demain entre 14 h et 16 h ?
+        CLIENT : En tout cas, pas le vendredi.
+        AGENT  : demain entre 8 h et 10 h, ou demain entre 14 h et 16 h ?   (mot pour mot)
+        CLIENT : Ni le jeudi.
+        AGENT  : Je transmets tout ça à Julien. Il vous rappelle sous 2 heures.
+
+    Deux contraintes, et l'appel est perdu. L'appelant n'avait rien refusé : il précisait
+    ses disponibilités, ce qu'on lui demande de faire. `tours_creneaux` — l'invariant n°6,
+    « deux tours de créneaux au maximum » — comptait ces tours comme de la négociation.
+
+    C'est la MÊME faute que R71, à un état près, et je l'avais sous les yeux : l'invariant
+    écrit la veille dit *jamais de repli tant que l'appelant coopère*, et je ne l'avais
+    appliqué qu'à `pas_clair`. Une contrainte coopère au moins autant qu'un silence.
+
+    L'invariant n°6 n'est pas affaibli : il borne la NÉGOCIATION — le nombre de fois où on
+    fait défiler le calendrier devant quelqu'un qui dit non. Une contrainte ne fait pas
+    défiler le calendrier, elle le RESSERRE. Borne propre quand même : au-delà de trois,
+    on retombe dans le chemin normal, parce qu'à ce stade on ne se comprend plus.
+
+    Ce que ce test verrouille :
+
+    1. deux contraintes d'affilée ne font pas perdre le rendez-vous ;
+    2. un vrai REFUS consomme toujours le quota (l'invariant n°6 tient) ;
+    3. une contrainte n'offre pas un quota infini : elle est bornée ;
+    4. et le quota du refus n'a pas été dépensé par les contraintes qui précèdent.
+    """
+    import datetime as dt
+
+    from relais_proto.engine import Conversation, State
+
+    # mardi 1er septembre 2026, 17 h 18 à Paris — l'heure de l'appel réel
+    QUAND = dt.datetime(2026, 9, 1, 15, 18, tzinfo=dt.UTC)
+
+    def jusqu_aux_creneaux():
+        convo = Conversation(CFG, MockLLM(), CalendarStub(CFG, now=QUAND))
+        convo.open()
+        for ligne in ("J'ai une fuite d'eau dans la salle de bain",
+                      "Nogent-sur-Marne 94130", "Martin, 06 11 22 33 44", "Oui"):
+            convo.process(ligne)
+        return convo
+
+    # (1) L'APPEL RÉEL, rejoué. Deux contraintes, et le rendez-vous tient toujours.
+    convo = jusqu_aux_creneaux()
+    if not convo._proposes:
+        print("   la mise en place ne propose aucun créneau")
+        return False
+    convo.process("En tout cas, pas le vendredi.")
+    dit = convo.process("Ni le jeudi.")
+    if convo.state == State.S11_CLOTURE:
+        print(f"   deux contraintes font perdre le RDV : « {dit} »")
+        return False
+    if not convo._proposes:
+        print(f"   plus rien n'est proposé après deux contraintes : « {dit} »")
+        return False
+
+    # (2) UN VRAI REFUS CONSOMME TOUJOURS. L'invariant n°6 borne la négociation, et ce
+    # test est la seule chose qui empêche R72 de le démonter en douce.
+    convo = jusqu_aux_creneaux()
+    for _ in range(3):
+        convo.process("Non, ça ne me va pas du tout")
+    if convo.state != State.S11_CLOTURE:
+        print("   des refus répétés ne terminent plus l'appel : invariant n°6 démonté")
+        return False
+
+    # (3) une contrainte n'ouvre pas un quota infini
+    convo = jusqu_aux_creneaux()
+    for _ in range(6):
+        convo.process("plutôt jeudi")
+    if convo.state != State.S11_CLOTURE:
+        print("   six contraintes d'affilée ne terminent jamais l'appel")
+        return False
+
+    # (3 bis) ET DANS L'AUTRE SENS : après un refus, une contrainte est encore servie.
+    # « Non… bon, disons plutôt jeudi » — celui-là revient vers nous, il ne s'en va pas.
+    #
+    # UN refus et non deux : après deux, l'appel est déjà clos par l'invariant n°6, et le
+    # cas serait inatteignable — première version de ce test, qui échouait donc sur du
+    # code sain. Un refus porte `tours_creneaux` à 2 ; c'est là, et là seulement, que la
+    # garde de fin peut être atteinte PAR une contrainte. Une mutation avait survécu
+    # faute de ce cas.
+    convo = jusqu_aux_creneaux()
+    convo.process("Non, ça ne me va pas")
+    dit = convo.process("Bon, disons plutôt jeudi")
+    if convo.state == State.S11_CLOTURE:
+        print(f"   une contrainte après un refus est abandonnée : « {dit} »")
+        return False
+    if not convo._proposes:
+        print(f"   plus rien n'est proposé : « {dit} »")
+        return False
+
+    # (4) LE QUOTA DU REFUS EST INTACT après des contraintes. Sans cela, le correctif ne
+    # ferait que déplacer le raccroché d'un tour — l'appelant du 01/09 aurait dit
+    # « pas le vendredi », « ni le jeudi », puis se serait fait couper au premier « non ».
+    convo = jusqu_aux_creneaux()
+    convo.process("En tout cas, pas le vendredi.")
+    convo.process("Ni le jeudi.")
+    dit = convo.process("Non, ça ne me va pas")
+    if convo.state == State.S11_CLOTURE:
+        print(f"   le premier refus après deux contraintes raccroche déjà : « {dit} »")
+        return False
+
+    return True
+
+
 def check_au_plus_vite() -> bool:
     """R71 : « le plus vite possible » ne doit pas éloigner le rendez-vous.
 
@@ -8305,6 +8561,30 @@ def run() -> int:
     if check_au_plus_vite():
         print("   → « le plus vite possible » ramène au créneau le plus tôt au lieu "
               "d'éloigner le rendez-vous puis de raccrocher : ✅ PASS")
+    else:
+        print("   → ❌ FAIL")
+        echecs += 1
+
+    print(f"\n──── R72_contrainte_ne_brule_pas_le_quota ────")
+    if check_contrainte_ne_brule_pas_le_quota():
+        print("   → donner une contrainte est une coopération, pas un refus : "
+              "l'appel n'est plus perdu au deuxième « pas le… » : ✅ PASS")
+    else:
+        print("   → ❌ FAIL")
+        echecs += 1
+
+    print(f"\n──── R73_jour_courant ────")
+    if check_jour_courant_dans_le_contexte():
+        print("   → l'extracteur sait quel jour on est, en heure de PENDULE : "
+              "« pas le vendredi » devient interprétable : ✅ PASS")
+    else:
+        print("   → ❌ FAIL")
+        echecs += 1
+
+    print(f"\n──── R74_json_de_lextracteur ────")
+    if check_json_de_lextracteur():
+        print("   → un préambule en prose ne fait plus perdre l'extraction : "
+              "objet équilibré, jamais d'exception : ✅ PASS")
     else:
         print("   → ❌ FAIL")
         echecs += 1

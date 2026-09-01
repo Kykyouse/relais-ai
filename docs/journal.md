@@ -300,6 +300,82 @@ Le spike vocal ne s'ouvre **qu'en session dédiée**. Le Sender ID et l'OAuth Go
 le nom commercial — c'est-à-dire le cousin, pas nous.
 ---
 
+## 01/09 (soir) — Quatre appels réels : ce que le menu d'actions règle, et ce qu'il ne règle pas
+
+Geoffrey a passé quatre appels avec le menu d'actions en production. **2 rendez-vous
+réservés, 2 perdus — et les deux pertes sont des défauts, pas des refus.**
+
+**Ce qui marche désormais.** « Le plus tôt possible » → « le plus tôt que je peux, c'est
+aujourd'hui entre 17 h et 19 h, je vous le réserve ? » → réservé, créneau d'urgence le jour
+même (R71 confirmé en vrai). Le rembobinage de R70 tient : quatre transcriptions
+successives d'une même phrase n'ont compté que pour un tour. Et les garde-fous ont
+beaucoup travaillé — markdown `**` émis par le formuleur, resalutation, questions
+multiples, nom propre hors verbatim : tous interceptés et remplacés, l'appelant n'a rien
+entendu d'anormal.
+
+**R72 — donner une contrainte, c'est coopérer.** Appel de 15 h 18, perdu :
+
+    CLIENT : En tout cas, pas le vendredi.
+    AGENT  : demain entre 8 h et 10 h, ou demain entre 14 h et 16 h ?   (mot pour mot)
+    CLIENT : Ni le jeudi.
+    AGENT  : Je transmets tout ça à Julien.
+
+L'exclusion du vendredi AVAIT été lue (`jours_exclus: [4]`). Mais « demain » est un
+mercredi : la contrainte ne changeait rien, l'agent a resservi la même phrase à
+l'identique — puis la deuxième contrainte a épuisé `tours_creneaux` et il a raccroché.
+
+C'est la même faute que R71, à un état près, et **je l'avais sous les yeux** : l'invariant
+écrit la veille dit *jamais de repli tant que l'appelant coopère*, et je ne l'avais appliqué
+qu'à `pas_clair`. L'invariant n°6 borne la NÉGOCIATION — le nombre de fois où l'on fait
+défiler le calendrier devant quelqu'un qui dit non. Une contrainte ne fait pas défiler le
+calendrier, elle le RESSERRE. Bornée à trois quand même, puis retour au comptage normal.
+
+Le banc de mutations a trouvé un cas que le test ne couvrait pas : après UN refus, une
+contrainte doit encore être servie (« non… bon, disons plutôt jeudi »). Ma première
+version testait après DEUX refus — inatteignable, l'appel étant déjà clos par l'invariant
+n°6, donc le test échouait sur du code sain. 7/8 après correction.
+
+**R73 — l'extracteur ne savait pas quel jour on est.** Question de Geoffrey, vérifiée : le
+contexte contenait `metier`, `nom_entreprise`, `prestations`, `dernier_tour`,
+`dernier_agent`, `propositions`, `etat`. Ni date, ni jour, ni heure. Invisible jusque-là
+parce que les propositions arrivent en libellés auto-descriptifs et que les jours relatifs
+sont résolus par le contrôleur — mais c'est exactement ce qui manquait pour que le modèle
+comprenne que « pas le vendredi » ne change rien quand demain est un mercredi.
+
+Règle n°7 respectée et verrouillée par le test : heure de PENDULE via `temps.en_local`.
+Vérifié sur le cas qui distingue les deux lectures — 23 h 30 UTC un lundi rend « mardi
+1 h », pas « lundi 23 h ».
+
+**R74 — un modèle serviable qui répond avant de donner son JSON.** Trouvé par le banc, sur
+un cas ajouté pour R73 : « Demain c'est mercredi ? Alors va pour le matin. » La phrase
+contient une question adressée à l'agent, et le modèle y répond parfois avant d'émettre son
+JSON. Le nettoyage ne savait retirer que des clôtures ```json ; un préambule en prose
+faisait échouer la lecture, l'extraction rendait {}, et le tour partait en `pas_clair` — on
+faisait répéter quelqu'un qui venait de répondre juste. La dégradation était sûre, elle
+n'était pas gratuite. `json_de` cherche désormais le premier objet ÉQUILIBRÉ (accolades
+imbriquées, accolades dans les chaînes, guillemets échappés), et c'est une fonction PURE :
+une lecture de JSON n'a aucune raison d'exiger le réseau pour être testée.
+
+**Banc d'extraction : 39/39, p50 1008 ms, p95 1650 ms.**
+
+**Ce qui reste, dans l'ordre où je le prendrais :**
+
+1. **« Essayer de le joindre, de l'appeler » n'a pas déclenché l'escalade humaine**
+   (appel de 15 h 16, perdu). Sur une urgence où l'artisan n'a réellement plus de créneau,
+   passer la main était la bonne réponse — elle existe dans le moteur, on ne l'a pas
+   déclenchée. C'est une ACTION à mettre au menu, pas un mot-clé.
+2. **Dire quelque chose quand une contrainte ne change rien** : « demain n'est pas un
+   vendredi, je peux donc toujours vous proposer… » plutôt que répéter à l'identique.
+   Maintenant possible, puisque le modèle connaît le jour.
+3. La phrase de clarification est mal formée : « Pardon, je n'ai pas bien saisi. demain
+   entre 8 heures et 10 heures, est-ce que cela vous va ? » — minuscule après un point,
+   et ça s'entend.
+4. La commune n'est toujours jamais prononcée quand seul le code postal a validé la zone.
+5. Le CONTENU des contraintes reste lu par mots-clés (`_contraintes_dispo`), avec une
+   inversion connue et non corrigée : « pas le matin ni le samedi » exclut le matin mais
+   PRÉFÈRE le samedi, parce que « ni » n'est pas dans la liste des négations. Ne pas
+   corriger par un treizième mot-clé — c'est le prochain morceau du déplacement.
+
 ## 01/09 (suite) — Haiku ou Sonnet pour l'extracteur : la mesure tranche, et pas comme prévu
 
 Geoffrey, clé renouvelée : « conseillerais-tu de passer de Haiku à Sonnet pour réduire le

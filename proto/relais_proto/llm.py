@@ -37,6 +37,7 @@ Réponds UNIQUEMENT un objet JSON avec les clés présentes dans la phrase (omet
 Pour les FAITS ci-dessus, ne déduis rien qui ne soit pas dans la phrase.
 
 Contexte de la conversation :
+- Nous sommes {aujourdhui} (heure locale de l'appelant).
 - L'agent vient de dire : "{dernier_agent}"
 - Propositions de créneaux en cours : {propositions}
 {menu}"""
@@ -264,6 +265,65 @@ class MockLLM:
         return instruction  # les instructions du contrôleur sont déjà des phrases prononçables
 
 
+def json_de(texte: str) -> dict:
+    """Le JSON d'une réponse d'extraction, ou {} — jamais une exception.
+
+    Trois formes rencontrées en vrai, et la troisième est celle qui a motivé cette
+    fonction. Mesurée le 01/09 sur le banc d'extraction : à la phrase « Demain c'est
+    mercredi ? Alors va pour le matin. », le modèle répond parfois par le bon JSON, et
+    parfois en RÉPONDANT à la question posée avant de le donner. La phrase contenait une
+    question adressée à l'agent, et un modèle serviable y répond.
+
+    Le nettoyage précédent ne savait retirer que des clôtures ```json ; un préambule en
+    prose faisait échouer `json.loads`, l'extraction rendait {}, et le tour partait en
+    `pas_clair`. La dégradation était sûre — on fait répéter — mais elle coûtait un tour
+    à quelqu'un qui venait de répondre correctement.
+
+    On cherche donc le premier objet `{...}` ÉQUILIBRÉ où qu'il soit dans le texte.
+    Équilibré, et non par expression régulière : un JSON contient des accolades imbriquées,
+    et `.*` s'arrêterait à la première fermante venue.
+
+    Rendre {} reste la sortie de secours. C'est `actions.valider` qui en fera `pas_clair`,
+    donc une demande de répétition — jamais un abandon.
+    """
+    texte = (texte or "").strip()
+    texte = re.sub(r"^```(?:json)?|```$", "", texte, flags=re.MULTILINE).strip()
+    try:
+        lu = json.loads(texte)
+        return lu if isinstance(lu, dict) else {}
+    except json.JSONDecodeError:
+        pass
+    debut = texte.find("{")
+    if debut < 0:
+        return {}
+    profondeur, en_chaine, echappe = 0, False, False
+    for i in range(debut, len(texte)):
+        c = texte[i]
+        if en_chaine:
+            # une accolade DANS une chaîne ne compte pas, et un guillemet échappé ne
+            # ferme pas la chaîne : sans ça, un `probleme` contenant « { » suffirait
+            if echappe:
+                echappe = False
+            elif c == "\\":
+                echappe = True
+            elif c == '"':
+                en_chaine = False
+            continue
+        if c == '"':
+            en_chaine = True
+        elif c == "{":
+            profondeur += 1
+        elif c == "}":
+            profondeur -= 1
+            if profondeur == 0:
+                try:
+                    lu = json.loads(texte[debut:i + 1])
+                    return lu if isinstance(lu, dict) else {}
+                except json.JSONDecodeError:
+                    return {}
+    return {}
+
+
 def _texte_de(msg) -> str:
     """Concatène les blocs texte de la réponse — les modèles récents peuvent renvoyer
     des blocs de réflexion (ThinkingBlock) avant le texte : on ne lit QUE les blocs texte."""
@@ -311,15 +371,11 @@ class AnthropicLLM:
                 metier=context["metier"], prestations=context["prestations"],
                 dernier_agent=context.get("dernier_agent", ""),
                 propositions=context.get("propositions", []) or "aucune",
+                aujourdhui=context.get("aujourdhui") or "(date inconnue)",
                 menu=actions.bloc_prompt(context.get("etat", ""))),
             messages=[{"role": "user", "content": utterance}],
         )
-        text = _texte_de(msg)
-        text = re.sub(r"^```(?:json)?|```$", "", text, flags=re.MULTILINE).strip()
-        try:
-            return json.loads(text)
-        except json.JSONDecodeError:
-            return {}
+        return json_de(_texte_de(msg))
 
     def reply(self, instruction: str, context: dict) -> str:
         dernier = context.get("dernier_tour") or "(l'appelant reste silencieux)"

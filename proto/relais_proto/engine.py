@@ -12,7 +12,7 @@ Le LLM ne choisit jamais ni l'état ni le contenu engageant (créneaux, prix, pr
 from __future__ import annotations
 
 from . import actions, communes, temps
-from .calendar_stub import CalendarStub
+from .calendar_stub import JOURS_FR, MOIS_FR, CalendarStub
 
 
 def _cle_contraintes(c: dict) -> list:
@@ -85,7 +85,33 @@ class Conversation:
             # modèle recevrait un choix d'actions qui ne correspond pas au moment de
             # l'appel — et le contrôleur refuserait tout, donc ferait répéter sans fin.
             "etat": self.state.name,
+            # LE JOUR COURANT (R73). Il manquait, et personne ne s'en apercevait : les
+            # propositions arrivent en libellés auto-descriptifs (« demain entre 8 heures
+            # et 10 heures ») et les jours relatifs sont résolus par le contrôleur. Mais
+            # sans lui, « pas le vendredi » est ininterprétable — le modèle ne peut pas
+            # savoir si « demain » EST un vendredi — et « la semaine prochaine » ou
+            # « avant vendredi » le resteront tant qu'il l'ignore.
+            #
+            # RÈGLE N°7 : heure de PENDULE, dérivée de l'horloge de l'appel. Jamais
+            # `datetime.now()` (interdit ici), jamais l'instant UTC brut : un appel passé
+            # à 23 h 30 UTC un lundi est déjà mardi à Paris, et un modèle qui croirait
+            # lundi placerait tous les jours relatifs un cran trop loin.
+            "aujourdhui": self._aujourdhui(),
         }
+
+    def _aujourdhui(self) -> str:
+        """« mardi 1 septembre 2026, 17 h » — ou rien du tout sans horloge.
+
+        Rendu vide plutôt que deviné quand aucun calendrier n'est injecté : `_ctx` est
+        appelé à chaque tour, et une date inventée serait pire que pas de date — le modèle
+        la croirait.
+        """
+        cal = getattr(self, "cal", None)
+        if cal is None:
+            return ""
+        local = temps.en_local(cal.now, self.cfg)
+        return (f"{JOURS_FR[local.weekday()]} {local.day} {MOIS_FR[local.month - 1]} "
+                f"{local.year}, {local.hour} h")
 
     def _dernier_client(self) -> str:
         return next((t for who, t in reversed(self.transcript) if who == "client"), "")
@@ -1269,8 +1295,29 @@ class Conversation:
             # transcrit. On tombe donc dans le chemin normal, qui propose la suite et dont
             # le quota (invariant n°6) finit l'appel proprement.
 
+        # DONNER UNE CONTRAINTE, C'EST COOPÉRER (R72). Le 01/09, « en tout cas pas le
+        # vendredi » puis « ni le jeudi » ont suffi à faire raccrocher : `tours_creneaux`
+        # comptait ces tours comme de la négociation. L'appelant n'avait rien refusé — il
+        # précisait ses disponibilités, ce qu'on lui demande de faire.
+        #
+        # L'invariant n°6 n'est pas affaibli, il est LU CORRECTEMENT : il borne le nombre
+        # de fois où l'on fait défiler le calendrier devant quelqu'un qui dit non. Une
+        # contrainte ne fait pas défiler le calendrier, elle le RESSERRE.
+        #
+        # Même faute que R71, à un état près, et l'invariant écrit la veille la nommait
+        # déjà — « jamais de repli tant que l'appelant coopère ». Je ne l'avais appliqué
+        # qu'à `pas_clair`. Une contrainte coopère au moins autant qu'un silence.
+        coopere = action == actions.CONTRAINTE
+        if coopere:
+            dites = self.flags.get("contraintes_dites", 0) + 1
+            self.flags["contraintes_dites"] = dites
+            # Borne propre : au-delà de trois contraintes sans qu'on aboutisse, on ne se
+            # comprend plus, et l'appel doit pouvoir finir. On retombe alors dans le
+            # comptage normal plutôt que de boucler sans fin.
+            coopere = dites <= 3
+
         # (re)proposer — max 2 tours (invariant 6)
-        if self.flags["tours_creneaux"] >= 2:
+        if not coopere and self.flags["tours_creneaux"] >= 2:
             return self._sans_rdv()
         urgent = bool(self.slots["urgence_reelle"]) and self.slots["intent"] == "urgence"
         # 2e tour = créneaux SUIVANTS, jamais les mêmes reproposés.
@@ -1298,7 +1345,8 @@ class Conversation:
                                             jours_exclus=c["jours_exclus"],
                                             moment_exclu=c["moment_exclu"],
                                             pas_avant=c["pas_avant"])
-        self.flags["tours_creneaux"] += 1
+        if not coopere:
+            self.flags["tours_creneaux"] += 1
         # Le jour demandé est SATURÉ : on ne perd pas le rendez-vous pour autant. Avant
         # R67, une contrainte impossible menait droit au repli « Julien vous rappellera » —
         # un lead perdu parce que l'appelant avait exprimé une préférence.

@@ -60,6 +60,10 @@ CTX_S5 = {
     "propositions": ["demain entre 8 heures et 10 heures",
                      "demain entre 14 heures et 16 heures"],
     "dernier_tour": "",
+    # R73 : le jour courant, en heure de pendule. Sans lui, « pas le vendredi » est
+    # ininterprétable — le modèle ne peut pas savoir si « demain » EST un vendredi.
+    # Mardi 1er septembre 2026 : « demain » est donc un mercredi.
+    "aujourdhui": "mardi 1 septembre 2026, 9 h",
 }
 
 # (phrase, action attendue, rang attendu ou None, étiquette)
@@ -118,6 +122,14 @@ CAS: list[tuple[str, str, int | None, str]] = [
      "contrainte/semaine-prochaine"),
     ("Il faudrait que ce soit un jour où ma femme est là, le mercredi.",
      actions.CONTRAINTE, None, "contrainte/detour"),
+
+    # ---- ce que le jour courant rend possible (R73) : sans lui, ces trois-la sont
+    # indecidables. « Demain » est un mercredi ; « pas le vendredi » ne l'exclut donc pas.
+    ("En tout cas, pas le vendredi.", actions.CONTRAINTE, None, "jour/pas-vendredi"),
+    ("Il me faudrait quelque chose avant vendredi.", actions.CONTRAINTE, None,
+     "jour/avant-vendredi"),
+    ("Demain c'est mercredi ? Alors va pour le matin.", actions.CHOISIR, 1,
+     "jour/demain-est-mercredi"),
 
     # ---- refus sec ----
     ("Non, ça ne me convient pas.", actions.REFUSER, None, "refuser/non"),

@@ -1,0 +1,453 @@
+{
+  "modele": "claude-haiku-4-5",
+  "reussis": 38,
+  "total": 39,
+  "latence_p50_ms": 976,
+  "latence_p95_ms": 1883,
+  "latence_max_ms": 2352,
+  "cas": [
+    {
+      "etiquette": "plus_tot/reel-0109",
+      "phrase": "Le plus vite possible.",
+      "attendu": "plus_tot",
+      "obtenu": "plus_tot",
+      "ok": true,
+      "brut": {
+        "action": "plus_tot"
+      },
+      "ms": 1025
+    },
+    {
+      "etiquette": "plus_tot/reel-0109-bis",
+      "phrase": "Le plus vite possible",
+      "attendu": "plus_tot",
+      "obtenu": "plus_tot",
+      "ok": true,
+      "brut": {
+        "action": "plus_tot"
+      },
+      "ms": 970
+    },
+    {
+      "etiquette": "plus_tot/reel-0109-phrase",
+      "phrase": "J'ai besoin de quelqu'un le plus vite possible.",
+      "attendu": "plus_tot",
+      "obtenu": "plus_tot",
+      "ok": true,
+      "brut": {
+        "action": "plus_tot",
+        "urgence_reelle": true
+      },
+      "ms": 895
+    },
+    {
+      "etiquette": "plus_tot/des-que",
+      "phrase": "Dès que vous pouvez.",
+      "attendu": "plus_tot",
+      "obtenu": "plus_tot",
+      "ok": true,
+      "brut": {
+        "action": "plus_tot"
+      },
+      "ms": 824
+    },
+    {
+      "etiquette": "plus_tot/au-plus-vite",
+      "phrase": "Au plus vite s'il vous plaît.",
+      "attendu": "plus_tot",
+      "obtenu": "plus_tot",
+      "ok": true,
+      "brut": {
+        "action": "plus_tot"
+      },
+      "ms": 973
+    },
+    {
+      "etiquette": "plus_tot/premier-libre",
+      "phrase": "Peu importe, le premier libre.",
+      "attendu": "choisir/1 ou plus_tot",
+      "obtenu": "plus_tot",
+      "ok": true,
+      "brut": {
+        "action": "plus_tot"
+      },
+      "ms": 1060
+    },
+    {
+      "etiquette": "plus_tot/rien-avant",
+      "phrase": "Vous n'avez rien avant ?",
+      "attendu": "plus_tot",
+      "obtenu": "plus_tot",
+      "ok": true,
+      "brut": {
+        "action": "plus_tot"
+      },
+      "ms": 825
+    },
+    {
+      "etiquette": "plus_tot/urgent",
+      "phrase": "C'est vraiment urgent, l'eau coule.",
+      "attendu": "plus_tot",
+      "obtenu": "plus_tot",
+      "ok": true,
+      "brut": {
+        "prestation": "fuite",
+        "probleme": "eau qui coule",
+        "urgence_reelle": true,
+        "action": "plus_tot"
+      },
+      "ms": 1174
+    },
+    {
+      "etiquette": "plus_tot/inonde",
+      "phrase": "Franchement le plus tôt possible, je suis inondé.",
+      "attendu": "plus_tot",
+      "obtenu": "plus_tot",
+      "ok": true,
+      "brut": {
+        "action": "plus_tot",
+        "probleme": "inondation",
+        "urgence_reelle": true
+      },
+      "ms": 1075
+    },
+    {
+      "etiquette": "choisir/rang-1",
+      "phrase": "Le premier.",
+      "attendu": "choisir/1",
+      "obtenu": "choisir/1",
+      "ok": true,
+      "brut": {
+        "action": "choisir",
+        "rang": 1
+      },
+      "ms": 808
+    },
+    {
+      "etiquette": "choisir/rang-2",
+      "phrase": "Le deuxième ira très bien.",
+      "attendu": "choisir/2",
+      "obtenu": "choisir/2",
+      "ok": true,
+      "brut": {
+        "action": "choisir",
+        "rang": 2
+      },
+      "ms": 1124
+    },
+    {
+      "etiquette": "choisir/par-moment",
+      "phrase": "Le matin, plutôt.",
+      "attendu": "choisir/1",
+      "obtenu": "choisir/1",
+      "ok": true,
+      "brut": {
+        "action": "choisir",
+        "rang": 1
+      },
+      "ms": 793
+    },
+    {
+      "etiquette": "choisir/par-heure",
+      "phrase": "Celui de 14 heures.",
+      "attendu": "choisir/2",
+      "obtenu": "choisir/2",
+      "ok": true,
+      "brut": {
+        "action": "choisir",
+        "rang": 2
+      },
+      "ms": 888
+    },
+    {
+      "etiquette": "choisir/apres-midi",
+      "phrase": "L'après-midi m'arrange mieux.",
+      "attendu": "choisir/2",
+      "obtenu": "choisir/2",
+      "ok": true,
+      "brut": {
+        "action": "choisir",
+        "rang": 2
+      },
+      "ms": 880
+    },
+    {
+      "etiquette": "choisir/acceptation",
+      "phrase": "Oui, c'est parfait.",
+      "attendu": "choisir/1",
+      "obtenu": "choisir/1",
+      "ok": true,
+      "brut": {
+        "action": "choisir",
+        "rang": 1,
+        "confirme": true
+      },
+      "ms": 855
+    },
+    {
+      "etiquette": "choisir/ca-me-va",
+      "phrase": "Ça me va.",
+      "attendu": "choisir/1",
+      "obtenu": "choisir/1",
+      "ok": true,
+      "brut": {
+        "action": "choisir",
+        "rang": 1
+      },
+      "ms": 861
+    },
+    {
+      "etiquette": "choisir/heure-nue",
+      "phrase": "Huit heures c'est bon pour moi.",
+      "attendu": "choisir/1",
+      "obtenu": "choisir/1",
+      "ok": true,
+      "brut": {
+        "action": "choisir",
+        "rang": 1
+      },
+      "ms": 882
+    },
+    {
+      "etiquette": "choisir/second",
+      "phrase": "Le second créneau.",
+      "attendu": "choisir/2",
+      "obtenu": "choisir/2",
+      "ok": true,
+      "brut": {
+        "action": "choisir",
+        "rang": 2
+      },
+      "ms": 813
+    },
+    {
+      "etiquette": "contrainte/jour",
+      "phrase": "Plutôt jeudi si c'est possible.",
+      "attendu": "contrainte",
+      "obtenu": "contrainte",
+      "ok": true,
+      "brut": {
+        "action": "contrainte",
+        "disponibilites": "plutôt jeudi"
+      },
+      "ms": 838
+    },
+    {
+      "etiquette": "contrainte/moment",
+      "phrase": "Seulement le matin, je travaille l'après-midi.",
+      "attendu": "contrainte",
+      "obtenu": "contrainte",
+      "ok": true,
+      "brut": {
+        "action": "contrainte",
+        "disponibilites": "seulement le matin, travaille l'après-midi"
+      },
+      "ms": 976
+    },
+    {
+      "etiquette": "contrainte/negation-jour",
+      "phrase": "Pas le samedi, je ne suis pas là.",
+      "attendu": "contrainte",
+      "obtenu": "contrainte",
+      "ok": true,
+      "brut": {
+        "action": "contrainte",
+        "disponibilites": "pas le samedi"
+      },
+      "ms": 1175
+    },
+    {
+      "etiquette": "contrainte/negation-moment",
+      "phrase": "Surtout pas le matin.",
+      "attendu": "contrainte",
+      "obtenu": "contrainte",
+      "ok": true,
+      "brut": {
+        "action": "contrainte",
+        "disponibilites": "pas le matin"
+      },
+      "ms": 1025
+    },
+    {
+      "etiquette": "contrainte/plancher",
+      "phrase": "Pas avant jeudi, je suis en déplacement.",
+      "attendu": "contrainte",
+      "obtenu": "contrainte",
+      "ok": true,
+      "brut": {
+        "action": "contrainte",
+        "disponibilites": "pas avant jeudi, en déplacement"
+      },
+      "ms": 933
+    },
+    {
+      "etiquette": "contrainte/apres-18h",
+      "phrase": "Après 18 heures uniquement.",
+      "attendu": "contrainte",
+      "obtenu": "contrainte",
+      "ok": true,
+      "brut": {
+        "action": "contrainte",
+        "disponibilites": "après 18 heures uniquement"
+      },
+      "ms": 1070
+    },
+    {
+      "etiquette": "contrainte/avant-dejeuner",
+      "phrase": "Avant ma pause déjeuner si vous pouvez.",
+      "attendu": "contrainte ou choisir/1",
+      "obtenu": "contrainte",
+      "ok": true,
+      "brut": {
+        "action": "contrainte",
+        "disponibilites": "avant la pause déjeuner (avant midi)"
+      },
+      "ms": 1060
+    },
+    {
+      "etiquette": "contrainte/semaine-prochaine",
+      "phrase": "La semaine prochaine plutôt, cette semaine je suis pris.",
+      "attendu": "contrainte",
+      "obtenu": "contrainte",
+      "ok": true,
+      "brut": {
+        "action": "contrainte",
+        "disponibilites": "la semaine prochaine, pas cette semaine"
+      },
+      "ms": 1005
+    },
+    {
+      "etiquette": "contrainte/detour",
+      "phrase": "Il faudrait que ce soit un jour où ma femme est là, le mercredi.",
+      "attendu": "contrainte",
+      "obtenu": "contrainte",
+      "ok": true,
+      "brut": {
+        "action": "contrainte",
+        "disponibilites": "mercredi (jour où la femme est présente)",
+        "statut_occupant": "proprietaire"
+      },
+      "ms": 1075
+    },
+    {
+      "etiquette": "jour/pas-vendredi",
+      "phrase": "En tout cas, pas le vendredi.",
+      "attendu": "contrainte",
+      "obtenu": "contrainte",
+      "ok": true,
+      "brut": {
+        "action": "contrainte",
+        "disponibilites": "pas le vendredi"
+      },
+      "ms": 903
+    },
+    {
+      "etiquette": "jour/avant-vendredi",
+      "phrase": "Il me faudrait quelque chose avant vendredi.",
+      "attendu": "contrainte",
+      "obtenu": "contrainte",
+      "ok": true,
+      "brut": {
+        "action": "contrainte",
+        "disponibilites": "avant vendredi"
+      },
+      "ms": 889
+    },
+    {
+      "etiquette": "jour/demain-est-mercredi",
+      "phrase": "Demain c'est mercredi ? Alors va pour le matin.",
+      "attendu": "choisir/1",
+      "obtenu": "pas_clair",
+      "ok": false,
+      "brut": {},
+      "ms": 2352
+    },
+    {
+      "etiquette": "refuser/non",
+      "phrase": "Non, ça ne me convient pas.",
+      "attendu": "refuser",
+      "obtenu": "refuser",
+      "ok": true,
+      "brut": {
+        "action": "refuser"
+      },
+      "ms": 818
+    },
+    {
+      "etiquette": "refuser/aucun",
+      "phrase": "Aucun des deux ne m'arrange.",
+      "attendu": "refuser",
+      "obtenu": "refuser",
+      "ok": true,
+      "brut": {
+        "action": "refuser"
+      },
+      "ms": 1067
+    },
+    {
+      "etiquette": "refuser/ni-lun",
+      "phrase": "Ni l'un ni l'autre.",
+      "attendu": "refuser",
+      "obtenu": "refuser",
+      "ok": true,
+      "brut": {
+        "action": "refuser"
+      },
+      "ms": 833
+    },
+    {
+      "etiquette": "pas_clair/reel-agencum",
+      "phrase": "agençum",
+      "attendu": "pas_clair",
+      "obtenu": "pas_clair",
+      "ok": true,
+      "brut": {},
+      "ms": 1258
+    },
+    {
+      "etiquette": "pas_clair/reel-nos-gens",
+      "phrase": "Nos gens sur Marne.",
+      "attendu": "pas_clair",
+      "obtenu": "pas_clair",
+      "ok": true,
+      "brut": {},
+      "ms": 1815
+    },
+    {
+      "etiquette": "pas_clair/attendez",
+      "phrase": "Euh attendez, je regarde mon agenda.",
+      "attendu": "pas_clair",
+      "obtenu": "pas_clair",
+      "ok": true,
+      "brut": {},
+      "ms": 1282
+    },
+    {
+      "etiquette": "pas_clair/allo",
+      "phrase": "Allô ? Vous m'entendez ?",
+      "attendu": "pas_clair",
+      "obtenu": "pas_clair",
+      "ok": true,
+      "brut": {},
+      "ms": 1613
+    },
+    {
+      "etiquette": "pas_clair/hors-sujet",
+      "phrase": "Le chien a renversé la gamelle, une seconde.",
+      "attendu": "pas_clair",
+      "obtenu": "pas_clair",
+      "ok": true,
+      "brut": {},
+      "ms": 1883
+    },
+    {
+      "etiquette": "pas_clair/coupee",
+      "phrase": "Il est bien le",
+      "attendu": "pas_clair",
+      "obtenu": "pas_clair",
+      "ok": true,
+      "brut": {},
+      "ms": 1305
+    }
+  ]
+}
