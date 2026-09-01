@@ -754,6 +754,21 @@ class Conversation:
     # « demain » est un jour, dit autrement — et c'est la façon la PLUS courante de le
     # dire au téléphone, bien avant « mardi ». Le plus long d'abord : « après-demain »
     # contient « demain », et un appelant qui dit après-demain ne doit pas obtenir demain.
+    # « Au plus vite » est DÉTERMINISTE : c'est donc au contrôleur de le lire, pas au
+    # modèle (règle n°1, même raison que `nombres.py` et `communes.py`). Le 01/09,
+    # l'extracteur n'a pas armé `veut_plus_tot` sur « le plus vite possible » ; la phrase
+    # est tombée dans la reproposition, a ÉLOIGNÉ le rendez-vous d'un jour, puis a fait
+    # raccrocher un appelant qui n'avait rien refusé (R71).
+    #
+    # La liste reste courte et sans piège : chaque entrée est une demande d'être servi au
+    # plus tôt, jamais un refus ni une contrainte. `veut_plus_tot` continue de valoir en
+    # SECOND signal, pour les tournures qu'aucune liste ne prévoit — c'est là que le
+    # modèle est utile, et il ne décide toujours rien.
+    AU_PLUS_VITE = ("le plus vite possible", "le plus rapidement possible",
+                    "aussi vite que possible", "le plus tot possible", "au plus vite",
+                    "au plus tot", "des que possible", "des que vous pouvez",
+                    "tout de suite", "immediatement", "en urgence", "d urgence")
+
     JOURS_RELATIFS = (("apres demain", 2), ("demain", 1), ("aujourd hui", 0))
 
     def _jour_dit(self, texte: str) -> str | None:
@@ -779,6 +794,18 @@ class Conversation:
     NEGATIONS = ("pas", "sauf", "jamais", "hormis", "excepte", "impossible", "aucun")
     # « pas AVANT jeudi » n'est ni une exclusion ni une préférence : c'est un plancher.
     PLANCHERS = ("avant", "des", "a partir de", "apres")
+
+    def _demande_au_plus_tot(self) -> bool:
+        """L'appelant demande-t-il, en toutes lettres, à être servi au plus tôt ?
+
+        Séparé de `veut_plus_tot` (le signal du modèle) parce que les deux ne méritent pas
+        la même réplique : celui qui demande « rien de plus tôt ? » s'entend répondre qu'il
+        n'y a rien avant, celui qui dit « le plus vite possible » s'entend proposer le
+        premier créneau. Le second ne s'est rien vu refuser — le lui dire sur un ton
+        d'excuse serait répondre à une question qu'il n'a pas posée.
+        """
+        d = self._normalise(self._dernier_client())
+        return any(m in d for m in self.AU_PLUS_VITE)
 
     def _contraintes_dispo(self) -> dict:
         """Contraintes de créneaux tirées des disponibilités exprimées par l'appelant.
@@ -1203,6 +1230,37 @@ class Conversation:
         # sinon c'est une reproposition qu'il faut faire, pas une fin de non-recevoir.
         contraintes_stables = (self.flags.get("contraintes_proposees")
                                == _cle_contraintes(c))
+        # « Au plus vite » NE CONSOMME PAS LE QUOTA (R71). Le précédent est déjà dans ce
+        # fichier, pour les questions de prix : une question n'est pas un refus. Ici non
+        # plus — l'appelant ne rejette rien, il demande le créneau le plus proche, que
+        # nous venons justement de proposer. Le 01/09, deux « le plus vite possible »
+        # d'affilée ont suffi à faire perdre le rendez-vous à quelqu'un de coopérant.
+        #
+        # L'invariant n°6 (deux tours de créneaux) n'est pas touché : il borne la
+        # NÉGOCIATION, et redire « au plus vite » ne fait pas avancer le calendrier d'un
+        # cran. Une borne propre existe quand même — au-delà, on retombe dans le chemin
+        # normal, parce que trois fois la même demande sans que rien ne bouge veut dire
+        # qu'on ne se comprend pas, et l'artisan est alors mieux placé que nous.
+        au_plus_tot = self._demande_au_plus_tot()
+        if au_plus_tot and self._proposes and contraintes_stables:
+            dits = self.flags.get("au_plus_tot_dits", 0) + 1
+            self.flags["au_plus_tot_dits"] = dits
+            if dits <= 3:
+                # LA PHRASE VARIE (acquis de R57) : redire mot pour mot à quelqu'un qui
+                # vient de répéter sonne préenregistré, et c'est justement le moment où il
+                # a besoin de comprendre que sa demande a été entendue.
+                #
+                # verbatim : elle énonce une DATE (cf. le bloc de `_s5` plus bas).
+                creneau = self._dit(self._proposes[0])
+                if dits == 1:
+                    return self._say(f"Le plus tôt que je peux, c'est {creneau}. "
+                                     f"Voulez-vous que je vous le réserve ?",
+                                     verbatim=True)
+                return self._say(f"C'est vraiment le premier créneau disponible : "
+                                 f"{creneau}. Dites-moi oui et je vous le réserve.",
+                                 verbatim=True)
+        # « Rien de plus tôt ? » (R09) : une question, pas une demande. Elle mérite une
+        # réponse différente — celui-là s'est vu refuser quelque chose, l'autre non.
         if ex.get("veut_plus_tot") and self._proposes and contraintes_stables:
             self.flags["tours_creneaux"] += 1
             if self.flags["tours_creneaux"] <= 2:

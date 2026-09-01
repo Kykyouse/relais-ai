@@ -300,6 +300,75 @@ Le spike vocal ne s'ouvre **qu'en session dédiée**. Le Sender ID et l'OAuth Go
 le nom commercial — c'est-à-dire le cousin, pas nous.
 ---
 
+## 01/09 — Demander plus vite faisait reculer le rendez-vous (R71)
+
+Appel réel. R70 tient : la première phrase de l'appelant — problème, commune, numéro —
+n'a bien compté que pour un tour. Mais la suite :
+
+    AGENT  : Je peux vous proposer demain entre 8 h et 10 h, ou demain 14 h – 16 h.
+    CLIENT : Le plus vite possible.
+    AGENT  : Je peux vous proposer JEUDI 3 SEPTEMBRE entre 8 h et 10 h, ou …
+    CLIENT : Le plus vite possible.
+    AGENT  : Je transmets tout ça à Julien. Il vous rappelle sous 2 heures.
+
+Demander plus tôt l'a fait **reculer d'un jour**, puis raccrocher. Il l'avait déjà dit
+dans sa première phrase : « j'ai besoin de quelqu'un le plus vite possible ». Trois fois
+en un appel, et jamais entendu.
+
+Le mécanisme du « rien de plus tôt » existait depuis R09 — mais il est branché sur
+`veut_plus_tot`, un champ de l'EXTRACTEUR, que le modèle n'a pas armé pour cette tournure.
+La phrase est donc tombée dans la reproposition : `tours_creneaux += 1`, `saut = 2`,
+créneaux suivants ; au deuxième passage, quota épuisé, `_sans_rdv()`.
+
+**Troisième défaut d'affilée à mauvaise polarité, et celui-ci tombe sur le tour qui décide
+du rendez-vous.** R68 : une négation lue comme une préférence. R70 : plus l'appelant parle
+clairement, plus vite on le raccroche. R71 : plus il insiste pour être servi vite, plus on
+l'éloigne. Le point commun n'est pas la malchance — c'est que ces trois lectures étaient
+faites par des listes de mots-clés dans le contrôleur, ou déléguées au modèle sans
+vérification. Dans les deux cas, l'échec est silencieux : rien ne casse, l'agent répond
+avec aplomb, et seul un appel réel le révèle.
+
+Corrigé en mettant la famille « au plus vite » DANS LE CONTRÔLEUR — `AU_PLUS_VITE`,
+douze tournures. Raison de fond, la même que `nombres.py` et `communes.py` : ce qui se
+décide sans jugement ne se demande pas à un modèle. Le confier au LLM, c'est accepter
+qu'il en arme la moitié, ce qui vient de se produire. `veut_plus_tot` reste utile en
+SECOND signal, pour ce qu'aucune liste ne prévoit — c'est là que le modèle sert.
+
+Deux décisions de comportement, chacune avec son précédent dans le fichier :
+
+- **La demande ne consomme pas le quota.** Précédent : « une QUESTION (prix…) n'est pas un
+  REFUS ». Ici non plus — l'appelant ne rejette rien, il demande le créneau le plus proche,
+  celui qu'on vient de proposer. L'invariant n°6 borne la NÉGOCIATION, et redire « au plus
+  vite » ne fait pas avancer le calendrier d'un cran. Borne propre quand même : au-delà de
+  trois, on retombe dans le chemin normal, parce que trois fois la même demande sans que
+  rien ne bouge veut dire qu'on ne se comprend pas.
+- **La réplique diffère de celle de R09.** « Rien de plus tôt ? » est une question et
+  s'entend répondre qu'il n'y a rien avant. « Le plus vite possible » est une demande :
+  « Le plus tôt que je peux, c'est demain entre 8 h et 10 h. Voulez-vous que je vous le
+  réserve ? » S'excuser d'un refus que l'appelant n'a pas subi, c'est répondre à une
+  question qu'il n'a pas posée. Et la relance VARIE au second passage (acquis de R57).
+
+Banque de mutations : 5/8 au premier passage, test vert. Les deux survivantes disaient
+chacune un défaut de mon test, pas du code :
+
+- le quota. La branche répond AVANT le contrôle de quota, donc l'incrémenter ne se voit
+  pas dans la branche — seulement au tour de négociation SUIVANT. Il fallait vérifier
+  qu'après deux insistances, un vrai refus est encore servi.
+- ce qui est PRONONCÉ. Les deux créneaux proposés tombaient le même jour : comparer des
+  dates ne pouvait pas voir « on annonce le dernier au lieu du premier ». Le seul endroit
+  où cela se mesure est le texte que l'appelant entend.
+
+Test resserré → **7/8**, le huitième étant un témoin qui doit survivre.
+
+**Constaté au passage, et NON corrigé** : la commune n'a jamais été prononcée. Le STT a
+rendu « Nos gens sur Marne » puis « Naugeon-sur-Marne » ; c'est le code postal 94130 qui a
+validé la zone, et l'agent est passé directement à la confirmation du numéro. L'appelant
+n'a donc jamais entendu où l'on croyait intervenir. Le lead, lui, n'a rien perdu — il
+porte `code_postal` (vérifié : c'est `lead["slots"]`, pas la racine). Et on ne peut PAS
+déduire la commune du code postal : 94130 en désigne deux entrées, mais 91150 en couvre
+dix-huit. La question est donc de produit — acquitter le code postal à haute voix, ou
+demander le nom de la ville — pas de correction évidente. À trancher avec Geoffrey.
+
 ## 27/08 — L'appelant le plus clair était celui qu'on raccrochait (R70)
 
 Premier appel réel avec la sonde des disponibilités allumée. Geoffrey a dit UNE phrase :

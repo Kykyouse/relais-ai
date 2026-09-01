@@ -3575,6 +3575,140 @@ def check_creneaux_verbatim() -> bool:
     return True
 
 
+def check_au_plus_vite() -> bool:
+    """R71 : « le plus vite possible » ne doit pas éloigner le rendez-vous.
+
+    APPEL RÉEL du 01/09. L'appelant a une fuite d'eau et le dit trois fois :
+
+        AGENT  : Je peux vous proposer demain entre 8 h et 10 h, ou demain 14 h – 16 h.
+        CLIENT : Le plus vite possible.
+        AGENT  : Je peux vous proposer JEUDI 3 SEPTEMBRE entre 8 h et 10 h, ou …
+        CLIENT : Le plus vite possible.
+        AGENT  : Je transmets tout ça à Julien. Il vous rappelle sous 2 heures.
+
+    Demander plus tôt l'a fait reculer d'un jour, puis raccrocher. Le mécanisme du
+    « rien de plus tôt » existait pourtant depuis R09 — mais il est branché sur
+    `veut_plus_tot`, que l'extracteur n'a pas armé pour cette tournure. La phrase est donc
+    tombée dans la reproposition : `tours_creneaux += 1`, `saut = 2`, créneaux SUIVANTS ;
+    au deuxième passage, quota épuisé, `_sans_rdv()`.
+
+    **Encore la mauvaise polarité, et sur le tour qui décide du rendez-vous** : plus
+    l'appelant insiste pour être servi vite, plus on l'éloigne, puis on l'abandonne.
+
+    Pourquoi la liste vit dans le CONTRÔLEUR et non dans le prompt : « au plus vite » est
+    déterministe. Le confier au modèle, c'est accepter qu'il en arme la moitié — ce qui
+    s'est exactement produit. Même raison que `nombres.py` et `communes.py` : ce qui se
+    décide sans jugement ne se demande pas à un modèle. Le LLM reste utile en second
+    signal (`veut_plus_tot`), pour les tournures qu'aucune liste ne prévoit.
+
+    Ce que ce test verrouille :
+
+    1. la famille « au plus vite » propose le créneau LE PLUS TÔT, jamais un plus tard ;
+    2. elle ne consomme pas le quota jusqu'à l'abandon ;
+    3. un vrai REFUS continue de faire avancer le calendrier — sinon le remède
+       enfermerait l'appelant sur un créneau qu'il ne veut pas ;
+    4. une contrainte NOUVELLE prime toujours (l'acquis de T03/R61) : « plutôt jeudi »
+       n'est pas une demande d'aller plus vite.
+    """
+    import datetime as dt
+
+    from relais_proto.engine import Conversation, State
+
+    # mardi 1er septembre 2026, 21 h à Paris — l'heure de l'appel réel
+    QUAND = dt.datetime(2026, 9, 1, 19, 0, tzinfo=dt.UTC)
+
+    def jusqu_aux_creneaux():
+        """L'appel réel, jusqu'au tour où les créneaux sont proposés."""
+        convo = Conversation(CFG, MockLLM(), CalendarStub(CFG, now=QUAND))
+        convo.open()
+        for ligne in ("Bonjour. Une fuite d'eau dans la salle de bain. "
+                      "Numéro, il est 0 6. 30 30 11 11.",
+                      "J'habite à Naugeon-sur-Marne, c'est le 94 130.",
+                      "Oui."):
+            dit = convo.process(ligne)
+        return convo, dit
+
+    convo, dit = jusqu_aux_creneaux()
+    if not convo._proposes:
+        print(f"   la mise en place ne propose aucun créneau : « {dit} »")
+        return False
+    premier = convo._proposes[0]["date"]
+
+    # (1) toute la famille ramène au créneau LE PLUS TÔT, et le propose à réserver
+    for tournure in ("Le plus vite possible.", "Au plus vite !", "Dès que possible.",
+                     "Aussi vite que possible", "Le plus tôt possible",
+                     "Tout de suite si vous pouvez", "C'est urgent, immédiatement"):
+        convo, _ = jusqu_aux_creneaux()
+        dit = convo.process(tournure)
+        if convo.state == State.S11_CLOTURE:
+            print(f"   {tournure!r} raccroche : « {dit} »")
+            return False
+        if not convo._proposes:
+            print(f"   {tournure!r} ne propose plus rien : « {dit} »")
+            return False
+        if convo._proposes[0]["date"] > premier:
+            print(f"   {tournure!r} ÉLOIGNE le rendez-vous : "
+                  f"{convo._proposes[0]['date']} au lieu de {premier}")
+            return False
+        # et c'est bien le PREMIER créneau qui est PRONONCÉ. Les deux propositions
+        # tombent le même jour : une comparaison de dates ne voit rien ici, et une
+        # mutation qui annonçait `_proposes[-1]` y a survécu. Ce que l'appelant entend
+        # est le seul endroit où cela se mesure.
+        tot, tard = (convo._proposes[0].get("label_parle"),
+                     convo._proposes[-1].get("label_parle"))
+        if tot and tot not in dit:
+            print(f"   {tournure!r} n'annonce pas le premier créneau ({tot!r}) : « {dit} »")
+            return False
+        if tard and tard != tot and tard in dit:
+            print(f"   {tournure!r} annonce le créneau le plus TARD : « {dit} »")
+            return False
+
+    # (2) et deux insistances de suite ne font pas perdre le rendez-vous : c'est ce qui
+    # est arrivé le 01/09, à un appelant qui n'avait rien refusé.
+    convo, _ = jusqu_aux_creneaux()
+    convo.process("Le plus vite possible.")
+    dit = convo.process("Le plus vite possible.")
+    if convo.state == State.S11_CLOTURE:
+        print(f"   deux insistances font perdre le RDV : « {dit} »")
+        return False
+
+    # (2 bis) et le quota reste INTACT : après deux insistances, un vrai refus est encore
+    # servi. Sans cette vérification, incrémenter `tours_creneaux` dans la branche
+    # « au plus vite » passait inaperçu — la branche répond avant le contrôle de quota,
+    # donc le dommage n'apparaît qu'au tour de négociation SUIVANT. C'est là qu'il faut
+    # regarder, pas dans la branche elle-même.
+    convo, _ = jusqu_aux_creneaux()
+    convo.process("Le plus vite possible.")
+    convo.process("Le plus vite possible.")
+    dit = convo.process("Non, finalement ça ne me convient pas.")
+    if convo.state == State.S11_CLOTURE:
+        print(f"   les insistances ont brûlé le quota du refus suivant : « {dit} »")
+        return False
+
+    # (3) un vrai REFUS avance encore dans le calendrier. Sans quoi le remède
+    # enfermerait l'appelant sur un créneau dont il ne veut pas.
+    convo, _ = jusqu_aux_creneaux()
+    convo.process("Non, ça ne me convient pas du tout.")
+    if not convo._proposes or convo._proposes[0]["date"] <= premier:
+        print(f"   un refus ne fait plus avancer le calendrier : "
+              f"{[c['date'] for c in convo._proposes]}")
+        return False
+
+    # (4) une CONTRAINTE nouvelle prime — « plutôt jeudi » n'est pas « plus vite »
+    # (acquis de T03/R61 : le raccourci ne vaut que si les contraintes n'ont pas bougé)
+    convo, _ = jusqu_aux_creneaux()
+    convo.process("Plutôt jeudi, le plus tôt possible dans la journée.")
+    if not convo._proposes:
+        print("   « plutôt jeudi » ne propose plus rien")
+        return False
+    if any(dt.date.fromisoformat(c["date"]).weekday() != 3 for c in convo._proposes):
+        print(f"   la contrainte « jeudi » est écrasée par le raccourci : "
+              f"{[c['label'] for c in convo._proposes]}")
+        return False
+
+    return True
+
+
 def check_transcription_qui_se_precise() -> bool:
     """R70 : une transcription qui se précise ne consomme pas un tour de parole.
 
@@ -8159,6 +8293,14 @@ def run() -> int:
     if check_transcription_qui_se_precise():
         print("   → une transcription qui se précise ne consomme plus un tour : "
               "l'appelant qui dit tout d'un coup n'est plus raccroché : ✅ PASS")
+    else:
+        print("   → ❌ FAIL")
+        echecs += 1
+
+    print(f"\n──── R71_au_plus_vite ────")
+    if check_au_plus_vite():
+        print("   → « le plus vite possible » ramène au créneau le plus tôt au lieu "
+              "d'éloigner le rendez-vous puis de raccrocher : ✅ PASS")
     else:
         print("   → ❌ FAIL")
         echecs += 1
