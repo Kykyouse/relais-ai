@@ -112,7 +112,8 @@ def creer_app(depot, registre: Registre, fabrique_llm, horloge=None,
               sonde_voix: "pathlib.Path | None" = None,
               sonde_dispo: "pathlib.Path | None" = None,
               voix_artisan_defaut: str | None = None,
-              version: str = "inconnue") -> FastAPI:
+              version: str = "inconnue",
+              modeles: dict | None = None) -> FastAPI:
     """Collaborateurs injectés explicitement plutôt que par variables globales : les tests
     passent un dépôt mémoire, un MockLLM et une horloge figée, la prod un dépôt Postgres.
 
@@ -120,6 +121,13 @@ def creer_app(depot, registre: Registre, fabrique_llm, horloge=None,
     de suite : un code qui arrive au prochain passage du cron n'est pas un code. Sans lui,
     tout continue de fonctionner — le message reste en file et le worker l'expédiera, avec
     la latence du cron.
+
+    `modeles` — {extracteur, formuleur} — est PUBLIÉ par `/sante`, pour la même raison que
+    la révision (R65) : le 01/09, la question « ton appel tournait-il en Sonnet ou en
+    Haiku ? » n'a pas pu être tranchée depuis le serveur, et il a fallu la déduire du
+    fichier `.env`. Une déduction plausible et une mesure ne se disent pas de la même
+    façon. Un nom de modèle n'est pas un secret ; l'ignorer coûte une enquête à chaque
+    fois qu'une latence surprend.
 
     `sonde_voix` est le chemin du journal de la sonde de l'étape 0 (`sonde_voix.py`).
     `sonde_dispo` est celui de la sonde des tournures de temps (`sonde_dispo.py`). Les deux
@@ -219,7 +227,8 @@ def creer_app(depot, registre: Registre, fabrique_llm, horloge=None,
         # doit être une donnée, pas un raisonnement.** Ce n'est pas un secret : c'est un
         # identifiant de révision, comme le numéro de version d'un logiciel.
         return {"statut": "ok", "contrat_lead": CONTRAT_LEAD_VERSION,
-                "cookie_secure": cookie_secure, "version": version}
+                "cookie_secure": cookie_secure, "version": version,
+                "modeles": modeles or {}}
 
     # ---- sonde de l'étape 0 (chantier voix), absente par défaut ----
     if sonde_voix is not None:

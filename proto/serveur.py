@@ -167,6 +167,28 @@ def construire():
         # genre de réglage qu'on oublie et qui envoie les leads chez le mauvais artisan
         print(f"appels vocaux sans numéro appelé → artisan {voix_artisan!r} "
               f"(RELAIS_VOIX_ARTISAN)")
+    # QUELS MODÈLES TOURNENT. Annoncé au démarrage ET publié par /sante, pour la même
+    # raison que la révision (R65) : le 01/09, « ton appel tournait-il en Sonnet ou en
+    # Haiku ? » a dû être déduit du fichier .env au lieu d'être lu sur le serveur. Une
+    # déduction plausible et une mesure ne se disent pas de la même façon.
+    #
+    # Le mode MOCK est annoncé aussi, et c'est le plus important : sans clé API,
+    # `make_llm` retombe silencieusement sur le harnais par mots-clés. On croit alors
+    # tester la compréhension du modèle et on teste des `in` sur des listes. C'est le
+    # genre de méprise qui fait tirer les mauvaises conclusions d'un appel réel.
+    defaut = os.environ.get("RELAIS_MODEL", "claude-haiku-4-5")
+    if os.environ.get("ANTHROPIC_API_KEY"):
+        modeles = {
+            "extracteur": os.environ.get("RELAIS_MODEL_EXTRACTEUR") or defaut,
+            "formuleur": os.environ.get("RELAIS_MODEL_FORMULEUR") or defaut,
+        }
+        print(f"LLM : extracteur {modeles['extracteur']} · "
+              f"formuleur {modeles['formuleur']}")
+    else:
+        modeles = {"extracteur": "mock", "formuleur": "mock"}
+        print("⚠️  AUCUNE CLÉ API : le LLM est le HARNAIS DE TEST (mots-clés). "
+              "Un appel réel ne mesurera PAS la compréhension du modèle.")
+
     sonde = _sonde_voix()
     sonde_dispo = _sonde_dispo()
     # Annoncée au démarrage, comme le réglage du cookie et pour la même raison : un état
@@ -181,7 +203,8 @@ def construire():
     return creer_app(depot, registre, make_llm, base_url=_exige("RELAIS_BASE_URL"),
                      cookie_secure=secure, envoyeur=envoyeur, sonde_voix=sonde,
                      sonde_dispo=sonde_dispo,
-                     voix_artisan_defaut=voix_artisan, version=version)
+                     voix_artisan_defaut=voix_artisan, version=version,
+                     modeles=modeles)
 
 
 app = construire()
