@@ -77,7 +77,12 @@ CAS: list[tuple[str, str, int | None, str]] = [
     # ---- la même intention, autrement dite ----
     ("Dès que vous pouvez.", actions.PLUS_TOT, None, "plus_tot/des-que"),
     ("Au plus vite s'il vous plaît.", actions.PLUS_TOT, None, "plus_tot/au-plus-vite"),
-    ("Peu importe, le premier libre.", actions.CHOISIR, 1, "plus_tot/premier-libre"),
+    # AMBIGU, et les deux lectures donnent le bon comportement : `choisir/1` réserve le
+    # premier créneau, `plus_tot` l'annonce et demande confirmation. Haiku ET Sonnet
+    # répondent `plus_tot` — c'est le plus prudent des deux, et on ne va pas le leur
+    # reprocher.
+    ("Peu importe, le premier libre.", ("choisir/1", "plus_tot"), None,
+     "plus_tot/premier-libre"),
     ("Vous n'avez rien avant ?", actions.PLUS_TOT, None, "plus_tot/rien-avant"),
     ("C'est vraiment urgent, l'eau coule.", actions.PLUS_TOT, None, "plus_tot/urgent"),
     ("Franchement le plus tôt possible, je suis inondé.", actions.PLUS_TOT, None,
@@ -104,7 +109,10 @@ CAS: list[tuple[str, str, int | None, str]] = [
     ("Pas avant jeudi, je suis en déplacement.", actions.CONTRAINTE, None,
      "contrainte/plancher"),
     ("Après 18 heures uniquement.", actions.CONTRAINTE, None, "contrainte/apres-18h"),
-    ("Avant ma pause déjeuner si vous pouvez.", actions.CONTRAINTE, None,
+    # AMBIGU aussi : la première proposition (8 h – 10 h) EST avant le déjeuner. La lire
+    # comme le choix du créneau du matin est juste ; la lire comme une contrainte de
+    # moment l'est également. Sonnet choisit la première, Haiku la seconde.
+    ("Avant ma pause déjeuner si vous pouvez.", ("contrainte", "choisir/1"), None,
      "contrainte/avant-dejeuner"),
     ("La semaine prochaine plutôt, cette semaine je suis pris.", actions.CONTRAINTE, None,
      "contrainte/semaine-prochaine"),
@@ -128,19 +136,33 @@ CAS: list[tuple[str, str, int | None, str]] = [
 ]
 
 
-def _verdict(ex: dict, attendu: str, rang_attendu: int | None) -> tuple[bool, str]:
+def _verdict(ex: dict, attendu, rang_attendu: int | None) -> tuple[bool, str]:
     """La validation du CONTRÔLEUR, pas la sortie brute du modèle.
 
     On mesure ce que le produit va exécuter. Un modèle qui renvoie une action inventée est
     aussi faux qu'un modèle qui se trompe d'action, et c'est `actions.valider` qui tranche
     — donc c'est elle qu'on interroge, jamais le JSON directement.
+
+    `attendu` accepte un TUPLE de réponses légitimes, et ce n'est pas une commodité : au
+    premier passage réel, les deux seuls « échecs » de Haiku et Sonnet étaient des cas où
+    MON attente était discutable. « Peu importe, le premier libre » lu comme `plus_tot`
+    déclenche « le plus tôt que je peux, c'est demain 8 h – 10 h, je vous le réserve ? » —
+    exactement la bonne réplique. Un banc de test qui compte ça comme une faute apprend à
+    « réparer » des modèles qui ont raison, et c'est pire qu'un banc absent : il donne du
+    travail faux avec l'autorité d'un chiffre.
+
+    Là où plusieurs lectures mènent à un comportement correct, on les accepte toutes.
+    Là où une seule est correcte, on n'en accepte qu'une.
     """
     action, rang = actions.valider(ex, CTX_S5["etat"], len(CTX_S5["propositions"]))
+    obtenu = f"{action}" + (f"/{rang}" if rang else "")
+    if isinstance(attendu, tuple):
+        return obtenu in attendu, obtenu
     if action != attendu:
-        return False, f"{action}" + (f"/{rang}" if rang else "")
+        return False, obtenu
     if rang_attendu is not None and rang != rang_attendu:
         return False, f"{action}/rang={rang}"
-    return True, f"{action}" + (f"/{rang}" if rang else "")
+    return True, obtenu
 
 
 def main() -> int:
@@ -148,6 +170,9 @@ def main() -> int:
     ap.add_argument("--mock", action="store_true",
                     help="plomberie seule, sans clé ni réseau (ne mesure PAS le modèle)")
     ap.add_argument("--only", default=None, help="filtre sur l'étiquette")
+    ap.add_argument("--modele", default=None,
+                    help="modèle à mesurer (défaut : RELAIS_MODEL_EXTRACTEUR, puis "
+                         "RELAIS_MODEL). Sert à comparer deux modèles sur les MÊMES cas.")
     args = ap.parse_args()
 
     cas = [c for c in CAS if not args.only or args.only in c[3]]
@@ -166,7 +191,10 @@ def main() -> int:
         if not os.environ.get("ANTHROPIC_API_KEY"):
             print("ANTHROPIC_API_KEY absente : `--mock` pour la plomberie seule.")
             return 2
-        modele = os.environ.get("RELAIS_MODEL", "claude-haiku-4-5-20251001")
+        modele = (args.modele or os.environ.get("RELAIS_MODEL_EXTRACTEUR")
+                  or os.environ.get("RELAIS_MODEL") or "claude-haiku-4-5")
+        # passé en ARGUMENT : l'environnement ne doit pas pouvoir écraser en silence le
+        # modèle qu'on croit mesurer
         llm = AnthropicLLM(model=modele)
 
     print(f"extraction · {len(cas)} cas · modèle {modele}\n")
@@ -181,7 +209,8 @@ def main() -> int:
         ok, obtenu = _verdict(ex, attendu, rang_attendu)
         reussis += ok
         marque = "✅" if ok else "❌"
-        attendu_lu = attendu + (f"/{rang_attendu}" if rang_attendu else "")
+        attendu_lu = (" ou ".join(attendu) if isinstance(attendu, tuple)
+                      else attendu + (f"/{rang_attendu}" if rang_attendu else ""))
         print(f"{marque} {etiquette:34} {phrase[:44]:46} "
               f"{obtenu:16} (attendu {attendu_lu}) {ms:>5} ms")
         resultats.append({"etiquette": etiquette, "phrase": phrase,
@@ -204,7 +233,15 @@ def main() -> int:
         print("    (clé dans .env à la racine ; RELAIS_MODEL pour le modèle)")
         return 2
 
-    print(f"\n{reussis}/{len(cas)} compris")
+    # p50 ET p95, pas une moyenne : au téléphone c'est la QUEUE qui s'entend. Un modèle
+    # à 200 ms de médiane et 2 s de p95 fait attendre un appelant sur vingt, et c'est
+    # précisément celui-là qui raccroche.
+    lat = sorted(r["ms"] for r in resultats)
+    def _q(part):
+        return lat[min(len(lat) - 1, int(part * len(lat)))]
+    print(f"\nlatence : p50 {_q(0.50)} ms · p95 {_q(0.95)} ms · max {lat[-1]} ms")
+
+    print(f"{reussis}/{len(cas)} compris")
     if args.mock:
         # EN MOCK, LE CRITÈRE N'EST PAS LA COMPRÉHENSION. Le harnais par mots-clés se
         # trompe forcément — il rend « choisir/2 » sur « le chien a renversé la gamelle,
@@ -234,7 +271,9 @@ def main() -> int:
         chemin = dossier / f"extract-{time.strftime('%Y%m%d-%H%M%S')}.json"
         chemin.write_text(json.dumps(
             {"modele": modele, "reussis": reussis, "total": len(cas),
-             "cas": resultats}, ensure_ascii=False, indent=2, default=str),
+             "latence_p50_ms": _q(0.50), "latence_p95_ms": _q(0.95),
+             "latence_max_ms": lat[-1], "cas": resultats},
+            ensure_ascii=False, indent=2, default=str),
             encoding="utf-8")
         print(f"→ {chemin}")
     return 0 if reussis == len(cas) else 1

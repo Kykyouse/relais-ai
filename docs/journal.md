@@ -300,6 +300,55 @@ Le spike vocal ne s'ouvre **qu'en session dédiée**. Le Sender ID et l'OAuth Go
 le nom commercial — c'est-à-dire le cousin, pas nous.
 ---
 
+## 01/09 (suite) — Haiku ou Sonnet pour l'extracteur : la mesure tranche, et pas comme prévu
+
+Geoffrey, clé renouvelée : « conseillerais-tu de passer de Haiku à Sonnet pour réduire le
+nombre d'erreurs malgré une latence légèrement supérieure ? » Avis de Fable : oui pour
+l'extracteur, non pour le formuleur, et mesurez avant de figer.
+
+Le raisonnement de Fable sur le PANACHAGE est juste et a été implémenté :
+`RELAIS_MODEL_EXTRACTEUR` et `RELAIS_MODEL_FORMULEUR`, défaut commun `RELAIS_MODEL`. Un
+modèle passé en argument gagne sur l'environnement — sinon `run_extract_eval.py` croirait
+mesurer un modèle et en mesurerait un autre.
+
+**La mesure, 36 cas identiques, dont 9 tirés d'appels réels :**
+
+    claude-haiku-4-5     36/36   p50 1053 ms   p95 2076 ms   max 2113 ms
+    claude-sonnet-5      36/36   p50 2618 ms   p95 6962 ms   max 8289 ms
+
+**Même justesse, 1,5 à 5 secondes de plus par tour. L'extracteur reste Haiku.** Un p95 de
+7 s au téléphone, avec un timeout client à 10 s, est un risque sans contrepartie : ce n'est
+pas « une latence légèrement supérieure », c'est un appelant sur vingt qui attend sept
+secondes une réponse à « le plus vite possible ».
+
+**Et ce chiffre répond à la question de la veille.** « Haiku est trop bête » : sur les
+tournures exactes qui ont cassé le produit — « le plus vite possible » sous trois formes,
+les négations de R68, « agençum » et « Nos gens sur Marne » du 01/09 — Haiku fait 36/36.
+**Le défaut était à 100 % dans le contrat, pas dans le modèle.** Ce qui manquait n'était ni
+de la capacité ni des mots-clés : c'était de lui demander de comprendre, et de lui laisser
+dire « je ne sais pas ».
+
+**Le harnais s'est corrigé au passage, et ce point vaut plus que le verdict.** Au premier
+passage, les deux seuls « échecs » (Haiku 35/36, Sonnet 34/36) étaient des cas où MON
+attente était discutable. « Peu importe, le premier libre » lu comme `plus_tot` déclenche
+« le plus tôt que je peux, c'est demain 8 h – 10 h, je vous le réserve ? » : exactement la
+bonne réplique. « Avant ma pause déjeuner » lu comme le choix du créneau du matin est juste
+aussi — la première proposition EST avant midi. Un banc qui compte ça comme une faute
+apprend à « réparer » des modèles qui ont raison, et c'est pire qu'un banc absent : il donne
+du travail faux avec l'autorité d'un chiffre. Les attentes acceptent donc désormais un
+TUPLE là où plusieurs lectures mènent à un comportement correct — et une seule ailleurs.
+
+**Limite à garder en tête** : les deux modèles sont au PLAFOND de ce banc. Un banc au
+plafond ne peut pas justifier un changement, et il ne prouve pas non plus que Sonnet
+n'aiderait jamais. Il dit une chose, exactement : *aujourd'hui, sur ce que nous savons
+tester, Sonnet ne rachète pas sa latence.* Chaque tournure ratée en appel réel devient un
+cas de plus, et la décision se rejoue en une variable d'environnement.
+
+Non fait, volontairement : brider la réflexion de Sonnet (`effort` bas). Fable cite un nom
+de paramètre que je n'ai pas vérifié, et Sonnet est écarté sur la latence de toute façon —
+le câbler sur la foi d'un nom aurait été le genre de pari que ce projet évite. À reprendre
+depuis la documentation le jour où Sonnet redeviendra candidat.
+
 ## 01/09 — Le curseur bouge : le LLM comprend, le code valide (menu d'actions)
 
 Geoffrey, après R71 : « le contrôleur ne pourra jamais tout couvrir sur un produit fini.

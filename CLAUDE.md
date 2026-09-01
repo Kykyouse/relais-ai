@@ -29,6 +29,14 @@ python run_llm_eval.py [--n 3] [--only T05]   # éval LLM réel → evals/result
                                     # 19 personas, dont 5 tirés d'appels vocaux RÉELS
                                     # RELAIS_MODEL = l'agent, RELAIS_MODEL_APPELANT
                                     # = l'appelant simulé (à garder FIXE pour comparer)
+                                    # RELAIS_MODEL_EXTRACTEUR / _FORMULEUR : les deux
+                                    # rôles se règlent séparément (défaut : RELAIS_MODEL).
+                                    # Mesuré le 01/09 sur run_extract_eval : Haiku et
+                                    # Sonnet à 36/36, p50 1,05 s contre 2,62 s et p95
+                                    # 2,1 s contre 7,0 s → l'extracteur reste HAIKU.
+                                    # Le banc est au plafond : il ne peut pas justifier le
+                                    # changement, il ne prouve pas que Sonnet n'aiderait
+                                    # jamais. À rejouer quand le banc grossit.
 python chat.py [--mock]             # conversation interactive (tu joues l'appelant)
 python explore.py                   # banc d'essai libre (cas A–F)
 uvicorn serveur:app --port 8000     # API HTTP (DATABASE_URL, RELAIS_WEBHOOK_SECRET,

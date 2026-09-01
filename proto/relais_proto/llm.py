@@ -272,12 +272,35 @@ def _texte_de(msg) -> str:
 
 
 class AnthropicLLM:
-    def __init__(self, model: str | None = None):
+    """DEUX MODÈLES, parce que les deux rôles n'ont pas le même profil de risque.
+
+    L'EXTRACTEUR décide du sens. Depuis le menu d'actions (`actions.py`), c'est lui qui
+    dit si « le plus vite possible » est un choix de créneau, une contrainte, ou du bruit
+    de transcription. Une erreur là déraille toute la conversation — R71 en est né. C'est
+    le poste où payer plus de capacité se justifie.
+
+    Le FORMULEUR est borné par ailleurs : `guards.check_output` refuse ses sorties non
+    conformes, et tout ce qui énonce un fait (prix, date, engagement) est `verbatim`, donc
+    ne passe pas par lui du tout (R63). Au pire il est moins élégant. Et c'est LUI que
+    l'appelant attend pour entendre quelque chose : c'est donc lui qui pèse sur la latence
+    perçue, et lui qu'on garde rapide.
+
+    Les deux variables se règlent séparément, avec `RELAIS_MODEL` comme défaut commun pour
+    que rien ne change sans qu'on l'ait voulu. Un modèle passé en ARGUMENT gagne sur
+    l'environnement : `run_extract_eval.py` force un modèle pour le comparer, et une
+    variable d'environnement qui écraserait ce choix rendrait la mesure fausse sans le
+    dire.
+    """
+
+    def __init__(self, model: str | None = None, modele_formuleur: str | None = None):
         import anthropic  # import tardif : optionnel en mode mock
         # timeout court + 1 retry : au téléphone, mieux vaut dégrader vite que faire
         # attendre l'appelant (le SDK attendrait sinon bien plus longtemps)
         self.client = anthropic.Anthropic(timeout=10.0, max_retries=1)
-        self.model = model or os.environ.get("RELAIS_MODEL", "claude-haiku-4-5")
+        defaut = os.environ.get("RELAIS_MODEL", "claude-haiku-4-5")
+        self.model = model or os.environ.get("RELAIS_MODEL_EXTRACTEUR") or defaut
+        self.modele_formuleur = (modele_formuleur
+                                 or os.environ.get("RELAIS_MODEL_FORMULEUR") or defaut)
 
     def extract(self, utterance: str, context: dict) -> dict:
         # max_tokens large : les modèles à réflexion adaptative (Sonnet 5) consomment
@@ -301,7 +324,7 @@ class AnthropicLLM:
     def reply(self, instruction: str, context: dict) -> str:
         dernier = context.get("dernier_tour") or "(l'appelant reste silencieux)"
         msg = self.client.messages.create(
-            model=self.model, max_tokens=1500,
+            model=self.modele_formuleur, max_tokens=1500,
             system=REPLY_SYSTEM.format(
                 nom_entreprise=context["nom_entreprise"], metier=context["metier"],
                 instruction=instruction),
