@@ -4136,7 +4136,9 @@ def check_dispo_negations() -> bool:
             convo.process(ligne)
         convo.slots["disponibilites"] = dispo
         convo.flags["contraintes_proposees"] = None
-        return convo._s5({}), convo._proposes
+        # `action: contrainte` — c'est ce que l'extracteur renvoie quand l'appelant donne
+        # une contrainte nouvelle ; son CONTENU reste lu en clair par `_contraintes_dispo`
+        return convo._s5({"action": "contrainte"}), convo._proposes
 
     dit, creneaux = propose("pas le samedi")
     if not creneaux:
@@ -7732,7 +7734,9 @@ def check_contrainte_prime_sur_plus_tot() -> bool:
         return False
     # on force l'extraction fautive telle que Haiku l'a produite
     convo.slots["disponibilites"] = "samedi matin uniquement"
-    reponse = convo._s5({"veut_plus_tot": True})
+    # depuis le 01/09, `_s5` lit une ACTION du menu (`actions.py`) et non plus des champs
+    # de fait : « rien de plus tôt » et « le plus vite possible » sont la même action
+    reponse = convo._s5({"action": "plus_tot"})
     if "plus tôt" in reponse.lower():
         print(f"   « rien de plus tôt » répondu à une demande de créneau PLUS TARD : "
               f"« {reponse} »")

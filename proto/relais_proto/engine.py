@@ -11,7 +11,7 @@ Le LLM ne choisit jamais ni l'état ni le contenu engageant (créneaux, prix, pr
 """
 from __future__ import annotations
 
-from . import communes, temps
+from . import actions, communes, temps
 from .calendar_stub import CalendarStub
 
 
@@ -81,6 +81,10 @@ class Conversation:
             "dernier_agent": next((t for w, t in reversed(self.transcript)
                                    if w == "agent"), ""),
             "propositions": [self._dit(s) for s in self._proposes],
+            # L'ÉTAT, parce que le menu d'actions en dépend (`actions.py`). Sans lui, le
+            # modèle recevrait un choix d'actions qui ne correspond pas au moment de
+            # l'appel — et le contrôleur refuserait tout, donc ferait répéter sans fin.
+            "etat": self.state.name,
         }
 
     def _dernier_client(self) -> str:
@@ -754,21 +758,6 @@ class Conversation:
     # « demain » est un jour, dit autrement — et c'est la façon la PLUS courante de le
     # dire au téléphone, bien avant « mardi ». Le plus long d'abord : « après-demain »
     # contient « demain », et un appelant qui dit après-demain ne doit pas obtenir demain.
-    # « Au plus vite » est DÉTERMINISTE : c'est donc au contrôleur de le lire, pas au
-    # modèle (règle n°1, même raison que `nombres.py` et `communes.py`). Le 01/09,
-    # l'extracteur n'a pas armé `veut_plus_tot` sur « le plus vite possible » ; la phrase
-    # est tombée dans la reproposition, a ÉLOIGNÉ le rendez-vous d'un jour, puis a fait
-    # raccrocher un appelant qui n'avait rien refusé (R71).
-    #
-    # La liste reste courte et sans piège : chaque entrée est une demande d'être servi au
-    # plus tôt, jamais un refus ni une contrainte. `veut_plus_tot` continue de valoir en
-    # SECOND signal, pour les tournures qu'aucune liste ne prévoit — c'est là que le
-    # modèle est utile, et il ne décide toujours rien.
-    AU_PLUS_VITE = ("le plus vite possible", "le plus rapidement possible",
-                    "aussi vite que possible", "le plus tot possible", "au plus vite",
-                    "au plus tot", "des que possible", "des que vous pouvez",
-                    "tout de suite", "immediatement", "en urgence", "d urgence")
-
     JOURS_RELATIFS = (("apres demain", 2), ("demain", 1), ("aujourd hui", 0))
 
     def _jour_dit(self, texte: str) -> str | None:
@@ -794,18 +783,6 @@ class Conversation:
     NEGATIONS = ("pas", "sauf", "jamais", "hormis", "excepte", "impossible", "aucun")
     # « pas AVANT jeudi » n'est ni une exclusion ni une préférence : c'est un plancher.
     PLANCHERS = ("avant", "des", "a partir de", "apres")
-
-    def _demande_au_plus_tot(self) -> bool:
-        """L'appelant demande-t-il, en toutes lettres, à être servi au plus tôt ?
-
-        Séparé de `veut_plus_tot` (le signal du modèle) parce que les deux ne méritent pas
-        la même réplique : celui qui demande « rien de plus tôt ? » s'entend répondre qu'il
-        n'y a rien avant, celui qui dit « le plus vite possible » s'entend proposer le
-        premier créneau. Le second ne s'est rien vu refuser — le lui dire sur un ton
-        d'excuse serait répondre à une question qu'il n'a pas posée.
-        """
-        d = self._normalise(self._dernier_client())
-        return any(m in d for m in self.AU_PLUS_VITE)
 
     def _contraintes_dispo(self) -> dict:
         """Contraintes de créneaux tirées des disponibilités exprimées par l'appelant.
@@ -1190,19 +1167,25 @@ class Conversation:
         # ("que le samedi matin" — bug T03-LLM)
         c = self._contraintes_dispo()
         jours, moment, dates = c["jours"], c["moment"], c["dates"]
+        # L'ACTION du menu de cet état (`actions.py`), déjà validée : soit l'une des
+        # actions que NOUS avons écrites, soit `pas_clair`. Le contrôleur ne lit plus une
+        # ligne de texte de l'appelant — c'est tout le déplacement décidé le 01/09, après
+        # trois défauts (R68, R70, R71) nés de listes de mots-clés qui tenaient lieu de
+        # compréhension.
+        action, rang = actions.valider(ex, self.state.name, len(self._proposes))
+
         # choix d'un créneau proposé ?
-        if self._proposes:
-            choix = ex.get("creneau_choisi")
+        if action == actions.CHOISIR and self._proposes:
             # « Oui, MAIS ça coûte combien ? » n'est pas le choix d'un créneau. Un `oui`
             # accompagné d'une question ne vaut acceptation de rien : réserver dessus
             # donnerait un rendez-vous que l'appelant n'a pas accepté — la faute que tout
-            # le produit est construit pour éviter. Un choix EXPLICITE (« le premier »)
-            # reste prioritaire, lui.
-            if choix is None and ex.get("confirme") is True \
-                    and not ex.get("question_prix"):
-                choix = 1
-            if choix and choix <= len(self._proposes):
-                return self._reserver(self._proposes[choix - 1])
+            # le produit est construit pour éviter.
+            #
+            # Le modèle est censé rendre `pas_clair` dans ce cas ; le contrôleur le vérifie
+            # quand même. C'est la ligne de partage : interpréter est au modèle, ENGAGER
+            # reste au code, et un engagement se contrôle même quand on fait confiance.
+            if not self._prix_a_repondre(ex):
+                return self._reserver(self._proposes[rang - 1])
         # Une QUESTION de prix n'est pas un refus de créneau. Elle tombait pourtant dans
         # le quota de l'invariant n°6 : l'agent reproposait des créneaux, le compteur
         # avançait, et DEUX questions suffisaient à faire perdre le RDV — à un client qui
@@ -1230,25 +1213,26 @@ class Conversation:
         # sinon c'est une reproposition qu'il faut faire, pas une fin de non-recevoir.
         contraintes_stables = (self.flags.get("contraintes_proposees")
                                == _cle_contraintes(c))
-        # « Au plus vite » NE CONSOMME PAS LE QUOTA (R71). Le précédent est déjà dans ce
-        # fichier, pour les questions de prix : une question n'est pas un refus. Ici non
-        # plus — l'appelant ne rejette rien, il demande le créneau le plus proche, que
-        # nous venons justement de proposer. Le 01/09, deux « le plus vite possible »
-        # d'affilée ont suffi à faire perdre le rendez-vous à quelqu'un de coopérant.
+        # PLUS TÔT — une seule action pour « le plus vite possible » et « vous n'avez rien
+        # avant ? ». Les deux demandent la même chose : le créneau le plus proche. Elles
+        # étaient traitées par deux branches et deux formulations ; c'était une définition
+        # de trop, et c'est ce genre de doublon qui a produit R70.
+        #
+        # ELLE NE CONSOMME PAS LE QUOTA. Le précédent est déjà dans ce fichier, pour les
+        # questions de prix : une question n'est pas un refus. Ici non plus — l'appelant ne
+        # rejette rien, il demande le créneau le plus proche, celui qu'on vient de
+        # proposer. Le 01/09, deux « le plus vite possible » d'affilée ont suffi à faire
+        # perdre le rendez-vous à quelqu'un de coopérant et pressé.
         #
         # L'invariant n°6 (deux tours de créneaux) n'est pas touché : il borne la
-        # NÉGOCIATION, et redire « au plus vite » ne fait pas avancer le calendrier d'un
-        # cran. Une borne propre existe quand même — au-delà, on retombe dans le chemin
-        # normal, parce que trois fois la même demande sans que rien ne bouge veut dire
-        # qu'on ne se comprend pas, et l'artisan est alors mieux placé que nous.
-        au_plus_tot = self._demande_au_plus_tot()
-        if au_plus_tot and self._proposes and contraintes_stables:
-            dits = self.flags.get("au_plus_tot_dits", 0) + 1
-            self.flags["au_plus_tot_dits"] = dits
+        # NÉGOCIATION, et redire « au plus vite » ne fait pas avancer le calendrier.
+        if action == actions.PLUS_TOT and self._proposes and contraintes_stables:
+            dits = self.flags.get("plus_tot_dits", 0) + 1
+            self.flags["plus_tot_dits"] = dits
             if dits <= 3:
                 # LA PHRASE VARIE (acquis de R57) : redire mot pour mot à quelqu'un qui
                 # vient de répéter sonne préenregistré, et c'est justement le moment où il
-                # a besoin de comprendre que sa demande a été entendue.
+                # a besoin de comprendre qu'on l'a entendu.
                 #
                 # verbatim : elle énonce une DATE (cf. le bloc de `_s5` plus bas).
                 creneau = self._dit(self._proposes[0])
@@ -1259,16 +1243,32 @@ class Conversation:
                 return self._say(f"C'est vraiment le premier créneau disponible : "
                                  f"{creneau}. Dites-moi oui et je vous le réserve.",
                                  verbatim=True)
-        # « Rien de plus tôt ? » (R09) : une question, pas une demande. Elle mérite une
-        # réponse différente — celui-là s'est vu refuser quelque chose, l'autre non.
-        if ex.get("veut_plus_tot") and self._proposes and contraintes_stables:
-            self.flags["tours_creneaux"] += 1
-            if self.flags["tours_creneaux"] <= 2:
-                # verbatim : cette phrase énonce une DATE (cf. le bloc de `_s5` plus bas)
-                return self._say(
-                    f"Je n'ai malheureusement rien de plus tôt : le premier créneau "
-                    f"disponible est {self._dit(self._proposes[0])}. "
-                    f"Voulez-vous que je vous le réserve ?", verbatim=True)
+
+        # PAS CLAIR — le modèle dit qu'il n'a pas compris, et c'est une réponse
+        # RESPECTABLE. Le 01/09, la transcription a rendu « agençum » et « Nos gens sur
+        # Marne » : agir sur ce bruit-là coûte un rendez-vous faux, bien plus cher qu'un
+        # tour de plus. On redit donc la proposition et on fait répéter.
+        #
+        # NOUVEL INVARIANT (n°10) : on ne bascule JAMAIS en repli « on vous rappelle »
+        # tant que l'appelant coopère. Une incompréhension déclenche une clarification,
+        # pas un abandon. Le repli reste borné à trois, parce que trois tours sans qu'on
+        # se comprenne veut dire que le canal est cassé, et l'artisan est alors mieux placé
+        # que nous — mais c'est une panne de liaison, pas un client qu'on renvoie.
+        if action == actions.PAS_CLAIR and self._proposes:
+            flous = self.flags.get("tours_flous", 0) + 1
+            self.flags["tours_flous"] = flous
+            if flous <= 3:
+                # verbatim : énonce une DATE
+                return self._say(f"Pardon, je n'ai pas bien saisi. "
+                                 f"{self._dit(self._proposes[0])}, est-ce que cela vous "
+                                 f"va ? Vous pouvez répondre oui ou non.", verbatim=True)
+            # Budget de clarification épuisé : on REPREND LE FIL en reproposant, on
+            # n'abandonne pas. Répéter « je n'ai pas saisi » indéfiniment est le seul
+            # comportement pire que d'agir de travers ; basculer sur « Julien vous
+            # rappellera » serait renvoyer quelqu'un qui est peut-être simplement mal
+            # transcrit. On tombe donc dans le chemin normal, qui propose la suite et dont
+            # le quota (invariant n°6) finit l'appel proprement.
+
         # (re)proposer — max 2 tours (invariant 6)
         if self.flags["tours_creneaux"] >= 2:
             return self._sans_rdv()

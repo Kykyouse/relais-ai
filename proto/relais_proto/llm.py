@@ -13,6 +13,8 @@ import json
 import os
 import re
 
+from . import actions
+
 EXTRACT_SYSTEM = """Tu extrais des informations d'une phrase d'un appelant au téléphone d'un artisan {metier}.
 Réponds UNIQUEMENT un objet JSON avec les clés présentes dans la phrase (omets les absentes) :
 - prestation: une de {prestations} si identifiable
@@ -30,17 +32,14 @@ Réponds UNIQUEMENT un objet JSON avec les clés présentes dans la phrase (omet
 - disponibilites: contraintes de dispo si exprimées
 - danger_gaz: true si odeur/fuite de gaz évoquée
 - confirme: true/false si la phrase est une confirmation/refus de ce que l'agent vient de proposer
-- creneau_choisi: 1 ou 2 si l'appelant choisit une des propositions en cours
-- veut_plus_tot: true si l'appelant demande un créneau PLUS TÔT que les propositions
 - question_prix: true si l'appelant demande un prix, un tarif ou une fourchette
 - veut_humain: true si l'appelant demande à parler à un humain/au patron
-Ne déduis rien qui ne soit pas dans la phrase.
+Pour les FAITS ci-dessus, ne déduis rien qui ne soit pas dans la phrase.
 
 Contexte de la conversation :
 - L'agent vient de dire : "{dernier_agent}"
 - Propositions de créneaux en cours : {propositions}
-Si la phrase de l'appelant désigne une des propositions (par son heure, son jour ou
-son rang — "le matin", "plutôt lundi", "le premier"), renvoie creneau_choisi (1 ou 2)."""
+{menu}"""
 
 REPLY_SYSTEM = """Tu es l'assistant vocal de {nom_entreprise} ({metier}), au téléphone.
 Tu parles pour un appel VOCAL : phrases courtes, chaleureuses, naturelles. UNE seule question à la fois.
@@ -192,12 +191,13 @@ class MockLLM:
             out["disponibilites"] = utterance.strip()[:80]
         if re.search(r"\b(oui|d'accord|ok|parfait|ça marche|c'est bon|exact)\b", u):
             out["confirme"] = True
-        if re.search(r"\b(non|pas possible|impossible)\b", u):
+        # « aucun des deux », « ni l'un ni l'autre » : des refus qui ne contiennent pas
+        # « non ». Le harnais les ignorait, et la clarification de `pas_clair` avalait donc
+        # un tour que le scénario attendait ailleurs. C'est bien la place de ce genre de
+        # rustine — dans le banc d'essai, pas dans le contrôleur.
+        if re.search(r"\b(non|pas possible|impossible|aucun|aucune|ni l'un ni l'autre)\b",
+                     u):
             out["confirme"] = False
-        if "premier" in u or "le 1" in u:
-            out["creneau_choisi"] = 1
-        if "deuxième" in u or "second" in u or "le 2" in u:
-            out["creneau_choisi"] = 2
         # « quelqu'un » TOUT SEUL ne veut pas dire « je veux parler à un humain » : dans ce
         # métier, « il faudrait que quelqu'un vienne » est la façon la plus banale de
         # demander une intervention. Le mot ne compte que dans un contexte de PAROLE.
@@ -207,11 +207,58 @@ class MockLLM:
                                 "parler à julien", "parler a julien",
                                 "quelqu'un au téléphone"]):
             out["veut_humain"] = True
-        if any(w in u for w in ["plus tôt", "rien avant", "pas avant"]):
-            out["veut_plus_tot"] = True
         if any(w in u for w in ["combien", "prix", "tarif", "fourchette", "coûte", "euros"]):
             out["question_prix"] = True
+        # ---- ACTION : le menu de l'état, décidé par mots-clés ICI et NULLE PART AILLEURS.
+        # C'est la place des mots-clés : un harnais de test déterministe. Trois défauts
+        # (R68, R70, R71) sont nés de la même erreur — les avoir mis dans `engine.py`, où
+        # ils tenaient lieu de compréhension sur le chemin de production. En production
+        # c'est le modèle qui interprète, contre le même menu fermé (`actions.py`).
+        #
+        # Ce mock n'a donc PAS pour but de bien comprendre le français : il a pour but de
+        # rendre la machine à états jouable sans réseau, de façon reproductible. Les
+        # tournures réelles se mesurent ailleurs — `run_extract_eval.py`.
+        if actions.menu((context or {}).get("etat", "")):
+            out["action"], rang = self._action(u, out)
+            if rang is not None:
+                out["rang"] = rang
         return out
+
+    # jours nommés : dupliqués du contrôleur à dessein. Un harnais de test qui importerait
+    # les tables du moteur ne pourrait plus détecter que le moteur les a cassées.
+    JOURS_MOCK = ("lundi", "mardi", "mercredi", "jeudi", "vendredi", "samedi", "dimanche",
+                  "demain", "aujourd'hui", "après-demain")
+    AU_PLUS_VITE_MOCK = ("le plus vite possible", "le plus rapidement possible",
+                         "aussi vite que possible", "le plus tôt possible", "au plus vite",
+                         "au plus tôt", "dès que possible", "dès que vous pouvez",
+                         "tout de suite", "immédiatement", "en urgence", "d'urgence",
+                         "plus tôt", "rien avant", "pas avant")
+
+    def _action(self, u: str, out: dict) -> tuple[str, int | None]:
+        """L'action du menu, dans l'ordre de priorité que le moteur appliquait avant.
+
+        L'ordre EST le contrat : un choix explicite (« le premier ») primait sur une
+        question de prix, et un « oui » accompagné d'une question ne valait acceptation de
+        rien (Katz, éval réelle du 25/08). Le déplacement vers un menu d'actions ne doit
+        rien changer à ces arbitrages — ils ont chacun coûté un appel.
+        """
+        if "premier" in u or "le 1" in u:
+            return actions.CHOISIR, 1
+        if "deuxième" in u or "second" in u or "le 2" in u:
+            return actions.CHOISIR, 2
+        if out.get("question_prix") or out.get("veut_humain"):
+            # des FAITS, que le moteur lit par ailleurs : rien à décider ici. `pas_clair`
+            # laisserait le moteur faire répéter au lieu de répondre sur le prix.
+            return actions.PAS_CLAIR, None
+        if any(w in u for w in self.AU_PLUS_VITE_MOCK):
+            return actions.PLUS_TOT, None
+        if any(j in u for j in self.JOURS_MOCK) or out.get("disponibilites"):
+            return actions.CONTRAINTE, None
+        if out.get("confirme") is True:
+            return actions.CHOISIR, 1
+        if out.get("confirme") is False:
+            return actions.REFUSER, None
+        return actions.PAS_CLAIR, None
 
     def reply(self, instruction: str, context: dict) -> str:
         return instruction  # les instructions du contrôleur sont déjà des phrases prononçables
@@ -240,7 +287,8 @@ class AnthropicLLM:
             system=EXTRACT_SYSTEM.format(
                 metier=context["metier"], prestations=context["prestations"],
                 dernier_agent=context.get("dernier_agent", ""),
-                propositions=context.get("propositions", []) or "aucune"),
+                propositions=context.get("propositions", []) or "aucune",
+                menu=actions.bloc_prompt(context.get("etat", ""))),
             messages=[{"role": "user", "content": utterance}],
         )
         text = _texte_de(msg)

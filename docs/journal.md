@@ -300,6 +300,81 @@ Le spike vocal ne s'ouvre **qu'en session dédiée**. Le Sender ID et l'OAuth Go
 le nom commercial — c'est-à-dire le cousin, pas nous.
 ---
 
+## 01/09 — Le curseur bouge : le LLM comprend, le code valide (menu d'actions)
+
+Geoffrey, après R71 : « le contrôleur ne pourra jamais tout couvrir sur un produit fini.
+J'aimerais une IA capable d'interpréter avec un minimum de jugeote ce qu'elle entend. Demain
+des gens diront le matin, avant la pause déjeuner, avant midi — on ne pourra pas tout mettre
+dans le contrôleur, et Claude Code a l'air obsédé par cette idée. » Avis de Fable demandé en
+parallèle, et convergent.
+
+**Il a raison, et j'avais tort trois fois de suite.** R68, R70, R71 : chaque échec
+d'interprétation corrigé par une liste de mots-clés de plus dans `engine.py`. Le pire est
+que j'avais moi-même proposé le vocabulaire fermé le 27/08, puis patché au lieu de le sortir
+quand R71 est arrivé. Douzième mot-clé plutôt que le refactor.
+
+**Le fait qui tranche, vérifié avant d'écrire une ligne** : l'extracteur RECEVAIT déjà les
+propositions en cours et la dernière réplique de l'agent (`Conversation._ctx`). Il avait tout
+pour comprendre. Ce qui lui manquait était son CONTRAT :
+
+    creneau_choisi: 1 ou 2 si l'appelant choisit une des propositions
+    veut_plus_tot:  true si l'appelant demande un créneau PLUS TÔT que les propositions
+    Si la phrase désigne une des propositions (par son heure, son jour ou son rang)…
+
+« Le plus vite possible » ne désigne ni heure, ni jour, ni rang, et ne demande pas *plus tôt
+que* les propositions. **Le modèle s'est comporté correctement au regard de ce qu'on lui
+demandait.** Aucune consigne d'interpréter un sens, aucune case pour « je ne suis pas sûr ».
+Le défaut était dans le contrat — ni dans le modèle, ni dans un manque de mots-clés.
+
+**Ce qui a été fait.** `actions.py` : chaque état expose un menu d'ACTIONS fermé. Pour S5 —
+`choisir(rang)`, `plus_tot`, `contrainte`, `refuser`, `pas_clair`. L'extracteur reçoit le
+menu et la consigne d'interpréter *comme le ferait une secrétaire expérimentée, pas comme un
+formulaire*. Le contrôleur valide (action au menu ? rang réel ?) puis exécute. **`engine.py`
+ne fait plus une seule correspondance de texte sur un créneau** : `AU_PLUS_VITE` et
+`_demande_au_plus_tot` sont supprimés, les mots-clés sont partis dans `MockLLM`.
+
+Le menu ne contient QUE ce qui se choisit. `question_prix` et `veut_humain` restent des
+FAITS, lus par le moteur dans tous les états : les inscrire aussi au menu aurait donné deux
+définitions de la même chose — le piège exact qui a produit R70.
+
+`pas_clair` est la pièce qui rend le reste acceptable. Le 01/09, la transcription a rendu
+« agençum » et « Nos gens sur Marne » : agir sur ce bruit coûte un rendez-vous faux. Le
+modèle a le droit de dire qu'il ne sait pas, et **toute** réponse invalide, inconnue ou
+malformée dégrade vers `pas_clair` — jamais vers l'abandon. D'où le nouvel invariant, écrit
+dans CLAUDE.md : *jamais de repli « on vous rappelle » tant que l'appelant coopère.*
+`pas_clair` fait répéter trois fois, puis REPREND LE FIL en reproposant. Basculer sur
+« Julien vous rappellera » serait renvoyer quelqu'un qui est peut-être simplement mal
+transcrit.
+
+**La règle n°1 n'est pas assouplie, elle est précisée** : le LLM ne décide rien de ce qui
+ENGAGE — prix, dates, promesses, transitions. Il dit ce qu'il a COMPRIS, dans un vocabulaire
+que nous possédons. Les garde-fous ne bougent pas d'un millimètre.
+
+**`run_extract_eval.py`** — la contrepartie, sans laquelle le déplacement serait un recul :
+36 cas (phrase + contexte → action attendue), un appel LLM chacun. C'est là qu'on encode les
+mille formulations, plus jamais dans le code. Neuf cas viennent d'appels réels, dont les
+six tournures de bouillie STT.
+
+**Ce qui reste à mesurer, et pourquoi ça n'a pas été fait aujourd'hui** : le premier passage
+réel a rendu 401 sur les 36 appels — **clé API invalide**. Le run n'a donc rien mesuré. Et
+il l'a d'abord annoncé comme « 6/36 compris », parce que trente 401 dégradent en
+`pas_clair` : je venais de fabriquer, dans l'outil censé débusquer les pannes silencieuses,
+exactement une panne silencieuse. Corrigé — un appel qui échoue sort en 2, comme
+`run_depot_pg.py` quand il n'a rien testé. « Ça n'a pas marché » et « ça a marché et c'est
+mauvais » ne doivent pas se ressembler.
+
+**Étape suivante, dans l'ordre** :
+
+1. clé API à renouveler, puis `python run_extract_eval.py` — c'est LUI qui répondra pour de
+   bon à « Haiku suffit-il ? », en mesurant, sur les tournures réelles ;
+2. les autres états, un par un (S2 commune, S4 identité), chacun avec ses cas d'éval — un
+   basculement en bloc ne se vérifierait pas ;
+3. le CONTENU des contraintes reste lu en clair par `_contraintes_dispo` (la machinerie
+   R68). L'action dit qu'il y a une contrainte ; ce qu'elle contient est encore du
+   mots-clés. C'est la suite du même déplacement, et c'est la plus grosse.
+
+75 tests au vert après le refactor, éval mock 19/19, plomberie d'extraction OK sur 36 cas.
+
 ## 01/09 — Demander plus vite faisait reculer le rendez-vous (R71)
 
 Appel réel. R70 tient : la première phrase de l'appelant — problème, commune, numéro —

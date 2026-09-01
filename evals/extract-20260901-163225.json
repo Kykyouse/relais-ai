@@ -1,0 +1,403 @@
+{
+  "modele": "claude-haiku-4-5",
+  "reussis": 6,
+  "total": 36,
+  "cas": [
+    {
+      "etiquette": "plus_tot/reel-0109",
+      "phrase": "Le plus vite possible.",
+      "attendu": "plus_tot",
+      "obtenu": "pas_clair",
+      "ok": false,
+      "brut": {
+        "_erreur": "AuthenticationError(\"Error code: 401 - {'type': 'error', 'error': {'type': 'authentication_error', 'message': 'API key is invalid.'}, 'request_id': None}\")"
+      },
+      "ms": 213
+    },
+    {
+      "etiquette": "plus_tot/reel-0109-bis",
+      "phrase": "Le plus vite possible",
+      "attendu": "plus_tot",
+      "obtenu": "pas_clair",
+      "ok": false,
+      "brut": {
+        "_erreur": "AuthenticationError(\"Error code: 401 - {'type': 'error', 'error': {'type': 'authentication_error', 'message': 'API key is invalid.'}, 'request_id': None}\")"
+      },
+      "ms": 150
+    },
+    {
+      "etiquette": "plus_tot/reel-0109-phrase",
+      "phrase": "J'ai besoin de quelqu'un le plus vite possible.",
+      "attendu": "plus_tot",
+      "obtenu": "pas_clair",
+      "ok": false,
+      "brut": {
+        "_erreur": "AuthenticationError(\"Error code: 401 - {'type': 'error', 'error': {'type': 'authentication_error', 'message': 'API key is invalid.'}, 'request_id': None}\")"
+      },
+      "ms": 155
+    },
+    {
+      "etiquette": "plus_tot/des-que",
+      "phrase": "Dès que vous pouvez.",
+      "attendu": "plus_tot",
+      "obtenu": "pas_clair",
+      "ok": false,
+      "brut": {
+        "_erreur": "AuthenticationError(\"Error code: 401 - {'type': 'error', 'error': {'type': 'authentication_error', 'message': 'API key is invalid.'}, 'request_id': None}\")"
+      },
+      "ms": 152
+    },
+    {
+      "etiquette": "plus_tot/au-plus-vite",
+      "phrase": "Au plus vite s'il vous plaît.",
+      "attendu": "plus_tot",
+      "obtenu": "pas_clair",
+      "ok": false,
+      "brut": {
+        "_erreur": "AuthenticationError(\"Error code: 401 - {'type': 'error', 'error': {'type': 'authentication_error', 'message': 'API key is invalid.'}, 'request_id': None}\")"
+      },
+      "ms": 154
+    },
+    {
+      "etiquette": "plus_tot/premier-libre",
+      "phrase": "Peu importe, le premier libre.",
+      "attendu": "choisir/1",
+      "obtenu": "pas_clair",
+      "ok": false,
+      "brut": {
+        "_erreur": "AuthenticationError(\"Error code: 401 - {'type': 'error', 'error': {'type': 'authentication_error', 'message': 'API key is invalid.'}, 'request_id': None}\")"
+      },
+      "ms": 148
+    },
+    {
+      "etiquette": "plus_tot/rien-avant",
+      "phrase": "Vous n'avez rien avant ?",
+      "attendu": "plus_tot",
+      "obtenu": "pas_clair",
+      "ok": false,
+      "brut": {
+        "_erreur": "AuthenticationError(\"Error code: 401 - {'type': 'error', 'error': {'type': 'authentication_error', 'message': 'API key is invalid.'}, 'request_id': None}\")"
+      },
+      "ms": 159
+    },
+    {
+      "etiquette": "plus_tot/urgent",
+      "phrase": "C'est vraiment urgent, l'eau coule.",
+      "attendu": "plus_tot",
+      "obtenu": "pas_clair",
+      "ok": false,
+      "brut": {
+        "_erreur": "AuthenticationError(\"Error code: 401 - {'type': 'error', 'error': {'type': 'authentication_error', 'message': 'API key is invalid.'}, 'request_id': None}\")"
+      },
+      "ms": 150
+    },
+    {
+      "etiquette": "plus_tot/inonde",
+      "phrase": "Franchement le plus tôt possible, je suis inondé.",
+      "attendu": "plus_tot",
+      "obtenu": "pas_clair",
+      "ok": false,
+      "brut": {
+        "_erreur": "AuthenticationError(\"Error code: 401 - {'type': 'error', 'error': {'type': 'authentication_error', 'message': 'API key is invalid.'}, 'request_id': None}\")"
+      },
+      "ms": 155
+    },
+    {
+      "etiquette": "choisir/rang-1",
+      "phrase": "Le premier.",
+      "attendu": "choisir/1",
+      "obtenu": "pas_clair",
+      "ok": false,
+      "brut": {
+        "_erreur": "AuthenticationError(\"Error code: 401 - {'type': 'error', 'error': {'type': 'authentication_error', 'message': 'API key is invalid.'}, 'request_id': None}\")"
+      },
+      "ms": 147
+    },
+    {
+      "etiquette": "choisir/rang-2",
+      "phrase": "Le deuxième ira très bien.",
+      "attendu": "choisir/2",
+      "obtenu": "pas_clair",
+      "ok": false,
+      "brut": {
+        "_erreur": "AuthenticationError(\"Error code: 401 - {'type': 'error', 'error': {'type': 'authentication_error', 'message': 'API key is invalid.'}, 'request_id': None}\")"
+      },
+      "ms": 152
+    },
+    {
+      "etiquette": "choisir/par-moment",
+      "phrase": "Le matin, plutôt.",
+      "attendu": "choisir/1",
+      "obtenu": "pas_clair",
+      "ok": false,
+      "brut": {
+        "_erreur": "AuthenticationError(\"Error code: 401 - {'type': 'error', 'error': {'type': 'authentication_error', 'message': 'API key is invalid.'}, 'request_id': None}\")"
+      },
+      "ms": 155
+    },
+    {
+      "etiquette": "choisir/par-heure",
+      "phrase": "Celui de 14 heures.",
+      "attendu": "choisir/2",
+      "obtenu": "pas_clair",
+      "ok": false,
+      "brut": {
+        "_erreur": "AuthenticationError(\"Error code: 401 - {'type': 'error', 'error': {'type': 'authentication_error', 'message': 'API key is invalid.'}, 'request_id': None}\")"
+      },
+      "ms": 144
+    },
+    {
+      "etiquette": "choisir/apres-midi",
+      "phrase": "L'après-midi m'arrange mieux.",
+      "attendu": "choisir/2",
+      "obtenu": "pas_clair",
+      "ok": false,
+      "brut": {
+        "_erreur": "AuthenticationError(\"Error code: 401 - {'type': 'error', 'error': {'type': 'authentication_error', 'message': 'API key is invalid.'}, 'request_id': None}\")"
+      },
+      "ms": 147
+    },
+    {
+      "etiquette": "choisir/acceptation",
+      "phrase": "Oui, c'est parfait.",
+      "attendu": "choisir/1",
+      "obtenu": "pas_clair",
+      "ok": false,
+      "brut": {
+        "_erreur": "AuthenticationError(\"Error code: 401 - {'type': 'error', 'error': {'type': 'authentication_error', 'message': 'API key is invalid.'}, 'request_id': None}\")"
+      },
+      "ms": 148
+    },
+    {
+      "etiquette": "choisir/ca-me-va",
+      "phrase": "Ça me va.",
+      "attendu": "choisir/1",
+      "obtenu": "pas_clair",
+      "ok": false,
+      "brut": {
+        "_erreur": "AuthenticationError(\"Error code: 401 - {'type': 'error', 'error': {'type': 'authentication_error', 'message': 'API key is invalid.'}, 'request_id': None}\")"
+      },
+      "ms": 152
+    },
+    {
+      "etiquette": "choisir/heure-nue",
+      "phrase": "Huit heures c'est bon pour moi.",
+      "attendu": "choisir/1",
+      "obtenu": "pas_clair",
+      "ok": false,
+      "brut": {
+        "_erreur": "AuthenticationError(\"Error code: 401 - {'type': 'error', 'error': {'type': 'authentication_error', 'message': 'API key is invalid.'}, 'request_id': None}\")"
+      },
+      "ms": 147
+    },
+    {
+      "etiquette": "choisir/second",
+      "phrase": "Le second créneau.",
+      "attendu": "choisir/2",
+      "obtenu": "pas_clair",
+      "ok": false,
+      "brut": {
+        "_erreur": "AuthenticationError(\"Error code: 401 - {'type': 'error', 'error': {'type': 'authentication_error', 'message': 'API key is invalid.'}, 'request_id': None}\")"
+      },
+      "ms": 150
+    },
+    {
+      "etiquette": "contrainte/jour",
+      "phrase": "Plutôt jeudi si c'est possible.",
+      "attendu": "contrainte",
+      "obtenu": "pas_clair",
+      "ok": false,
+      "brut": {
+        "_erreur": "AuthenticationError(\"Error code: 401 - {'type': 'error', 'error': {'type': 'authentication_error', 'message': 'API key is invalid.'}, 'request_id': None}\")"
+      },
+      "ms": 147
+    },
+    {
+      "etiquette": "contrainte/moment",
+      "phrase": "Seulement le matin, je travaille l'après-midi.",
+      "attendu": "contrainte",
+      "obtenu": "pas_clair",
+      "ok": false,
+      "brut": {
+        "_erreur": "AuthenticationError(\"Error code: 401 - {'type': 'error', 'error': {'type': 'authentication_error', 'message': 'API key is invalid.'}, 'request_id': None}\")"
+      },
+      "ms": 166
+    },
+    {
+      "etiquette": "contrainte/negation-jour",
+      "phrase": "Pas le samedi, je ne suis pas là.",
+      "attendu": "contrainte",
+      "obtenu": "pas_clair",
+      "ok": false,
+      "brut": {
+        "_erreur": "AuthenticationError(\"Error code: 401 - {'type': 'error', 'error': {'type': 'authentication_error', 'message': 'API key is invalid.'}, 'request_id': None}\")"
+      },
+      "ms": 148
+    },
+    {
+      "etiquette": "contrainte/negation-moment",
+      "phrase": "Surtout pas le matin.",
+      "attendu": "contrainte",
+      "obtenu": "pas_clair",
+      "ok": false,
+      "brut": {
+        "_erreur": "AuthenticationError(\"Error code: 401 - {'type': 'error', 'error': {'type': 'authentication_error', 'message': 'API key is invalid.'}, 'request_id': None}\")"
+      },
+      "ms": 150
+    },
+    {
+      "etiquette": "contrainte/plancher",
+      "phrase": "Pas avant jeudi, je suis en déplacement.",
+      "attendu": "contrainte",
+      "obtenu": "pas_clair",
+      "ok": false,
+      "brut": {
+        "_erreur": "AuthenticationError(\"Error code: 401 - {'type': 'error', 'error': {'type': 'authentication_error', 'message': 'API key is invalid.'}, 'request_id': None}\")"
+      },
+      "ms": 143
+    },
+    {
+      "etiquette": "contrainte/apres-18h",
+      "phrase": "Après 18 heures uniquement.",
+      "attendu": "contrainte",
+      "obtenu": "pas_clair",
+      "ok": false,
+      "brut": {
+        "_erreur": "AuthenticationError(\"Error code: 401 - {'type': 'error', 'error': {'type': 'authentication_error', 'message': 'API key is invalid.'}, 'request_id': None}\")"
+      },
+      "ms": 145
+    },
+    {
+      "etiquette": "contrainte/avant-dejeuner",
+      "phrase": "Avant ma pause déjeuner si vous pouvez.",
+      "attendu": "contrainte",
+      "obtenu": "pas_clair",
+      "ok": false,
+      "brut": {
+        "_erreur": "AuthenticationError(\"Error code: 401 - {'type': 'error', 'error': {'type': 'authentication_error', 'message': 'API key is invalid.'}, 'request_id': None}\")"
+      },
+      "ms": 142
+    },
+    {
+      "etiquette": "contrainte/semaine-prochaine",
+      "phrase": "La semaine prochaine plutôt, cette semaine je suis pris.",
+      "attendu": "contrainte",
+      "obtenu": "pas_clair",
+      "ok": false,
+      "brut": {
+        "_erreur": "AuthenticationError(\"Error code: 401 - {'type': 'error', 'error': {'type': 'authentication_error', 'message': 'API key is invalid.'}, 'request_id': None}\")"
+      },
+      "ms": 145
+    },
+    {
+      "etiquette": "contrainte/detour",
+      "phrase": "Il faudrait que ce soit un jour où ma femme est là, le mercredi.",
+      "attendu": "contrainte",
+      "obtenu": "pas_clair",
+      "ok": false,
+      "brut": {
+        "_erreur": "AuthenticationError(\"Error code: 401 - {'type': 'error', 'error': {'type': 'authentication_error', 'message': 'API key is invalid.'}, 'request_id': None}\")"
+      },
+      "ms": 147
+    },
+    {
+      "etiquette": "refuser/non",
+      "phrase": "Non, ça ne me convient pas.",
+      "attendu": "refuser",
+      "obtenu": "pas_clair",
+      "ok": false,
+      "brut": {
+        "_erreur": "AuthenticationError(\"Error code: 401 - {'type': 'error', 'error': {'type': 'authentication_error', 'message': 'API key is invalid.'}, 'request_id': None}\")"
+      },
+      "ms": 151
+    },
+    {
+      "etiquette": "refuser/aucun",
+      "phrase": "Aucun des deux ne m'arrange.",
+      "attendu": "refuser",
+      "obtenu": "pas_clair",
+      "ok": false,
+      "brut": {
+        "_erreur": "AuthenticationError(\"Error code: 401 - {'type': 'error', 'error': {'type': 'authentication_error', 'message': 'API key is invalid.'}, 'request_id': None}\")"
+      },
+      "ms": 151
+    },
+    {
+      "etiquette": "refuser/ni-lun",
+      "phrase": "Ni l'un ni l'autre.",
+      "attendu": "refuser",
+      "obtenu": "pas_clair",
+      "ok": false,
+      "brut": {
+        "_erreur": "AuthenticationError(\"Error code: 401 - {'type': 'error', 'error': {'type': 'authentication_error', 'message': 'API key is invalid.'}, 'request_id': None}\")"
+      },
+      "ms": 169
+    },
+    {
+      "etiquette": "pas_clair/reel-agencum",
+      "phrase": "agençum",
+      "attendu": "pas_clair",
+      "obtenu": "pas_clair",
+      "ok": true,
+      "brut": {
+        "_erreur": "AuthenticationError(\"Error code: 401 - {'type': 'error', 'error': {'type': 'authentication_error', 'message': 'API key is invalid.'}, 'request_id': None}\")"
+      },
+      "ms": 146
+    },
+    {
+      "etiquette": "pas_clair/reel-nos-gens",
+      "phrase": "Nos gens sur Marne.",
+      "attendu": "pas_clair",
+      "obtenu": "pas_clair",
+      "ok": true,
+      "brut": {
+        "_erreur": "AuthenticationError(\"Error code: 401 - {'type': 'error', 'error': {'type': 'authentication_error', 'message': 'API key is invalid.'}, 'request_id': None}\")"
+      },
+      "ms": 211
+    },
+    {
+      "etiquette": "pas_clair/attendez",
+      "phrase": "Euh attendez, je regarde mon agenda.",
+      "attendu": "pas_clair",
+      "obtenu": "pas_clair",
+      "ok": true,
+      "brut": {
+        "_erreur": "AuthenticationError(\"Error code: 401 - {'type': 'error', 'error': {'type': 'authentication_error', 'message': 'API key is invalid.'}, 'request_id': None}\")"
+      },
+      "ms": 188
+    },
+    {
+      "etiquette": "pas_clair/allo",
+      "phrase": "Allô ? Vous m'entendez ?",
+      "attendu": "pas_clair",
+      "obtenu": "pas_clair",
+      "ok": true,
+      "brut": {
+        "_erreur": "AuthenticationError(\"Error code: 401 - {'type': 'error', 'error': {'type': 'authentication_error', 'message': 'API key is invalid.'}, 'request_id': None}\")"
+      },
+      "ms": 169
+    },
+    {
+      "etiquette": "pas_clair/hors-sujet",
+      "phrase": "Le chien a renversé la gamelle, une seconde.",
+      "attendu": "pas_clair",
+      "obtenu": "pas_clair",
+      "ok": true,
+      "brut": {
+        "_erreur": "AuthenticationError(\"Error code: 401 - {'type': 'error', 'error': {'type': 'authentication_error', 'message': 'API key is invalid.'}, 'request_id': None}\")"
+      },
+      "ms": 175
+    },
+    {
+      "etiquette": "pas_clair/coupee",
+      "phrase": "Il est bien le",
+      "attendu": "pas_clair",
+      "obtenu": "pas_clair",
+      "ok": true,
+      "brut": {
+        "_erreur": "AuthenticationError(\"Error code: 401 - {'type': 'error', 'error': {'type': 'authentication_error', 'message': 'API key is invalid.'}, 'request_id': None}\")"
+      },
+      "ms": 150
+    }
+  ]
+}

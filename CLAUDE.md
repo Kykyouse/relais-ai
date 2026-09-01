@@ -18,6 +18,13 @@ cd proto
 pip install -r requirements.txt     # anthropic, python-dotenv (inutiles en mock)
 python run_scenario.py              # suite de non-régression (mock, sans clé, ~3 s) — 75 tests
 python run_llm_eval.py --mock       # plomberie de l'éval appelant-simulé (sans clé)
+python run_extract_eval.py [--mock] [--only plus_tot]
+                                    # tests unitaires d'EXTRACTION : (phrase + contexte)
+                                    # → action attendue du menu (actions.py). C'est ICI
+                                    # qu'on encode les tournures, jamais dans le moteur.
+                                    # --mock ne mesure QUE la plomberie. Sort 2 si les
+                                    # appels ont échoué : « ça n'a pas marché » ne doit
+                                    # pas se lire comme « le modèle n'a pas compris ».
 python run_llm_eval.py [--n 3] [--only T05]   # éval LLM réel → evals/results-*.json
                                     # 19 personas, dont 5 tirés d'appels vocaux RÉELS
                                     # RELAIS_MODEL = l'agent, RELAIS_MODEL_APPELANT
@@ -49,8 +56,16 @@ Clé API : fichier `.env` à la racine (voir `.env.example`). JAMAIS commité, J
 
 ## Règles non négociables
 
-1. **Le LLM ne décide jamais** : transitions, prix, créneaux, promesses viennent du contrôleur
-   (`engine.py`) et des listes blanches de la config. Le LLM extrait et formule, c'est tout.
+1. **Le LLM ne décide jamais ce qui ENGAGE** : transitions, prix, créneaux, promesses
+   viennent du contrôleur (`engine.py`) et des listes blanches de la config.
+   **Mais c'est le LLM qui COMPREND** (décidé le 01/09, après R68/R70/R71 : trois défauts
+   nés de listes de mots-clés dans le contrôleur qui tenaient lieu de compréhension).
+   Chaque état expose un menu d'actions FERMÉ (`actions.py`) ; l'extracteur reçoit le
+   contexte et rend UNE action de ce menu, ou `pas_clair` ; le contrôleur valide contre le
+   menu et les invariants, puis exécute. **Le contrôleur ne fait plus de correspondance de
+   texte** — pas un `in`, pas une liste de tournures. Les mots-clés vivent dans `MockLLM`,
+   qui est un harnais de test, et les mille formulations dans `run_extract_eval.py`.
+   Une tournure ratée en appel réel devient une ligne d'éval, JAMAIS une ligne de moteur.
 2. **Toute sortie passe par `guards.check_output`** — ne jamais contourner `_say()`.
    Vaut aussi pour l'écrit : les SMS passent par `guards` avant d'entrer en file (`messages.py`).
    **Le contrôleur ÉNONCE les faits, le formuleur DEMANDE** (R63) : une réplique formulée
@@ -60,6 +75,11 @@ Clé API : fichier `.env` à la racine (voir `.env.example`). JAMAIS commité, J
 4. **Chaque bug trouvé devient un test R<n>** dans `run_scenario.py` avant d'être corrigé
    (le commentaire du test dit qui l'a trouvé et quoi).
 5. Annonce IA en ouverture (AI Act art. 50) et téléphone confirmé avant tout RDV : intouchables.
+5bis. **Jamais de repli « on vous rappelle » tant que l'appelant coopère.** Une
+   incompréhension déclenche une CLARIFICATION, pas un abandon. Le 01/09, deux « le plus
+   vite possible » d'un client pressé et coopérant ont suffi à convertir une réservation
+   en rappel à faire. `pas_clair` fait répéter, puis reprend le fil en reproposant ; le
+   repli reste borné par l'invariant n°6, qui borne la NÉGOCIATION, pas l'écoute.
 6. Textes agent et code commentés en **français** (produit FR, équipe FR).
 7. **Un horodatage est un INSTANT en UTC ; une heure écrite dans la config est une heure de
    PENDULE** (`temps.py`). Jamais de `datetime.now()` hors `api.py`/`worker.py`, jamais
@@ -90,6 +110,8 @@ seule, essais comptés, un seul code vivant) · `serveur.py` câblage de product
 `worker.py` un passage des workers de fond. **L'API ne décide jamais** — corollaire
 backend de la règle n°1 : elle transporte et persiste, le métier reste dans engine/rdv.
 
+`actions.py` le MENU d'actions fermé par état, la validation, et le bout de prompt qui le
+décrit — une seule source pour ce que le modèle peut proposer et ce que le code accepte ·
 `engine.py` contrôleur déterministe S0–S11 · `llm.py` extracteur+formuleur (Anthropic/Mock/Resilient,
 dégradation gracieuse : jamais muet) · `guards.py` invariants en code · `calendar_stub.py` règles
 agenda · `scoring.py` lead + score 0–5 · `produit.py` config PRODUIT — nom visible
