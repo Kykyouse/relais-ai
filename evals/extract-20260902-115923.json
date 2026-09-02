@@ -1,0 +1,77 @@
+{
+  "modele": "claude-haiku-4-5",
+  "reussis": 6,
+  "total": 6,
+  "latence_p50_ms": 882,
+  "latence_p95_ms": 1707,
+  "latence_max_ms": 1707,
+  "cas": [
+    {
+      "etiquette": "humain/reel-0109",
+      "phrase": "Il faut trouver une solution, essayer de le joindre, de l'appeler, je ne sais pas.",
+      "attendu": "True",
+      "obtenu": "veut_humain=True",
+      "ok": true,
+      "brut": {
+        "veut_humain": true
+      },
+      "ms": 882
+    },
+    {
+      "etiquette": "humain/prevenir",
+      "phrase": "Vous ne pouvez pas le prévenir ?",
+      "attendu": "True",
+      "obtenu": "veut_humain=True",
+      "ok": true,
+      "brut": {
+        "veut_humain": true
+      },
+      "ms": 764
+    },
+    {
+      "etiquette": "humain/parler",
+      "phrase": "Je préfère lui parler directement.",
+      "attendu": "True",
+      "obtenu": "veut_humain=True",
+      "ok": true,
+      "brut": {
+        "veut_humain": true
+      },
+      "ms": 795
+    },
+    {
+      "etiquette": "humain/passez-moi",
+      "phrase": "Passez-moi quelqu'un s'il vous plaît.",
+      "attendu": "True",
+      "obtenu": "veut_humain=True",
+      "ok": true,
+      "brut": {
+        "veut_humain": true
+      },
+      "ms": 787
+    },
+    {
+      "etiquette": "humain/frontiere-intervention",
+      "phrase": "Il faudrait que quelqu'un vienne réparer ça.",
+      "attendu": "«absent»",
+      "obtenu": "veut_humain=False (= absent)",
+      "ok": true,
+      "brut": {
+        "veut_humain": false
+      },
+      "ms": 1707
+    },
+    {
+      "etiquette": "humain/frontiere-envoyer",
+      "phrase": "J'aimerais qu'on envoie quelqu'un demain.",
+      "attendu": "«absent»",
+      "obtenu": "veut_humain=False (= absent)",
+      "ok": true,
+      "brut": {
+        "disponibilites": "demain (jeudi 3 septembre)",
+        "veut_humain": false
+      },
+      "ms": 963
+    }
+  ]
+}

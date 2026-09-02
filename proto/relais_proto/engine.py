@@ -164,7 +164,18 @@ class Conversation:
     @staticmethod
     def _numero_suspect(texte: str, numero: str, cp: str | None = None) -> bool:
         # (la découpe des suites est partagée avec `_chiffres_dits` : cf. `_re_chiffres`)
-        """Vrai si `numero` a l'air TRONQUÉ de ce qui a été dit dans `texte`.
+        """Vrai si `numero` ne correspond pas à ce qui a été dit dans `texte` — TRONQUÉ
+        (R55) ou FABRIQUÉ (R75).
+
+        ⚠️ CE CONTRÔLE EST LA SEULE PROTECTION, ET C'EST MESURÉ. Le 02/09, sur le banc
+        d'extraction (`run_extract_eval.py`, cas `tel/*`), Haiku a violé sa consigne de
+        façon DÉTERMINISTE : huit chiffres dictés rendus en dix (« 0 6. 30. 30 11 » →
+        `0630301100`), douze rendus en dix. Un renforcement du prompt — consigne de
+        COMPTER les chiffres, trois exemples chiffrés — n'a rien changé : mêmes deux
+        échecs, au chiffre près. Le prompt a donc été remis dans sa forme courte, pour ne
+        pas payer des tokens contre une illusion de garantie.
+        Autrement dit : ce n'est pas une ceinture en plus des bretelles du prompt. C'est
+        la ceinture, et il n'y a pas de bretelles.
 
         La limite de tout contrôle de FORME (`_numero_fr`) : il ne dit rien de la
         correspondance entre ce qui est extrait et ce qui a été prononcé. Le 26/08, l'éval
@@ -190,7 +201,34 @@ class Conversation:
                 if cp and chiffres[len(numero):] == cp:
                     continue
                 return True
-        return False
+        # ---- et le cas SYMÉTRIQUE : le numéro est plus long que ce qui a été dit ----
+        #
+        # Le 02/09, l'appelant a dicté HUIT chiffres — « 0 6. 30. 30 11 » — et le modèle a
+        # rendu « 0630301100 ». Il a complété, ce que son prompt lui interdit en toutes
+        # lettres. La relecture et le « non » de l'appelant ont rattrapé (règle n°5), mais
+        # dépendre de l'oreille du client pour écarter une donnée fabriquée n'est pas un
+        # contrôle.
+        #
+        # Une troncature donne un numéro qui n'aboutit pas ; une FABRICATION peut donner
+        # le numéro de quelqu'un d'autre. C'est le plus grave des deux, et il manquait.
+        #
+        # La règle : les chiffres du numéro doivent se retrouver, DANS L'ORDRE ET D'AFFILÉE,
+        # parmi ceux qui ont été prononcés. Tous les chiffres de la phrase, sans tenir
+        # compte du découpage en suites — et c'est délibéré, contrairement au contrôle de
+        # troncature juste au-dessus qui, lui, raisonne suite par suite.
+        #
+        # Deux raisons. La dictée par morceaux est la réponse NORMALE à notre propre
+        # consigne « chiffre par chiffre » (R58), et une virgule au milieu (« 06 30 30,
+        # euh, 11 11 ») produirait deux suites pour un seul numéro : vérifier suite par
+        # suite refuserait un numéro parfaitement dicté. Et le chiffre parasite (« j'ai
+        # 2 enfants, mon numéro est… ») passe quand même, puisqu'il ALLONGE la
+        # concaténation au lieu de l'amputer.
+        #
+        # Une première version découpait en suites avant de les reconcaténer : deux
+        # mutations y ont survécu, parce que reconcaténer annule le découpage. Du code
+        # qui a l'air de raffiner sans rien changer est pire que le code simple.
+        dits = "".join(c for c in (texte or "") if c.isdigit())
+        return numero not in dits
 
     @staticmethod
     def _code_postal_fr(valeur) -> str | None:
@@ -633,7 +671,8 @@ class Conversation:
         # Vaucluse ? »). Le garde-fou des faits l'interdit désormais directement
         # (R63), donc la question peut être TOURNÉE librement. C'est une question,
         # pas une affirmation : rien à énoncer, tout à demander.
-        return self._say("Vous êtes sur quelle commune ?")
+        # champ visé → verbatim (R76) : le formuleur a posé une AUTRE question le 02/09
+        return self._say("Vous êtes sur quelle commune ?", verbatim=True)
 
     @staticmethod
     def _normalise(texte: str) -> str:
@@ -926,7 +965,7 @@ class Conversation:
                 self.flags["commune_a_confirmer"] = None
                 self.flags["commune_demandee"] = True
                 # dégelée, cf. l'autre occurrence (R63)
-                return self._say("Vous êtes sur quelle commune ?")
+                return self._say("Vous êtes sur quelle commune ?", verbatim=True)
 
         cp = self.slots["code_postal"]
         if cp is None:
@@ -963,11 +1002,14 @@ class Conversation:
             # DIFFÉRENTE, si. La borne reste — elle passe de deux tentatives à trois.
             if self.flags["commune_ratees"] >= 2:
                 # dégelée (R63) — « cinq » est un mot, pas un chiffre énoncé
-                return self._say("Je n'arrive pas à situer votre commune. Pouvez-vous me "
-                                 "donner votre code postal, les cinq chiffres ?")
-            # dégelée (R63) : une question sans fait revient au formuleur
+                return self._say("Je n'arrive pas à situer votre commune. Pouvez-vous "
+                                 "me donner votre code postal, les cinq chiffres ?",
+                                 verbatim=True)
+            # R63 l'avait dégelée (une question sans fait revenait au formuleur) ;
+            # R76 la regèle, pour la raison inverse : elle VISE UN CHAMP.
             return self._say("J'ai besoin de votre commune ou code postal pour vérifier "
-                             "qu'on intervient chez vous — vous êtes où ?")
+                             "qu'on intervient chez vous — vous êtes où ?",
+                             verbatim=True)
         self.flags["zone"] = self._zone_de(cp)
         if self.flags["zone"] == "hors_zone":
             # NE PAS raccrocher sur une commune glanée au passage. C'est la même règle que
@@ -1100,9 +1142,9 @@ class Conversation:
                     # DÉGELÉE (R63). C'est la relance qui sonnait le plus robot, et
                     # elle n'a aucun fait à énoncer : le formuleur peut la tourner comme
                     # il veut, il ne peut plus y mettre de chiffres.
-                    return self._say("Excusez-moi, je n'y arrive pas. Dites-moi les dix "
-                                     "chiffres d'un seul coup, sans pause — je vous "
-                                     "écoute.")
+                    return self._say("Excusez-moi, je n'y arrive pas. Dites-moi les "
+                                     "dix chiffres d'un seul coup, sans pause — je vous "
+                                     "écoute.", verbatim=True)
                 if len(digits) > 10:
                     # VERBATIM. Le formuleur en a fait une RELECTURE des douze chiffres
                     # qu'on venait de refuser (« 0-6-1-0-1-5-4-7-6-8-7-9. C'est bien
@@ -1112,16 +1154,19 @@ class Conversation:
                     # faire une relecture des chiffres refusés. Le garde-fou des faits
                     # l'interdit maintenant, et la phrase redevient une vraie question.
                     return self._say("Je n'ai pas bien noté votre numéro — pouvez-vous "
-                                     "me le redonner, chiffre par chiffre ?")
-                # dégelée (R63)
+                                     "me le redonner, chiffre par chiffre ?",
+                                     verbatim=True)
+                # dégelée par R63, regelée par R76 : elle vise un champ
                 return self._say("Ce numéro me semble incomplet — pouvez-vous me le "
-                                 "redonner en entier, avec les dix chiffres ?")
+                                 "redonner en entier, avec les dix chiffres ?",
+                                 verbatim=True)
             self.flags["tentatives_tel"] += 1
             if self.flags["tentatives_tel"] >= 2:  # 2 tentatives max (T11), puis repli propre
                 return self._sans_rdv()  # invariant 2 : pas de RDV sans rappel
             # dégelée (R63)
-            return self._say("Il me faut un numéro où vous joindre pour la confirmation — "
-                             "sans ça je ne peux pas réserver. Quel est votre numéro ?")
+            return self._say("Il me faut un numéro où vous joindre pour la "
+                             "confirmation — sans ça je ne peux pas réserver. Quel est "
+                             "votre numéro ?", verbatim=True)
         if not self.slots["tel_confirme"]:
             # correction : un NOUVEAU numéro donné pendant la confirmation remplace l'ancien
             # `_numero_fr` reste, lui : une mutation de R42 l'avait montré indispensable.
@@ -1145,7 +1190,11 @@ class Conversation:
             elif ex.get("confirme") is False:
                 # le numéro répété est FAUX : on l'efface et on redemande (jamais re-répéter le faux)
                 self.slots["telephone_rappel"] = None
-                return self._say("Au temps pour moi — redonnez-moi le bon numéro ?")
+                # LE CAS DU 02/09 : le formuleur a transformé cette phrase en
+                # « Quel est votre problème avec votre plomberie ? », et l'appelant s'est
+                # entendu redemander ce qu'il avait dit trois tours plus tôt.
+                return self._say("Au temps pour moi — redonnez-moi le bon numéro ?",
+                                 verbatim=True)
             else:
                 # Ni oui ni non. On repose la question — mais PAS indéfiniment : cette
                 # boucle-ci n'était bornée par rien (`tentatives_tel` borne la DEMANDE du

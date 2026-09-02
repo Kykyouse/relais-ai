@@ -300,6 +300,88 @@ Le spike vocal ne s'ouvre **qu'en session dédiée**. Le Sender ID et l'OAuth Go
 le nom commercial — c'est-à-dire le cousin, pas nous.
 ---
 
+## 02/09 — Le formuleur peut poser une autre question, et les garde-fous ne le voient pas
+
+Appel réel du matin, rendez-vous PRIS — et R72/R73 confirmés en production : « Le jeudi »
+lu comme une contrainte, calendrier resserré sur jeudi, quota intact, puis « L'après-midi »
+→ réservé. Mais deux défauts au milieu, dont un d'un genre nouveau.
+
+**R75 — l'extracteur a inventé deux chiffres.** L'appelant dicte « 0 6. 30. 30 11 » (huit
+chiffres), l'agent relit « 06 30 30 11 00 » (dix). Le filet a tenu — relecture, « Non », on
+redemande (règle n°5) — mais dépendre de l'oreille du client pour écarter une donnée
+fabriquée n'est pas un contrôle. `_numero_suspect` attrapait la TRONCATURE depuis R55 ; le
+cas symétrique manquait, et c'est le plus grave des deux : une troncature donne un numéro
+qui n'aboutit pas, une fabrication peut donner le numéro **de quelqu'un d'autre**.
+
+Règle ajoutée, déterministe : les chiffres du numéro doivent se retrouver, d'affilée, parmi
+ceux qui ont été prononcés. Deux mutations ont d'abord survécu parce que je découpais en
+suites avant de les reconcaténer — reconcaténer annule le découpage. Simplifié, et un cas
+ajouté (dictée coupée par une virgule) pour rendre la différence observable → 4/5.
+
+**MESURE QUI COMPTE PLUS QUE LE CORRECTIF** : sur le banc, Haiku viole sa consigne de façon
+DÉTERMINISTE — huit chiffres rendus en dix, douze rendus en dix. J'ai renforcé le prompt
+(consigne de COMPTER, trois exemples chiffrés distincts de ceux du banc) : **rien n'a
+changé, au chiffre près.** Le prompt a donc été remis dans sa forme courte, pour ne pas
+payer des tokens contre une illusion de garantie, et la mesure est inscrite dans le
+docstring du contrôle. Ce n'est pas une ceinture en plus des bretelles du prompt : c'est la
+ceinture, et il n'y a pas de bretelles.
+
+**R76 — le formuleur a posé une AUTRE question.**
+
+    AGENT  : Je répète votre numéro : 06 30 30 11 00, c'est bien ça ?
+    CLIENT : Non.
+    AGENT  : D'accord ! Je suis prêt à vous aider. Quel est votre problème
+             avec votre chauffage ou votre plomberie ?
+    CLIENT : Quoi Mais je te dis tout à l'heure qu'il avait une fuite.
+
+Vérifié : la machine à états était CORRECTE, l'instruction était « Au temps pour moi —
+redonnez-moi le bon numéro ? », l'état est resté S4. C'est le formuleur qui a réécrit
+l'instruction en la question d'ouverture de S1.
+
+**Et aucun garde-fou ne pouvait l'attraper.** Ils vérifient du contenu INTERDIT — prix,
+dates, promesses, salutations, tutoiement, noms propres. « Quel est votre problème avec
+votre plomberie ? » est formellement irréprochable. R63 (« le contrôleur énonce, le
+formuleur demande ») supposait que le formuleur pose LA question qu'on lui donne.
+
+Frontière redessinée, et c'est un principe : **demander un CHAMP est verbatim, RÉPONDRE à
+quelqu'un reste souple.** Neuf questions converties (commune ×2, code postal ×2, numéro ×5).
+Leur variation utile était déjà écrite dans le contrôleur (une tournure par tentative,
+R57) ; ce qu'un modèle y ajoute est nul, ce qu'il peut y perdre est la question.
+
+R63 avait DÉLIBÉRÉMENT dégelé ces phrases, en pariant que le garde-fou des chiffres
+suffirait. Trois de ses sous-cas affirmaient l'inverse de R76 : ils ont été **retournés
+plutôt que supprimés**, parce qu'un test qui disparaît ne raconte plus la décision qui l'a
+fait disparaître. Et la garantie de R63 est vérifiée là où elle s'applique encore — sur un
+tour qui répond.
+
+**Découverte de méthode, et elle explique beaucoup** : `MockLLM.reply` rend l'instruction
+INCHANGÉE. Les 80 tests sont donc **aveugles à ce que fait le formuleur** — verbatim ou
+non, le texte produit en mock est identique. C'est pourquoi un défaut de cette classe ne
+pouvait sortir que d'un appel réel, et pourquoi R76 est un test-ESPION : on ne vérifie pas
+le texte, on vérifie que le formuleur n'est pas appelé.
+
+**R77 — « essayer de le joindre, de l'appeler » n'armait pas `veut_humain`.** Appel perdu
+du 01/09, 15 h 16. Le chemin d'escalade existe et fonctionne ; c'est le CONTRAT du fait qui
+était trop étroit — « demande à parler à un humain/au patron » — exactement la cause de
+R71. Élargi (être rappelé par une personne, qu'on essaie de le joindre, qu'on le prévienne),
+avec la frontière explicite : « il faudrait que quelqu'un vienne » demande une
+INTERVENTION, pas une conversation. **6/6 sur le banc, frontière comprise.**
+
+Le banc couvre désormais les FAITS et non plus seulement les actions, sur deux contextes
+(S5 créneaux, S4 identité) : **47/49, p50 1040 ms.** Un pic à 11,6 s sur un cas — au-dessus
+de notre timeout client de 10 s, donc dégradation gracieuse en production ; à surveiller.
+
+Et une correction du banc lui-même : `veut_humain: false` était compté comme un échec là
+où j'attendais la clé ABSENTE. Les deux disent la même chose. Deuxième fois en deux jours
+qu'une attente trop stricte transformait un modèle correct en défaut — un banc qui fait ça
+donne du travail faux avec l'autorité d'un chiffre.
+
+**Reste ouvert** : dire quelque chose quand une contrainte ne change rien (« demain n'est
+pas un vendredi ») ; la phrase de clarification mal formée (« saisi. demain entre… ») ; la
+commune jamais prononcée quand seul le code postal a validé la zone ; et le CONTENU des
+contraintes, toujours lu par mots-clés, avec l'inversion connue « pas le matin ni le
+samedi ».
+
 ## 01/09 (soir) — Quatre appels réels : ce que le menu d'actions règle, et ce qu'il ne règle pas
 
 Geoffrey a passé quatre appels avec le menu d'actions en production. **2 rendez-vous

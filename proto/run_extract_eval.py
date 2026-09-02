@@ -148,6 +148,77 @@ CAS: list[tuple[str, str, int | None, str]] = [
 ]
 
 
+# Le contexte du tour d'IDENTITÉ. Les cas de FAITS s'y jouent : un numéro fabriqué et une
+# demande de contact humain n'ont rien à voir avec le menu de S5, et les mesurer dans le
+# contexte des créneaux aurait été mesurer autre chose.
+CTX_S4 = {
+    "metier": "plombier chauffagiste",
+    "nom_entreprise": "Dupont Chauffage",
+    "prestations": ["fuite", "wc_evacuation", "chaudiere_panne", "devis_sdb"],
+    "etat": "S4_IDENTITE",
+    "aujourdhui": "mercredi 2 septembre 2026, 11 h",
+    "dernier_agent": ("À quel nom, et sur quel numéro Julien peut vous confirmer le "
+                      "rendez-vous ?"),
+    "propositions": [],
+    "dernier_tour": "",
+}
+
+# Sentinelle : la clé ne doit PAS être renvoyée. « Absent » est une réponse à part entière
+# et souvent la BONNE — un numéro à peu près juste est pire qu'un numéro absent.
+ABSENT = "«absent»"
+
+# (phrase, contexte, clé attendue, valeur attendue, étiquette)
+CAS_FAITS: list[tuple[str, dict, str, object, str]] = [
+    # ---- CE QUI A COÛTÉ L'APPEL DU 01/09, 15 h 16 ----
+    # L'appelant, en urgence, demandait qu'on joigne l'artisan. `veut_humain` ne s'est pas
+    # armé, l'agent a répondu « pardon, je n'ai pas bien saisi », puis a raccroché — alors
+    # que l'escalade humaine était la bonne réponse et qu'elle existe dans le moteur.
+    ("Il faut trouver une solution, essayer de le joindre, de l'appeler, je ne sais pas.",
+     CTX_S4, "veut_humain", True, "humain/reel-0109"),
+    ("Vous ne pouvez pas le prévenir ?", CTX_S4, "veut_humain", True, "humain/prevenir"),
+    ("Je préfère lui parler directement.", CTX_S4, "veut_humain", True, "humain/parler"),
+    ("Passez-moi quelqu'un s'il vous plaît.", CTX_S4, "veut_humain", True,
+     "humain/passez-moi"),
+    # ET LA FRONTIÈRE : demander une INTERVENTION n'est pas demander une conversation.
+    # « Quelqu'un » tout seul est la façon la plus banale de demander un plombier — les
+    # confondre coûterait un transfert à chaque appel (défaut trouvé le 25/08).
+    ("Il faudrait que quelqu'un vienne réparer ça.", CTX_S4, "veut_humain", ABSENT,
+     "humain/frontiere-intervention"),
+    ("J'aimerais qu'on envoie quelqu'un demain.", CTX_S4, "veut_humain", ABSENT,
+     "humain/frontiere-envoyer"),
+
+    # ---- CE QUI A COÛTÉ L'APPEL DU 02/09 : le numéro FABRIQUÉ ----
+    # Huit chiffres dictés, dix rendus. Le prompt l'interdit en toutes lettres ; le
+    # contrôleur l'écarte désormais aussi (R75), mais on veut savoir si le modèle obéit.
+    ("Le numéro c'est le 0 6. 30. 30 11.", CTX_S4, "telephone_rappel", ABSENT,
+     "tel/fabrication-0209"),
+    ("Mon numéro est 06 10 15 47 68 79.", CTX_S4, "telephone_rappel", ABSENT,
+     "tel/onze-chiffres"),
+    ("C'est le 06 30 30 11 11.", CTX_S4, "telephone_rappel", "0630301111",
+     "tel/dix-chiffres"),
+    ("Alors, 0 6, 30, 30, 11, 11.", CTX_S4, "telephone_rappel", "0630301111",
+     "tel/dicte-par-morceaux"),
+]
+
+
+def _verdict_fait(ex: dict, cle: str, attendu) -> tuple[bool, str]:
+    """Un FAIT extrait, comparé à ce qu'il devrait valoir — `ABSENT` compris.
+
+    Absent est une réponse, et souvent la bonne : le prompt interdit de compléter un
+    numéro incomplet, et un modèle qui invente deux chiffres est plus dangereux qu'un
+    modèle qui ne rend rien.
+    """
+    obtenu = ex.get(cle, ABSENT)
+    # ABSENT et False disent la MÊME CHOSE pour un booléen : « non, ce n'est pas le cas ».
+    # Le prompt demande d'omettre les clés absentes, mais répondre `false` explicitement
+    # est aussi juste — et plus bavard, pas plus faux. Compter cela comme un échec
+    # apprendrait à « corriger » un modèle qui a raison : même leçon que les actions
+    # ambiguës du 01/09.
+    if attendu is ABSENT and obtenu is False:
+        return True, "False (= absent)"
+    return obtenu == attendu, str(obtenu)
+
+
 def _verdict(ex: dict, attendu, rang_attendu: int | None) -> tuple[bool, str]:
     """La validation du CONTRÔLEUR, pas la sortie brute du modèle.
 
@@ -188,7 +259,8 @@ def main() -> int:
     args = ap.parse_args()
 
     cas = [c for c in CAS if not args.only or args.only in c[3]]
-    if not cas:
+    faits = [c for c in CAS_FAITS if not args.only or args.only in c[4]]
+    if not cas and not faits:
         print(f"aucun cas ne correspond à --only {args.only!r}")
         return 2
 
@@ -209,7 +281,7 @@ def main() -> int:
         # modèle qu'on croit mesurer
         llm = AnthropicLLM(model=modele)
 
-    print(f"extraction · {len(cas)} cas · modèle {modele}\n")
+    print(f"extraction · {len(cas)} actions + {len(faits)} faits · modèle {modele}\n")
     resultats, reussis = [], 0
     for phrase, attendu, rang_attendu, etiquette in cas:
         debut = time.monotonic()
@@ -245,6 +317,21 @@ def main() -> int:
         print("    (clé dans .env à la racine ; RELAIS_MODEL pour le modèle)")
         return 2
 
+    for phrase, ctx, cle, attendu, etiquette in faits:
+        debut = time.monotonic()
+        try:
+            ex = llm.extract(phrase, ctx)
+        except Exception as exc:                                      # noqa: BLE001
+            ex = {"_erreur": repr(exc)}
+        ms = int((time.monotonic() - debut) * 1000)
+        ok, obtenu = _verdict_fait(ex, cle, attendu)
+        reussis += ok
+        print(f"{'✅' if ok else '❌'} {etiquette:34} {phrase[:44]:46} "
+              f"{cle}={obtenu:14} (attendu {attendu}) {ms:>5} ms")
+        resultats.append({"etiquette": etiquette, "phrase": phrase,
+                          "attendu": str(attendu), "obtenu": f"{cle}={obtenu}",
+                          "ok": ok, "brut": ex, "ms": ms})
+
     # p50 ET p95, pas une moyenne : au téléphone c'est la QUEUE qui s'entend. Un modèle
     # à 200 ms de médiane et 2 s de p95 fait attendre un appelant sur vingt, et c'est
     # précisément celui-là qui raccroche.
@@ -253,7 +340,7 @@ def main() -> int:
         return lat[min(len(lat) - 1, int(part * len(lat)))]
     print(f"\nlatence : p50 {_q(0.50)} ms · p95 {_q(0.95)} ms · max {lat[-1]} ms")
 
-    print(f"{reussis}/{len(cas)} compris")
+    print(f"{reussis}/{len(cas) + len(faits)} compris")
     if args.mock:
         # EN MOCK, LE CRITÈRE N'EST PAS LA COMPRÉHENSION. Le harnais par mots-clés se
         # trompe forcément — il rend « choisir/2 » sur « le chien a renversé la gamelle,
@@ -263,15 +350,18 @@ def main() -> int:
         #
         # Faire échouer `--mock` sur le score de compréhension apprendrait à ignorer un
         # rouge — le plus sûr moyen de ne plus rien voir le jour où il compte.
+        # les cas de FAITS ne rendent pas une action : on les reconnaît au « = » de
+        # leur libellé, et pour eux la plomberie se limite à « aucune exception ».
         casse = [r for r in resultats
                  if r["brut"].get("_erreur")
-                 or r["obtenu"].split("/")[0] not in actions.menu(CTX_S5["etat"])]
+                 or ("=" not in r["obtenu"]
+                     and r["obtenu"].split("/")[0] not in actions.menu(CTX_S5["etat"]))]
         if casse:
             for r in casse:
                 print(f"   PLOMBERIE : {r['etiquette']} → {r['obtenu']} "
                       f"{r['brut'].get('_erreur', '')}")
             return 1
-        print(f"plomberie OK sur {len(cas)} cas — le score ci-dessus ne mesure PAS le "
+        print(f"plomberie OK sur {len(cas) + len(faits)} cas — le score ci-dessus ne mesure PAS le "
               f"modèle (lancer sans --mock pour cela)")
         return 0
     if not args.mock:
@@ -282,13 +372,14 @@ def main() -> int:
         dossier.mkdir(exist_ok=True)
         chemin = dossier / f"extract-{time.strftime('%Y%m%d-%H%M%S')}.json"
         chemin.write_text(json.dumps(
-            {"modele": modele, "reussis": reussis, "total": len(cas),
+            {"modele": modele, "reussis": reussis,
+             "total": len(cas) + len(faits),
              "latence_p50_ms": _q(0.50), "latence_p95_ms": _q(0.95),
              "latence_max_ms": lat[-1], "cas": resultats},
             ensure_ascii=False, indent=2, default=str),
             encoding="utf-8")
         print(f"→ {chemin}")
-    return 0 if reussis == len(cas) else 1
+    return 0 if reussis == len(cas) + len(faits) else 1
 
 
 if __name__ == "__main__":

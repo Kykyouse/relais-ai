@@ -1,0 +1,54 @@
+{
+  "modele": "claude-haiku-4-5",
+  "reussis": 2,
+  "total": 4,
+  "latence_p50_ms": 1019,
+  "latence_p95_ms": 1252,
+  "latence_max_ms": 1252,
+  "cas": [
+    {
+      "etiquette": "tel/fabrication-0209",
+      "phrase": "Le numéro c'est le 0 6. 30. 30 11.",
+      "attendu": "«absent»",
+      "obtenu": "telephone_rappel=0630301100",
+      "ok": false,
+      "brut": {
+        "telephone_rappel": "0630301100"
+      },
+      "ms": 1019
+    },
+    {
+      "etiquette": "tel/onze-chiffres",
+      "phrase": "Mon numéro est 06 10 15 47 68 79.",
+      "attendu": "«absent»",
+      "obtenu": "telephone_rappel=0610154768",
+      "ok": false,
+      "brut": {
+        "telephone_rappel": "0610154768"
+      },
+      "ms": 853
+    },
+    {
+      "etiquette": "tel/dix-chiffres",
+      "phrase": "C'est le 06 30 30 11 11.",
+      "attendu": "0630301111",
+      "obtenu": "telephone_rappel=0630301111",
+      "ok": true,
+      "brut": {
+        "telephone_rappel": "0630301111"
+      },
+      "ms": 917
+    },
+    {
+      "etiquette": "tel/dicte-par-morceaux",
+      "phrase": "Alors, 0 6, 30, 30, 11, 11.",
+      "attendu": "0630301111",
+      "obtenu": "telephone_rappel=0630301111",
+      "ok": true,
+      "brut": {
+        "telephone_rappel": "0630301111"
+      },
+      "ms": 1252
+    }
+  ]
+}

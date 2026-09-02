@@ -3575,6 +3575,202 @@ def check_creneaux_verbatim() -> bool:
     return True
 
 
+def check_questions_de_champ_non_formulees() -> bool:
+    """R76 : demander un CHAMP est verbatim ; répondre à quelqu'un reste au formuleur.
+
+    APPEL RÉEL du 02/09, au milieu d'un appel qui a fini par aboutir :
+
+        AGENT  : Je répète votre numéro : 06 30 30 11 00, c'est bien ça ?
+        CLIENT : Non.
+        AGENT  : D'accord ! Je suis prêt à vous aider. Quel est votre problème
+                 avec votre chauffage ou votre plomberie ?
+        CLIENT : Quoi Mais je te dis tout à l'heure qu'il avait une fuite.
+
+    Vérifié : la machine à états était CORRECTE. L'instruction du contrôleur était « Au
+    temps pour moi — redonnez-moi le bon numéro ? », et l'état est resté S4. C'est le
+    FORMULEUR qui a réécrit cette instruction en la question d'ouverture de S1. L'appelant
+    s'est agacé, à juste titre.
+
+    **Et aucun garde-fou ne pouvait l'attraper.** Ils vérifient du contenu INTERDIT — prix,
+    dates, promesses, salutations, tutoiement, noms propres hors liste. « Quel est votre
+    problème avec votre plomberie ? » est formellement irréprochable. Le principe de R63
+    (« le contrôleur énonce, le formuleur demande ») supposait que le formuleur pose LA
+    question qu'on lui donne ; ici il en a posé une autre.
+
+    La ligne est donc redessinée, et c'est un principe, pas un rustine :
+
+        demander un CHAMP précis (commune, code postal, numéro, confirmation) → VERBATIM
+        RÉPONDRE à ce que l'appelant vient de dire (prix, digression, problème vague)
+                                                                          → formuleur
+
+    Une question qui vise une donnée n'a aucun besoin d'être reformulée : sa variation
+    utile est déjà écrite dans le contrôleur, qui choisit une tournure différente à chaque
+    tentative (R57). Ce qu'un modèle peut y ajouter est nul ; ce qu'il peut y perdre est
+    la question elle-même.
+
+    CE TEST EST UN ESPION, et il faut dire pourquoi : `MockLLM.reply` rend l'instruction
+    INCHANGÉE. Toute la suite de non-régression est donc AVEUGLE à ce que fait le
+    formuleur — verbatim ou pas, le texte produit en mock est identique. C'est ce qui
+    explique qu'un défaut de cette classe ne pouvait sortir que d'un appel réel. On ne peut
+    donc pas vérifier le texte : on vérifie que le formuleur n'est PAS APPELÉ.
+    """
+    import datetime as dt
+
+    from relais_proto.engine import Conversation
+    from relais_proto.llm import MockLLM as Mock
+
+    QUAND = dt.datetime(2026, 9, 2, 9, 37, tzinfo=dt.UTC)
+
+    class Espion(Mock):
+        """Compte les appels au formuleur, sans rien changer au comportement."""
+
+        def __init__(self):
+            super().__init__()
+            self.formulations = 0
+
+        def reply(self, instruction, context):
+            self.formulations += 1
+            return super().reply(instruction, context)
+
+    def tour(lignes):
+        """Rend (réplique, nombre d'appels au formuleur pour le DERNIER tour)."""
+        espion = Espion()
+        convo = Conversation(CFG, espion, CalendarStub(CFG, now=QUAND))
+        convo.open()
+        for ligne in lignes[:-1]:
+            convo.process(ligne)
+        avant = espion.formulations
+        dit = convo.process(lignes[-1])
+        return dit, espion.formulations - avant
+
+    FUITE = "J'ai une fuite dans la salle de bain, il y a de l'eau partout"
+
+    # ---- ce qui DEMANDE UN CHAMP ne passe plus par le formuleur ----
+    champs = [
+        ([FUITE], "la commune"),
+        ([FUITE, "euh je ne sais pas"], "la commune, deuxième tentative"),
+        # LE CAS DU 02/09 : le « non » sur la relecture du numéro
+        ([FUITE, "Nogent-sur-Marne 94130", "Martin, 06 11 22 33 44", "Non"],
+         "redonnez-moi le bon numéro"),
+        ([FUITE, "Nogent-sur-Marne 94130", "Martin", "toujours pas de numéro"],
+         "il me faut un numéro"),
+        ([FUITE, "Nogent-sur-Marne 94130", "Martin, 06 11"], "numéro incomplet"),
+    ]
+    for lignes, libelle in champs:
+        dit, formulations = tour(lignes)
+        if formulations:
+            print(f"   {libelle} : {formulations} appel(s) au formuleur — "
+                  f"une demande de champ ne se reformule pas (« {dit[:60]} »)")
+            return False
+        if not dit or not dit.strip():
+            print(f"   {libelle} : réplique vide")
+            return False
+
+    # ---- ce qui RÉPOND à l'appelant reste au formuleur : sans ça on aurait
+    # verbatimisé tout l'appel, et l'agent parlerait comme un répondeur ----
+    dit, formulations = tour([FUITE, "Nogent-sur-Marne 94130",
+                              "Martin, 06 11 22 33 44", "Oui",
+                              "ça va me coûter combien ?"])
+    if not formulations:
+        print(f"   la réponse sur le prix ne passe plus par le formuleur : « {dit} »")
+        return False
+
+    dit, formulations = tour(["Bonjour, j'ai un souci chez moi"])
+    if not formulations:
+        print(f"   la demande de précision sur un problème vague est figée : « {dit} »")
+        return False
+
+    return True
+
+
+def check_numero_fabrique() -> bool:
+    """R75 : un numéro que personne n'a prononcé ne doit pas entrer dans le produit.
+
+    APPEL RÉEL du 02/09 :
+
+        CLIENT : Le numéro c'est le 0 6. 30. 30 11.        (huit chiffres)
+        AGENT  : Je répète votre numéro : 06 30 30 11 00   (dix chiffres)
+
+    Le modèle a COMPLÉTÉ avec « 00 ». C'est précisément ce que son prompt lui interdit :
+    « ne tronque jamais, ne complète jamais — un numéro à peu près juste est pire qu'un
+    numéro absent ». Et c'est la pire classe d'erreur du produit : un mauvais numéro de
+    rappel, c'est un client perdu et un déplacement pour rien.
+
+    Le filet a tenu — relecture, « Non », on redemande (règle n°5). Mais dépendre de
+    l'oreille de l'appelant pour rattraper une donnée fabriquée n'est pas un contrôle.
+
+    `_numero_suspect` attrapait déjà la TRONCATURE depuis R55 : le numéro extrait est un
+    préfixe strict d'une suite prononcée. Le cas SYMÉTRIQUE manquait, et c'est le plus
+    grave des deux — une troncature donne un numéro qui n'aboutit pas, une fabrication
+    peut donner le numéro de QUELQU'UN D'AUTRE.
+
+    La règle ajoutée est déterministe : les chiffres du numéro extrait doivent se retrouver
+    dans les chiffres réellement prononcés. On concatène les suites de la phrase et on
+    vérifie que le numéro y figure. Ce qui laisse passer les deux cas légitimes que le
+    projet a déjà payés : la dictée par morceaux (R58 — « 06 30 30, euh, 11 11 ») et le
+    chiffre parasite (« j'ai 2 enfants, mon numéro est… »).
+
+    On ÉCARTE, on ne corrige pas : deviner les chiffres manquants serait exactement la
+    faute qu'on reproche au modèle.
+    """
+    import datetime as dt
+
+    from relais_proto.engine import Conversation
+
+    QUAND = dt.datetime(2026, 9, 2, 9, 37, tzinfo=dt.UTC)
+
+    def apres(texte, extrait):
+        """Ce que le contrôleur retient du numéro que l'extracteur prétend avoir lu."""
+        convo = Conversation(CFG, MockLLM(), CalendarStub(CFG, now=QUAND))
+        convo.open()
+        convo.process("J'ai une fuite dans la salle de bain, il y a de l'eau partout")
+        convo.process("Nogent-sur-Marne 94130")
+        convo.transcript.append(("client", texte))
+        ex = dict(extrait)
+        # `_chiffres_dits` porte le durcissement des chiffres : conversion des nombres
+        # prononcés, puis confrontation du numéro rendu à ce qui a été dit.
+        convo._chiffres_dits(texte, ex)
+        return ex
+
+    # (a) LE CAS DU 02/09 : huit chiffres prononcés, dix rendus → écarté
+    ex = apres("Le numéro c'est le 0 6. 30. 30 11.",
+               {"telephone_rappel": "0630301100"})
+    if ex.get("telephone_rappel"):
+        print(f"   un numéro FABRIQUÉ est accepté : {ex['telephone_rappel']}")
+        return False
+
+    # (b) la troncature reste écartée (acquis de R55, à ne pas casser)
+    ex = apres("Mon numéro est 06 10 15 47 68 79", {"telephone_rappel": "0610154768"})
+    if ex.get("telephone_rappel"):
+        print(f"   un numéro TRONQUÉ est accepté : {ex['telephone_rappel']}")
+        return False
+
+    # (c) CE QUI DOIT PASSER, sans quoi le remède est pire que le mal
+    legitimes = [
+        ("Mon numéro est le 06 30 30 11 11", "0630301111", "dicté normalement"),
+        # R58 : dicté par morceaux, la réponse à NOTRE consigne « chiffre par chiffre »
+        ("C'est le 0 6. 30. 30 11 11.", "0630301111", "dicté par morceaux"),
+        ("0 6 3 0 3 0 1 1 1 1", "0630301111", "épelé chiffre par chiffre"),
+        # DICTÉ EN DEUX MORCEAUX SÉPARÉS PAR UNE VIRGULE. La virgule coupe les suites de
+        # chiffres (elle sépare, elle ne compose pas) : un contrôle mené suite par suite
+        # verrait « 063030 » puis « 1111 » et refuserait le numéro. C'est le cas qui
+        # distingue les deux implémentations — sans lui, deux mutations survivaient.
+        ("C'est le 06 30 30, euh, 11 11", "0630301111", "dicté en deux morceaux"),
+        # un chiffre parasite dans la phrase ne doit pas invalider le numéro
+        ("J'ai 2 enfants, mon numéro est 06 12 34 56 78", "0612345678", "chiffre parasite"),
+        # et le code postal collé au numéro (l'exception déjà écrite dans R55)
+        ("06 12 34 56 78, et je suis au 94130", "0612345678", "code postal accolé"),
+    ]
+    for texte, numero, libelle in legitimes:
+        ex = apres(texte, {"telephone_rappel": numero})
+        if ex.get("telephone_rappel") != numero:
+            print(f"   {libelle} : numéro REFUSÉ à tort "
+                  f"({ex.get('telephone_rappel')!r} au lieu de {numero!r})")
+            return False
+
+    return True
+
+
 def check_json_de_lextracteur() -> bool:
     """R74 : un modèle serviable qui répond avant de donner son JSON ne doit pas coûter un tour.
 
@@ -4950,14 +5146,21 @@ def check_faits_hors_verbatim() -> bool:
         return False
 
     # (c) DE BOUT EN BOUT : un formuleur qui invente un lieu est replié, et le contrôleur
-    # reprend la main — sans que la question ait besoin d'être figée.
+    # reprend la main.
+    #
+    # Le tour choisi a changé le 02/09. Ce point s'appuyait sur « Vous êtes sur quelle
+    # commune ? », devenue VERBATIM avec R76 — donc le formuleur n'y est plus appelé et ne
+    # peut plus mentir. On le teste désormais sur un tour qui passe RÉELLEMENT par lui :
+    # la demande de précision d'un problème vague, qui RÉPOND à l'appelant au lieu de
+    # viser un champ. C'est exactement la frontière que R76 a tracée, et la garantie de
+    # R63 est intacte là où elle s'applique encore.
     class FormuleurGeographe(MockLLM):
         def reply(self, instruction, context):
             return "Ah d'accord ! Vous êtes sur Orange, dans le Vaucluse, c'est ça ?"
 
     convo = Conversation(CFG, FormuleurGeographe(), CalendarStub(CFG, now=LUNDI_9H))
     convo.open()
-    dit = convo.process("j'ai une fuite d'eau dans la salle de bain")
+    dit = convo.process("Bonjour, j'ai un souci chez moi")
     if "Orange" in dit or "Vaucluse" in dit:
         print(f"   un lieu inventé passe encore : « {dit} »")
         return False
@@ -4966,41 +5169,64 @@ def check_faits_hors_verbatim() -> bool:
         print(f"   la violation n'est pas tracée : {convo.flags['violations']}")
         return False
 
-    # (d) un formuleur qui invente des CHIFFRES est replié aussi
+    # (d) un formuleur qui invente des CHIFFRES est replié aussi. Même déplacement qu'en
+    # (c) : sur un tour qui passe encore par lui, sinon on vérifierait le vide.
     class FormuleurRelecteur(MockLLM):
         def reply(self, instruction, context):
             return "Je vous relis votre numéro : 06 99 88 77 66. C'est bien ça ?"
 
     convo2 = Conversation(CFG, FormuleurRelecteur(), CalendarStub(CFG, now=LUNDI_9H))
     convo2.open()
-    dit = convo2.process("j'ai une fuite d'eau dans la salle de bain")
+    dit = convo2.process("Bonjour, j'ai un souci chez moi")
     if "06 99" in dit:
         print(f"   des chiffres inventés passent encore : « {dit} »")
         return False
+    if not any(v.startswith("chiffre_hors_verbatim")
+               for v in convo2.flags["violations"]):
+        print(f"   la violation de chiffre n'est pas tracée : {convo2.flags['violations']}")
+        return False
 
-    # (e) LA CONTREPARTIE : la question du secteur est de nouveau FORMULÉE. Elle avait été
-    # figée (R56) uniquement pour empêcher le quiz sur le Vaucluse — ce que (c) interdit
-    # désormais directement. Un formuleur honnête doit pouvoir la tourner à sa façon.
+    # (e) LA CONTREPARTIE, RÉÉCRITE LE 02/09. Ce point exigeait l'inverse : que la question
+    # du secteur soit FORMULÉE, parce que R63 la jugeait sans fait et qu'un formuleur
+    # honnête devait pouvoir la tourner à sa façon. R76 l'a regelée, et il faut dire
+    # pourquoi le pari de R63 était perdant.
+    #
+    # R63 protégeait le CONTENU : le formuleur ne peut pas énoncer de prix, de date, de
+    # nom propre. Il ne protégeait pas la FIDÉLITÉ. Le 02/09, sur « Au temps pour moi —
+    # redonnez-moi le bon numéro ? », le formuleur a posé une autre question — « Quel est
+    # votre problème avec votre plomberie ? » — formellement irréprochable, et
+    # conversationnellement désastreuse : l'appelant s'est entendu redemander ce qu'il
+    # avait dit trois tours plus tôt.
+    #
+    # La contrepartie SUBSISTE, mais elle change de frontière : ce qui RÉPOND à l'appelant
+    # reste souple, ce qui DEMANDE UN CHAMP est figé. Vérifié ici sur le tour qui répond ;
+    # R76 vérifie l'autre moitié, et qu'on n'a pas tout figé.
     class FormuleurHonnete(MockLLM):
         def reply(self, instruction, context):
-            return "Dites-moi, vous habitez où exactement ?"
+            return "Dites-moi, qu'est-ce qui se passe exactement chez vous ?"
 
     convo3 = Conversation(CFG, FormuleurHonnete(), CalendarStub(CFG, now=LUNDI_9H))
     convo3.open()
-    dit = convo3.process("j'ai une fuite d'eau dans la salle de bain")
-    if "Dites-moi, vous habitez où exactement ?" not in dit:
-        print(f"   la question du secteur ne passe plus par le formuleur : « {dit} »")
+    dit = convo3.process("Bonjour, j'ai un souci chez moi")
+    if "Dites-moi, qu'est-ce qui se passe exactement chez vous ?" not in dit:
+        print(f"   un tour qui RÉPOND ne passe plus par le formuleur : « {dit} »")
         return False
 
-    # ...et les relances de numéro aussi
+    # ...MAIS PLUS LES RELANCES DE NUMÉRO. Ce point-ci affirmait l'inverse jusqu'au
+    # 02/09 : « les relances de numéro passent par le formuleur aussi ». C'est ce que R76
+    # a retiré, et l'assertion est conservée retournée plutôt que supprimée — un test qui
+    # disparaît ne raconte plus la décision qui l'a fait disparaître.
     convo4 = Conversation(CFG, FormuleurHonnete(), CalendarStub(CFG, now=LUNDI_9H))
     convo4.open()
     for ligne in ("j'ai une fuite d'eau dans la salle de bain",
                   "Nogent-sur-Marne 94130", "Dupont"):
         convo4.process(ligne)
     dit = convo4.process("mon numéro c'est le 06 10 15 47 68 79")
-    if "Dites-moi, vous habitez où exactement ?" not in dit:
-        print(f"   la relance du numéro ne passe plus par le formuleur : « {dit} »")
+    if "Dites-moi" in dit:
+        print(f"   la relance du numéro repasse par le formuleur (R76 défait) : « {dit} »")
+        return False
+    if "chiffre par chiffre" not in dit:
+        print(f"   la relance du numéro n'est pas celle du contrôleur : « {dit} »")
         return False
 
     # (f) mais ce qui ÉNONCE reste verbatim : la clôture (pour `endCallPhrases`), les
@@ -5130,22 +5356,40 @@ def check_relance_numero_variee() -> bool:
         print(f"   un refus de numéro n'est plus borné : {convo3.state.value}")
         return False
 
-    # (e) LE MÉCANISME A CHANGÉ le 26/08. Ce point exigeait que ces phrases ne passent
-    # PAS par le formuleur (R57, pour l'empêcher de relire les chiffres refusés). Elles y
-    # repassent — c'est le but de R63 — et la protection est désormais qu'il ne peut pas
-    # ÉNONCER de chiffre. Ce qu'on vérifie : le formuleur parle, ET aucun chiffre ne sort.
+    # (e) CE POINT A CHANGÉ DEUX FOIS, et l'histoire vaut d'être écrite.
+    #
+    # R57 exigeait que ces relances ne passent PAS par le formuleur, pour l'empêcher de
+    # relire les chiffres refusés. R63 les a dégelées, en pariant que le garde-fou des
+    # chiffres suffirait : il ne peut plus ÉNONCER de chiffre, donc qu'il reformule.
+    #
+    # L'appel réel du 02/09 a montré la faille de ce pari. Le formuleur n'a pas énoncé de
+    # fait interdit : il a posé une AUTRE QUESTION. « Au temps pour moi — redonnez-moi le
+    # bon numéro ? » est devenu « Quel est votre problème avec votre plomberie ? », et
+    # l'appelant s'est entendu redemander ce qu'il avait dit trois tours plus tôt. Aucun
+    # garde-fou ne pouvait le voir : ils vérifient du contenu interdit, pas la fidélité à
+    # l'instruction.
+    #
+    # R76 les regèle donc, et la protection devient STRUCTURELLE plutôt que surveillée :
+    # le formuleur n'est pas appelé du tout. C'est strictement plus fort que « il parle
+    # mais sans chiffre » — on ne surveille plus un risque, on le supprime.
     class FormuleurRelecteur(MockLLM):
+        def __init__(self):
+            super().__init__()
+            self.formulations = 0
+
         def reply(self, instruction, context):
+            self.formulations += 1
             return "Je vous relis : 0-6-3-0-3-0-4-0-4-5. C'est bien ça ?"
 
-    convo4 = jusqu_au_numero(FormuleurRelecteur())
+    menteur = FormuleurRelecteur()
+    convo4 = jusqu_au_numero(menteur)
+    avant = menteur.formulations
     dit = convo4.process("mon numéro est de 0 6 30 30 40 40 45")
     if any(c.isdigit() for c in dit):
         print(f"   des chiffres inventés par le formuleur sortent quand même : « {dit} »")
         return False
-    if not any(v.startswith("chiffre_hors_verbatim")
-               for v in convo4.flags["violations"]):
-        print(f"   la violation n'est pas tracée : {convo4.flags['violations']}")
+    if menteur.formulations != avant:
+        print(f"   la relance du numéro passe encore par le formuleur : « {dit} »")
         return False
     return True
 
@@ -8585,6 +8829,22 @@ def run() -> int:
     if check_json_de_lextracteur():
         print("   → un préambule en prose ne fait plus perdre l'extraction : "
               "objet équilibré, jamais d'exception : ✅ PASS")
+    else:
+        print("   → ❌ FAIL")
+        echecs += 1
+
+    print(f"\n──── R75_numero_fabrique ────")
+    if check_numero_fabrique():
+        print("   → un numéro que personne n'a prononcé est écarté, et la dictée "
+              "par morceaux passe toujours : ✅ PASS")
+    else:
+        print("   → ❌ FAIL")
+        echecs += 1
+
+    print(f"\n──── R76_questions_de_champ ────")
+    if check_questions_de_champ_non_formulees():
+        print("   → demander un champ est verbatim (le formuleur ne peut plus poser "
+              "une AUTRE question), répondre reste souple : ✅ PASS")
     else:
         print("   → ❌ FAIL")
         echecs += 1

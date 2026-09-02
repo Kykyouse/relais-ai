@@ -16,7 +16,7 @@ Cible V1 : plombiers/chauffagistes FR. Solo dev : Geoffrey (binôme Claude) ; ma
 ```bash
 cd proto
 pip install -r requirements.txt     # anthropic, python-dotenv (inutiles en mock)
-python run_scenario.py              # suite de non-régression (mock, sans clé, ~3 s) — 78 tests
+python run_scenario.py              # suite de non-régression (mock, sans clé, ~3 s) — 80 tests
 python run_llm_eval.py --mock       # plomberie de l'éval appelant-simulé (sans clé)
 python run_extract_eval.py [--mock] [--only plus_tot]
                                     # tests unitaires d'EXTRACTION : (phrase + contexte)
@@ -25,6 +25,13 @@ python run_extract_eval.py [--mock] [--only plus_tot]
                                     # --mock ne mesure QUE la plomberie. Sort 2 si les
                                     # appels ont échoué : « ça n'a pas marché » ne doit
                                     # pas se lire comme « le modèle n'a pas compris ».
+                                    # Couvre les ACTIONS (menu de S5) et les FAITS
+                                    # (veut_humain, telephone_rappel) sur deux contextes.
+                                    # 02/09 : 47/49 avec Haiku. Les 2 échecs sont des
+                                    # violations MESURÉES du modèle sur le numéro
+                                    # (8 chiffres rendus en 10, 12 rendus en 10) —
+                                    # renforcer le prompt n'y change rien, seul le
+                                    # contrôle de `_numero_suspect` protège.
 python run_llm_eval.py [--n 3] [--only T05]   # éval LLM réel → evals/results-*.json
                                     # 19 personas, dont 5 tirés d'appels vocaux RÉELS
                                     # RELAIS_MODEL = l'agent, RELAIS_MODEL_APPELANT
@@ -75,6 +82,13 @@ Clé API : fichier `.env` à la racine (voir `.env.example`). JAMAIS commité, J
    qui est un harnais de test, et les mille formulations dans `run_extract_eval.py`.
    Une tournure ratée en appel réel devient une ligne d'éval, JAMAIS une ligne de moteur.
 2. **Toute sortie passe par `guards.check_output`** — ne jamais contourner `_say()`.
+   **Et les garde-fous ne voient pas tout : ils vérifient un contenu INTERDIT, jamais la
+   FIDÉLITÉ à l'instruction.** Le 02/09, le formuleur a transformé « redonnez-moi le bon
+   numéro ? » en « quel est votre problème avec votre plomberie ? » — formellement
+   irréprochable, conversationnellement désastreux. D'où la frontière (R76) : **demander
+   un CHAMP précis (commune, code postal, numéro, confirmation) est VERBATIM ; RÉPONDRE à
+   ce que l'appelant vient de dire reste au formuleur.** Une question qui vise une donnée
+   n'a rien à gagner d'une reformulation, et tout à y perdre.
    Vaut aussi pour l'écrit : les SMS passent par `guards` avant d'entrer en file (`messages.py`).
    **Le contrôleur ÉNONCE les faits, le formuleur DEMANDE** (R63) : une réplique formulée
    ne peut contenir ni chiffre, ni jour, ni nom propre hors liste blanche. Ce qui énonce un

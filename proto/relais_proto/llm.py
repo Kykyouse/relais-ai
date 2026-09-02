@@ -33,7 +33,13 @@ Réponds UNIQUEMENT un objet JSON avec les clés présentes dans la phrase (omet
 - danger_gaz: true si odeur/fuite de gaz évoquée
 - confirme: true/false si la phrase est une confirmation/refus de ce que l'agent vient de proposer
 - question_prix: true si l'appelant demande un prix, un tarif ou une fourchette
-- veut_humain: true si l'appelant demande à parler à un humain/au patron
+- veut_humain: true si l'appelant veut un CONTACT HUMAIN, sous quelque forme que ce
+  soit — parler à quelqu'un, au patron, à l'artisan lui-même, être rappelé par une
+  personne, ou qu'on ESSAIE DE LE JOINDRE ou DE L'APPELER pour lui. Pas seulement
+  « je veux parler à un humain » : « il faut trouver une solution, essayez de
+  l'appeler », « vous ne pouvez pas le prévenir ? », « je préfère lui parler
+  directement » comptent tous. Ne pas confondre avec « il faudrait que quelqu'un
+  vienne », qui demande une INTERVENTION, pas une conversation.
 Pour les FAITS ci-dessus, ne déduis rien qui ne soit pas dans la phrase.
 
 Contexte de la conversation :
