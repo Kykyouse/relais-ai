@@ -3877,6 +3877,170 @@ def check_questions_de_champ_non_formulees() -> bool:
     return True
 
 
+def check_trois_corrections_audibles() -> bool:
+    """R82 : trois choses que l'appelant ENTEND, et qui sonnaient faux.
+
+    Relevées sur les appels réels du 01 et 02/09. Aucune ne perd de rendez-vous — c'est
+    précisément pour ça qu'elles traînaient. Mais elles s'entendent toutes les trois, et
+    un agent qui sonne faux perd la confiance avant de perdre l'appel.
+
+    **(a) Une phrase mal formée.** « Pardon, je n'ai pas bien saisi. demain entre 8 heures
+    et 10 heures, est-ce que cela vous va ? » — minuscule après un point. À l'écrit c'est
+    une coquille ; à la synthèse vocale c'est une phrase qui repart à côté, et l'appelant
+    entend deux fragments au lieu d'une question.
+
+    **(b) Une contrainte qui ne change rien, et qu'on ignore en silence.** Le 02/09 :
+
+        CLIENT : En tout cas, pas le vendredi.
+        AGENT  : demain entre 8 h et 10 h, ou demain 14 h – 16 h ?   (mot pour mot)
+
+    « Demain » était un mercredi : l'exclusion du vendredi était bien lue (R68) mais ne
+    changeait rien. L'agent a donc resservi la même phrase à l'identique, ce qui s'entend
+    comme « je ne t'ai pas écouté ». Il faut le DIRE : ces créneaux respectent déjà ce
+    qu'on demande. C'est devenu possible sans deviner depuis que le contrôleur peut
+    comparer les propositions avant et après la contrainte.
+
+    **(c) La localisation jamais prononcée.** Quand le STT massacre la commune (« Nos gens
+    sur Marne », « Naugeon-sur-Marne ») et que seul le CODE POSTAL a validé la zone,
+    l'appelant n'entend rien du tout sur l'endroit où l'on croit intervenir. Or c'est le
+    seul moment où il peut nous corriger — la leçon de R56, appliquée à la commune et pas
+    au code postal. On l'acquitte donc à voix haute, groupé 2+3 comme il se dicte (R43) :
+    « C'est noté, le 94 130. » Choix retenu plutôt que redemander le nom de la ville : la
+    zone est déjà validée, rallonger l'appel pour un gain nul serait pire.
+    """
+    import datetime as dt
+
+    from relais_proto.engine import Conversation
+
+    QUAND = dt.datetime(2026, 9, 2, 7, 0, tzinfo=dt.UTC)   # mercredi 2 sept, 9 h
+
+    def jusqu_aux_creneaux(commune="Nogent-sur-Marne 94130"):
+        convo = Conversation(CFG, MockLLM(), CalendarStub(CFG, now=QUAND),
+                             numero_appelant="+33630301111")
+        convo.open()
+        convo.process("J'ai une fuite d'eau dans la salle de bain")
+        convo.process(commune)
+        convo.process("Benoît")
+        convo.process("oui")
+        return convo
+
+    # ---- (a) la phrase de clarification est une PHRASE ----
+    convo = jusqu_aux_creneaux()
+    dit = convo.process("euh je ne sais pas trop là")
+    if "saisi. demain" in dit or "saisi. aujourd" in dit:
+        print(f"   phrase recollée après un point : « {dit} »")
+        return False
+    # une minuscule juste après « . » trahit la même faute, quelle que soit la date
+    import re as _re
+    if _re.search(r"\.\s+[a-zà-ÿ]", dit):
+        print(f"   minuscule après un point — deux fragments à l'oreille : « {dit} »")
+        return False
+    if not convo._proposes or convo._proposes[0]["label_parle"] not in dit:
+        print(f"   la clarification ne redit plus le créneau : « {dit} »")
+        return False
+
+    # ---- (b) une contrainte SANS EFFET est dite, pas tue ----
+    convo = jusqu_aux_creneaux()
+    avant = [c["date"] for c in convo._proposes]
+    dit = convo.process("En tout cas, pas le vendredi.")
+    apres = [c["date"] for c in convo._proposes]
+    if apres != avant:
+        print(f"   la mise en place a changé les créneaux : {avant} -> {apres} — "
+              f"le cas testé n'est plus le bon")
+        return False
+    if "déjà" not in dit.lower():
+        print(f"   une contrainte sans effet est ignorée en silence : « {dit} »")
+        return False
+    # et les créneaux sont TOUJOURS proposés : on informe, on n'abandonne pas
+    if convo._proposes[0]["label_parle"] not in dit:
+        print(f"   les créneaux ne sont plus proposés : « {dit} »")
+        return False
+
+    # …mais une contrainte qui CHANGE quelque chose ne déclenche pas cette phrase.
+    #
+    # LUNDI et non jeudi : on est mercredi, donc « jeudi » désigne DEMAIN — soit
+    # exactement ce qui était déjà proposé. Ma première version de ce test employait
+    # « plutôt jeudi » et échouait donc sur du code sain : la contrainte était réellement
+    # sans effet, et l'agent avait raison de le dire. Une fixture doit rendre POSSIBLE ce
+    # qu'elle vérifie — troisième fois que ce piège se referme dans ce projet.
+    convo = jusqu_aux_creneaux()
+    avant = [c["date"] for c in convo._proposes]
+    dit = convo.process("plutôt lundi")
+    if [c["date"] for c in convo._proposes] == avant:
+        print("   « plutôt lundi » ne change pas les créneaux — fixture inopérante")
+        return False
+    if "déjà" in dit.lower():
+        print(f"   une contrainte qui change les créneaux est dite « déjà "
+              f"respectée » : « {dit} »")
+        return False
+
+    # (b ter) ET LE CAS DANGEREUX : une contrainte que le contrôleur ne sait PAS lire.
+    # « Avant midi » est reconnu comme une contrainte par le modèle, mais `_contraintes_dispo`
+    # n'en tire rien (liste de mots-clés). Les créneaux sont donc inchangés — et dire
+    # « ces créneaux respectent déjà ce que vous me dites » serait un MENSONGE : on n'a
+    # rien compris du tout. Sourd est rattrapable au tour suivant ; menteur ne l'est pas.
+    #
+    # Une mutation a survécu ici (le retrait de `any(c.values())`), et c'est celle qui
+    # coûtait le plus cher. Cette limite disparaîtra quand le CONTENU des contraintes
+    # passera au modèle — c'est le chantier suivant.
+    convo = jusqu_aux_creneaux()
+    dit = convo.process("Plutôt avant midi si vous pouvez")
+    convo2 = jusqu_aux_creneaux()
+    convo2.slots["disponibilites"] = "avant midi"
+    if any(v for v in convo2._contraintes_dispo().values()):
+        print("   « avant midi » est désormais LU : la fixture ne teste plus le bon cas")
+        return False
+    if "déjà" in dit.lower():
+        print(f"   une contrainte NON COMPRISE est dite « déjà respectée » : « {dit} »")
+        return False
+
+    # DEUX contraintes de suite, la seconde illisible — et c'est là que la faute se voit.
+    # Avec une seule, le SAUT de créneaux (`contraintes_proposees` inchangé) déplace les
+    # propositions de toute façon, donc rien ne se déclenche : le cas simple ne pouvait
+    # pas révéler la mutation. Ici la clé de contrainte change (elle repasse à vide), le
+    # saut est nul, les créneaux redeviennent exactement les premiers — et l'agent
+    # affirmerait « déjà respecté » d'une phrase qu'il n'a pas comprise.
+    convo = jusqu_aux_creneaux()
+    convo.process("En tout cas, pas le vendredi.")
+    dit = convo.process("Et plutôt avant midi")
+    if "déjà" in dit.lower():
+        print(f"   contrainte non comprise après une contrainte lue : « {dit} »")
+        return False
+
+    # ---- (c) le CODE POSTAL est acquitté quand la commune manque ----
+    convo = Conversation(CFG, MockLLM(), CalendarStub(CFG, now=QUAND),
+                         numero_appelant="+33630301111")
+    convo.open()
+    convo.process("J'ai une fuite d'eau dans la salle de bain")
+    dit = convo.process("J'habite à Naugeon-sur-Marne, le 94 130")
+    if convo.slots.get("commune"):
+        print(f"   la mise en place résout la commune ({convo.slots['commune']!r}) — "
+              f"le cas testé n'est plus le bon")
+        return False
+    if "94 130" not in dit:
+        print(f"   le code postal n'est pas acquitté à voix haute : « {dit} »")
+        return False
+    if "94130" in dit.replace(" ", "x"):
+        print(f"   le code postal est prononcé collé (la synthèse le lira comme un "
+              f"nombre) : « {dit} »")
+        return False
+
+    # …et quand la commune EST résolue, c'est elle qu'on dit, pas le code postal
+    convo = Conversation(CFG, MockLLM(), CalendarStub(CFG, now=QUAND),
+                         numero_appelant="+33630301111")
+    convo.open()
+    convo.process("J'ai une fuite d'eau dans la salle de bain")
+    dit = convo.process("Nogent-sur-Marne 94130")
+    if "94 130" in dit:
+        print(f"   le code postal est dit alors que la commune est connue : « {dit} »")
+        return False
+    if "nogent" not in dit.lower():
+        print(f"   la commune résolue n'est plus acquittée : « {dit} »")
+        return False
+
+    return True
+
+
 def check_numero_appelant_propose() -> bool:
     """R81 : proposer le numéro d'où l'on appelle, au lieu de le faire dicter.
 
@@ -9365,6 +9529,14 @@ def run() -> int:
     if check_numero_appelant_propose():
         print("   → le numéro d'où l'on appelle est PROPOSÉ puis confirmé, jamais pris "
               "d'office, et rien n'est prononcé quand il n'est pas exploitable : ✅ PASS")
+    else:
+        print("   → ❌ FAIL")
+        echecs += 1
+
+    print(f"\n──── R82_corrections_audibles ────")
+    if check_trois_corrections_audibles():
+        print("   → la clarification est une phrase, une contrainte sans effet est dite "
+              "au lieu d'être tue, et la localisation est acquittée : ✅ PASS")
     else:
         print("   → ❌ FAIL")
         echecs += 1

@@ -1149,8 +1149,22 @@ class Conversation:
             # fausse qui vient de nous — donc reconnaissable, donc corrigeable.
             #
             # Même remède que R38 : là où le fond compte, le contrôleur parle lui-même.
-            lieu = (f"C'est noté pour {self.slots['commune']}. "
-                    if self.slots.get("commune") else "Très bien. ")
+            # ACQUITTER LA LOCALISATION, même quand la commune n'a pas pu être
+            # résolue (R82). Le 01 et 02/09, le STT a rendu « Nos gens sur Marne » puis
+            # « Naugeon-sur-Marne » : c'est le CODE POSTAL qui a validé la zone, et
+            # l'appelant n'a rien entendu sur l'endroit où l'on croyait intervenir. Or
+            # c'est le seul moment où il peut nous corriger — la leçon de R56, écrite
+            # pour la commune et jamais appliquée au code postal.
+            #
+            # Groupé 2+3 comme il se dicte (R43) : collé, la synthèse vocale le lirait
+            # comme un nombre (« quatre-vingt-quatorze mille cent trente »).
+            if self.slots.get("commune"):
+                lieu = f"C'est noté pour {self.slots['commune']}. "
+            elif self.slots.get("code_postal"):
+                cp = self.slots["code_postal"]
+                lieu = f"C'est noté, le {cp[:2]} {cp[2:]}. "
+            else:
+                lieu = "Très bien. "
             if self.slots.get("numero_appelant"):
                 return self._say(f"{lieu}À quel nom {self._prenom} peut-il noter le "
                                  f"rendez-vous ?", verbatim=True)
@@ -1429,9 +1443,12 @@ class Conversation:
             self.flags["tours_flous"] = flous
             if flous <= 3:
                 # verbatim : énonce une DATE
-                return self._say(f"Pardon, je n'ai pas bien saisi. "
-                                 f"{self._dit(self._proposes[0])}, est-ce que cela vous "
-                                 f"va ? Vous pouvez répondre oui ou non.", verbatim=True)
+                # « saisi. demain entre 8 heures… » : minuscule après un point. À
+                # l'écrit une coquille, à la synthèse vocale deux fragments — l'appelant
+                # entend une phrase qui repart à côté au lieu d'une question.
+                return self._say(f"Pardon, je n'ai pas bien saisi. Est-ce que "
+                                 f"{self._dit(self._proposes[0])} vous va ? Vous pouvez "
+                                 f"répondre oui ou non.", verbatim=True)
             # Budget de clarification épuisé : on REPREND LE FIL en reproposant, on
             # n'abandonne pas. Répéter « je n'ai pas saisi » indéfiniment est le seul
             # comportement pire que d'agir de travers ; basculer sur « Julien vous
@@ -1483,6 +1500,8 @@ class Conversation:
         saut = (0 if self.flags.get("contraintes_proposees") != contraintes
                 else 2 * self.flags["tours_creneaux"])
         self.flags["contraintes_proposees"] = contraintes
+        # ce qui était proposé AVANT, pour savoir si la contrainte a changé quelque chose
+        avant = [s.get("date") for s in self._proposes], [s.get("de") for s in self._proposes]
         self._proposes = self.cal.get_slots(self.slots["prestation"], urgent, n=2,
                                             skip=saut, jours=jours, moment=moment,
                                             dates=dates,
@@ -1505,6 +1524,23 @@ class Conversation:
                     verbatim=True)
         if not self._proposes:
             return self._sans_rdv()
+        # UNE CONTRAINTE QUI NE CHANGE RIEN SE DIT (R82). Le 02/09, « en tout cas pas le
+        # vendredi » n'a rien changé — « demain » était un mercredi — et l'agent a resservi
+        # la même phrase MOT POUR MOT. À l'oreille, ça s'entend comme « je ne t'ai pas
+        # écouté », et c'est le contraire de ce qui s'est passé : l'exclusion avait bien
+        # été lue (R68), elle ne mordait sur rien.
+        #
+        # La comparaison se fait sur ce qui est PROPOSÉ, pas sur la contrainte : c'est la
+        # seule façon de savoir qu'elle n'a pas mordu, sans avoir à raisonner sur son
+        # contenu (« demain est-il un vendredi ? » n'est pas au contrôleur de le dire ici).
+        inchange = (coopere
+                    and ([s.get("date") for s in self._proposes],
+                         [s.get("de") for s in self._proposes]) == avant
+                    and any(c.values()))
+        if inchange:
+            self.flags["contrainte_sans_effet"] = \
+                self.flags.get("contrainte_sans_effet", 0) + 1
+
         if len(self._proposes) == 1:
             offre = (f"Je peux vous proposer {self._dit(self._proposes[0])}. "
                      f"Ça vous irait ?")
@@ -1524,6 +1560,10 @@ class Conversation:
         # Effet de bord bienvenu pour la voix : un tour verbatim économise l'appel au
         # formuleur — c'est ce qui explique les minima de latence mesurés (0,67 s contre
         # 1,93 s de médiane en Haiku).
+        if inchange:
+            # verbatim : l'offre énonce des dates, et cette phrase-ci les introduit
+            return self._say(f"Ces créneaux respectent déjà ce que vous me dites. "
+                             f"{offre}", verbatim=True)
         return self._say(offre, verbatim=True)
 
     # ------------------------------------------------------------- issues
