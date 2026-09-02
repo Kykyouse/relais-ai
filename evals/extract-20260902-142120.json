@@ -1,0 +1,386 @@
+{
+  "modele": "claude-haiku-4-5",
+  "reussis": 23,
+  "total": 23,
+  "latence_p50_ms": 1158,
+  "latence_p95_ms": 2987,
+  "latence_max_ms": 3510,
+  "cas": [
+    {
+      "etiquette": "contrainte/jour",
+      "phrase": "Plutôt jeudi si c'est possible.",
+      "attendu": "contrainte",
+      "obtenu": "contrainte",
+      "ok": true,
+      "brut": {
+        "action": "contrainte",
+        "disponibilites": "Plutôt jeudi si c'est possible.",
+        "contrainte": {
+          "jours": [
+            "jeudi"
+          ]
+        }
+      },
+      "ms": 1143
+    },
+    {
+      "etiquette": "contrainte/moment",
+      "phrase": "Seulement le matin, je travaille l'après-midi.",
+      "attendu": "contrainte",
+      "obtenu": "contrainte",
+      "ok": true,
+      "brut": {
+        "action": "contrainte",
+        "disponibilites": "Seulement le matin, je travaille l'après-midi.",
+        "contrainte": {
+          "moment": "matin",
+          "exclut_moment": "apres_midi"
+        }
+      },
+      "ms": 1222
+    },
+    {
+      "etiquette": "contrainte/negation-jour",
+      "phrase": "Pas le samedi, je ne suis pas là.",
+      "attendu": "contrainte",
+      "obtenu": "contrainte",
+      "ok": true,
+      "brut": {
+        "action": "contrainte",
+        "contrainte": {
+          "exclut_jours": [
+            "samedi"
+          ]
+        },
+        "disponibilites": "Pas le samedi, je ne suis pas là."
+      },
+      "ms": 1065
+    },
+    {
+      "etiquette": "contrainte/negation-moment",
+      "phrase": "Surtout pas le matin.",
+      "attendu": "contrainte",
+      "obtenu": "contrainte",
+      "ok": true,
+      "brut": {
+        "action": "contrainte",
+        "contrainte": {
+          "exclut_moment": "matin"
+        },
+        "disponibilites": "Surtout pas le matin."
+      },
+      "ms": 1158
+    },
+    {
+      "etiquette": "contrainte/plancher",
+      "phrase": "Pas avant jeudi, je suis en déplacement.",
+      "attendu": "contrainte",
+      "obtenu": "contrainte",
+      "ok": true,
+      "brut": {
+        "action": "contrainte",
+        "disponibilites": "Pas avant jeudi, je suis en déplacement.",
+        "contrainte": {
+          "pas_avant": "jeudi"
+        }
+      },
+      "ms": 1211
+    },
+    {
+      "etiquette": "contrainte/apres-18h",
+      "phrase": "Après 18 heures uniquement.",
+      "attendu": "contrainte",
+      "obtenu": "contrainte",
+      "ok": true,
+      "brut": {
+        "action": "contrainte",
+        "disponibilites": "Après 18 heures uniquement.",
+        "contrainte": {
+          "moment": "soir"
+        }
+      },
+      "ms": 1120
+    },
+    {
+      "etiquette": "contrainte/avant-dejeuner",
+      "phrase": "Avant ma pause déjeuner si vous pouvez.",
+      "attendu": "contrainte ou choisir/1",
+      "obtenu": "contrainte",
+      "ok": true,
+      "brut": {
+        "action": "contrainte",
+        "contrainte": {
+          "moment": "matin"
+        },
+        "disponibilites": "Avant ma pause déjeuner si vous pouvez."
+      },
+      "ms": 1431
+    },
+    {
+      "etiquette": "contrainte/semaine-prochaine",
+      "phrase": "La semaine prochaine plutôt, cette semaine je suis pris.",
+      "attendu": "contrainte",
+      "obtenu": "contrainte",
+      "ok": true,
+      "brut": {
+        "action": "contrainte",
+        "disponibilites": "la semaine prochaine plutôt, cette semaine je suis pris",
+        "contrainte": {
+          "pas_avant": "lundi",
+          "exclut_jours": [
+            "mardi",
+            "mercredi",
+            "jeudi",
+            "vendredi",
+            "samedi",
+            "dimanche"
+          ]
+        }
+      },
+      "ms": 1487
+    },
+    {
+      "etiquette": "contrainte/detour",
+      "phrase": "Il faudrait que ce soit un jour où ma femme est là, le mercredi.",
+      "attendu": "contrainte",
+      "obtenu": "contrainte",
+      "ok": true,
+      "brut": {
+        "action": "contrainte",
+        "disponibilites": "un jour où ma femme est là, le mercredi",
+        "contrainte": {
+          "jours": [
+            "mercredi"
+          ]
+        }
+      },
+      "ms": 1072
+    },
+    {
+      "etiquette": "contr/ni-jeudi",
+      "phrase": "Ni le jeudi.",
+      "attendu": "{'exclut_jours': ['jeudi']}",
+      "obtenu": "contrainte={'exclut_jours': ['jeudi']}",
+      "ok": true,
+      "brut": {
+        "action": "contrainte",
+        "disponibilites": "Ni le jeudi.",
+        "contrainte": {
+          "exclut_jours": [
+            "jeudi"
+          ]
+        }
+      },
+      "ms": 1992
+    },
+    {
+      "etiquette": "contr/ni-double",
+      "phrase": "Pas le matin ni le samedi.",
+      "attendu": "{'exclut_jours': ['samedi'], 'exclut_moment': 'matin'}",
+      "obtenu": "contrainte={'exclut_jours': ['samedi'], 'exclut_moment': 'matin'}",
+      "ok": true,
+      "brut": {
+        "action": "contrainte",
+        "contrainte": {
+          "exclut_moment": "matin",
+          "exclut_jours": [
+            "samedi"
+          ]
+        },
+        "disponibilites": "Pas le matin ni le samedi."
+      },
+      "ms": 1105
+    },
+    {
+      "etiquette": "contr/ni-weekend",
+      "phrase": "Pas le samedi ni le dimanche.",
+      "attendu": "{'exclut_jours': ['samedi', 'dimanche']}",
+      "obtenu": "contrainte={'exclut_jours': ['samedi', 'dimanche']}",
+      "ok": true,
+      "brut": {
+        "action": "contrainte",
+        "contrainte": {
+          "exclut_jours": [
+            "samedi",
+            "dimanche"
+          ]
+        },
+        "disponibilites": "Pas le samedi ni le dimanche."
+      },
+      "ms": 1001
+    },
+    {
+      "etiquette": "contr/avant-midi",
+      "phrase": "Plutôt avant midi si vous pouvez.",
+      "attendu": "{'moment': 'matin'}",
+      "obtenu": "contrainte={'moment': 'matin'}",
+      "ok": true,
+      "brut": {
+        "action": "contrainte",
+        "disponibilites": "plutôt avant midi",
+        "contrainte": {
+          "moment": "matin"
+        }
+      },
+      "ms": 1158
+    },
+    {
+      "etiquette": "contr/soiree",
+      "phrase": "En soirée, après le travail.",
+      "attendu": "{'moment': 'soir'}",
+      "obtenu": "contrainte={'moment': 'soir'}",
+      "ok": true,
+      "brut": {
+        "action": "contrainte",
+        "contrainte": {
+          "moment": "soir"
+        },
+        "disponibilites": "En soirée, après le travail."
+      },
+      "ms": 1068
+    },
+    {
+      "etiquette": "contr/week-end",
+      "phrase": "Surtout pas le week-end.",
+      "attendu": "{'exclut_jours': ['samedi', 'dimanche']}",
+      "obtenu": "contrainte={'exclut_jours': ['samedi', 'dimanche']}",
+      "ok": true,
+      "brut": {
+        "action": "contrainte",
+        "contrainte": {
+          "exclut_jours": [
+            "samedi",
+            "dimanche"
+          ]
+        },
+        "disponibilites": "Surtout pas le week-end."
+      },
+      "ms": 2987
+    },
+    {
+      "etiquette": "contr/jour-ouvre",
+      "phrase": "Un jour ouvré, je ne suis pas là le week-end.",
+      "attendu": "{'exclut_jours': ['samedi', 'dimanche']}",
+      "obtenu": "contrainte={'exclut_jours': ['samedi', 'dimanche']}",
+      "ok": true,
+      "brut": {
+        "action": "contrainte",
+        "disponibilites": "Un jour ouvré, je ne suis pas là le week-end.",
+        "contrainte": {
+          "exclut_jours": [
+            "samedi",
+            "dimanche"
+          ]
+        }
+      },
+      "ms": 2804
+    },
+    {
+      "etiquette": "contr/plancher",
+      "phrase": "Pas avant vendredi, je suis en déplacement.",
+      "attendu": "{'pas_avant': 'vendredi'}",
+      "obtenu": "contrainte={'pas_avant': 'vendredi'}",
+      "ok": true,
+      "brut": {
+        "action": "contrainte",
+        "disponibilites": "Pas avant vendredi, je suis en déplacement.",
+        "contrainte": {
+          "pas_avant": "vendredi"
+        }
+      },
+      "ms": 1259
+    },
+    {
+      "etiquette": "contr/samedi-matin",
+      "phrase": "Uniquement le samedi matin.",
+      "attendu": "{'jours': ['samedi'], 'moment': 'matin'}",
+      "obtenu": "contrainte={'jours': ['samedi'], 'moment': 'matin'}",
+      "ok": true,
+      "brut": {
+        "action": "contrainte",
+        "contrainte": {
+          "jours": [
+            "samedi"
+          ],
+          "moment": "matin"
+        },
+        "disponibilites": "Uniquement le samedi matin."
+      },
+      "ms": 1094
+    },
+    {
+      "etiquette": "contr/jeudi",
+      "phrase": "Plutôt jeudi.",
+      "attendu": "{'jours': ['jeudi']}",
+      "obtenu": "contrainte={'jours': ['jeudi']}",
+      "ok": true,
+      "brut": {
+        "action": "contrainte",
+        "disponibilites": "Plutôt jeudi",
+        "contrainte": {
+          "jours": [
+            "jeudi"
+          ]
+        }
+      },
+      "ms": 1262
+    },
+    {
+      "etiquette": "contr/demain",
+      "phrase": "Demain si possible.",
+      "attendu": "{'jours': ['demain']}",
+      "obtenu": "contrainte={'jours': ['demain']}",
+      "ok": true,
+      "brut": {
+        "action": "contrainte",
+        "disponibilites": "Demain si possible.",
+        "contrainte": {
+          "jours": [
+            "demain"
+          ]
+        }
+      },
+      "ms": 1180
+    },
+    {
+      "etiquette": "contr/apres-demain",
+      "phrase": "Après-demain plutôt.",
+      "attendu": "{'jours': ['apres_demain']}",
+      "obtenu": "contrainte={'jours': ['apres_demain']}",
+      "ok": true,
+      "brut": {
+        "action": "contrainte",
+        "contrainte": {
+          "jours": [
+            "apres_demain"
+          ]
+        },
+        "disponibilites": "Après-demain plutôt."
+      },
+      "ms": 983
+    },
+    {
+      "etiquette": "contr/inexprimable",
+      "phrase": "Quand ma femme est là, ça dépend des semaines.",
+      "attendu": "{}",
+      "obtenu": "contrainte={}",
+      "ok": true,
+      "brut": {
+        "action": "pas_clair",
+        "disponibilites": "Quand ma femme est là, ça dépend des semaines."
+      },
+      "ms": 3510
+    },
+    {
+      "etiquette": "contr/peu-importe",
+      "phrase": "Quand vous voulez, ça m'est égal.",
+      "attendu": "{}",
+      "obtenu": "contrainte={}",
+      "ok": true,
+      "brut": {
+        "action": "plus_tot"
+      },
+      "ms": 887
+    }
+  ]
+}

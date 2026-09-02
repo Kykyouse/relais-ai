@@ -176,7 +176,10 @@ class Conversation:
         return texte
 
     # slots corrigeables tant que le RDV n'est pas réservé (leçon des bugs "numéro" et "commune")
-    OVERWRITABLE = {"code_postal", "commune", "disponibilites"}
+    # `contrainte` est écrasable comme `disponibilites` : la DERNIÈRE exprimée gagne.
+    # C'était déjà la sémantique du texte libre, et la changer serait un autre sujet —
+    # accumuler des contraintes demande de savoir laquelle remplace laquelle.
+    OVERWRITABLE = {"code_postal", "commune", "disponibilites", "contrainte"}
 
     @staticmethod
     def _numero_suspect(texte: str, numero: str, cp: str | None = None) -> bool:
@@ -511,6 +514,13 @@ class Conversation:
                     continue
             if self.slots[k] is None or (k in self.OVERWRITABLE and self.flags["hold"] is None):
                 self.slots[k] = v
+        # LA CONTRAINTE STRUCTURÉE (R83), validée avant d'entrer. Elle ne passe pas par
+        # la boucle générique : celle-ci ignore les valeurs vides, or une contrainte
+        # vide est une information — « le modèle a vu une contrainte mais n'a rien su en
+        # dire » — que le garde de R82 lit pour ne PAS prétendre l'avoir comprise.
+        if "contrainte" in extracted and self.flags["hold"] is None:
+            self.slots["contrainte"] = actions.valider_contrainte(
+                extracted["contrainte"])
         if extracted.get("prestation") and not self.slots["intent"]:
             p = extracted["prestation"]
             self.slots["intent"] = ("urgence" if p in URGENT_PRESTATIONS
@@ -877,113 +887,61 @@ class Conversation:
     # « demain » est un jour, dit autrement — et c'est la façon la PLUS courante de le
     # dire au téléphone, bien avant « mardi ». Le plus long d'abord : « après-demain »
     # contient « demain », et un appelant qui dit après-demain ne doit pas obtenir demain.
-    JOURS_RELATIFS = (("apres demain", 2), ("demain", 1), ("aujourd hui", 0))
-
-    def _jour_dit(self, texte: str) -> str | None:
-        """Le fragment de `texte` qui NOMME un jour, ou None.
-
-        Lu par le contrôleur, pas par l'extracteur (règle n°1, et même leçon que R47 et
-        R64). Le 27/08, un appelant a répondu « Aujourd'hui » à une proposition de
-        créneaux : le slot `disponibilites` est resté vide, `_contraintes_dispo` n'avait
-        rien à lire, et le contrôleur a pris ce tour pour « aucun des deux ». Il a donc
-        AVANCÉ dans le calendrier — samedi et lundi, deux jours plus loin que ce qu'on
-        venait de proposer. **Préciser sa préférence donnait l'inverse de ce qu'on
-        demande.**
-
-        Rendu tel quel : c'est `_contraintes_dispo` qui l'interprète, et lui seul sait
-        résoudre « demain » en heure de pendule (R61).
-        """
-        d = self._normalise(texte or "")
-        mots = [m for m, _ in self.JOURS_RELATIFS] + list(self.JOURS_SEMAINE)
-        return texte if any(f" {m} " in f" {d} " for m in mots) else None
-
-    # Ce qui NIE ce qui suit. « pas », « sauf », « jamais »… Une négation ne se devine pas
-    # d'un mot isolé : c'est ce qui PRÉCÈDE le jour qui décide.
-    NEGATIONS = ("pas", "sauf", "jamais", "hormis", "excepte", "impossible", "aucun")
-    # « pas AVANT jeudi » n'est ni une exclusion ni une préférence : c'est un plancher.
-    PLANCHERS = ("avant", "des", "a partir de", "apres")
-
     def _contraintes_dispo(self) -> dict:
-        """Contraintes de créneaux tirées des disponibilités exprimées par l'appelant.
+        """Les contraintes de créneaux, CONVERTIES depuis ce que le modèle a compris.
 
-        Trouvé le 26/08 sur un appel réel : l'appelant demandait un rendez-vous
-        « n'importe quand dans la journée de DEMAIN » dès sa première phrase, et l'agent
-        lui proposait « aujourd'hui entre 17 h et 19 h ». Il a fallu qu'il réponde « J'ai
-        dit demain » pour obtenir ce qu'il avait demandé d'emblée. Seuls les NOMS de jours
-        étaient reconnus.
+        Cette fonction ne lit plus une ligne de texte de l'appelant (R83). Elle traduit une
+        structure au vocabulaire fermé (`actions.valider_contrainte`) vers ce que le
+        calendrier attend : des jours de semaine, des dates, des moments.
 
-        Règle n°7 : un jour relatif se résout contre l'horloge de l'appel, en heure de
-        PENDULE. Un appel passé à 23 h 30 UTC un lundi est encore lundi à Paris, et son
-        lendemain est mardi — pas mercredi.
+        AVANT, elle cherchait des noms de jours dans la phrase et devinait les négations
+        sur une fenêtre de trois mots. Ce que ça coûtait, mesuré et vivant jusqu'au 02/09 :
+
+            « ni le jeudi »               → PRÉFÉRAIT jeudi
+            « pas le matin ni le samedi » → PRÉFÉRAIT samedi
+
+        Une inversion — l'agent proposait le jour qu'on refuse. Et « ni » n'était qu'un
+        mot de plus : « avant midi », « en soirée », « le week-end », « un jour ouvré »
+        étaient ignorés. Ajouter « ni » à la liste aurait été le treizième mot-clé.
+
+        CE QUI RESTE AU CODE, et ce n'est pas rien : la conversion. Un jour relatif se
+        résout contre l'horloge de l'appel, en heure de PENDULE (règle n°7) — un appel
+        passé à 23 h 30 UTC un lundi est déjà mardi à Paris, et son lendemain est mercredi.
+        Le modèle dit « demain » ; c'est nous qui savons quel jour c'est. Et un jour relatif
+        porte AUSSI une date : il désigne UN jour, pas tous les jeudis (R67).
         """
         import datetime as _dt
 
-        d = self._normalise(self.slots.get("disponibilites") or "")
-        mots = d.split()
-
-        def _nie(cible: str) -> tuple[bool, bool]:
-            """(nié, plancher) : ce qui précède `cible` dans la phrase.
-
-            Une négation devenait une PRÉFÉRENCE pour ce qu'on refuse — « pas le samedi »
-            proposait samedi (R68). On regarde donc les trois mots qui précèdent, ce qui
-            couvre « pas le samedi », « surtout pas le samedi », « je ne peux pas le
-            samedi ». Au-delà, la phrase parle d'autre chose.
-            """
-            debut = mots.index(cible.split()[0]) if cible.split()[0] in mots else -1
-            if debut < 0:
-                return False, False
-            avant = mots[max(0, debut - 3):debut]
-            if not any(n in avant for n in self.NEGATIONS):
-                return False, False
-            # « pas AVANT jeudi » : la négation porte sur l'antériorité, pas sur le jour
-            return True, any(p in " ".join(avant) for p in self.PLANCHERS)
-
-        jours, exclus, plancher = set(), set(), None
-        for nom, n in self.JOURS_SEMAINE.items():
-            if nom not in d:
-                continue
-            nie, est_plancher = _nie(nom)
-            if est_plancher:
-                plancher = n
-            elif nie:
-                exclus.add(n)
-            else:
-                jours.add(n)
-
-        dates = set()
+        c = actions.valider_contrainte(self.slots.get("contrainte"))
         cal = getattr(self, "cal", None)
-        if cal is not None:
-            local = temps.en_local(cal.now, self.cfg)
-            for mot, delta in self.JOURS_RELATIFS:
-                if mot not in d:
-                    continue
-                nie, est_plancher = _nie(mot)
-                jour = local + _dt.timedelta(days=delta)
-                if est_plancher:
-                    plancher = jour.weekday()
-                elif nie:
-                    exclus.add(jour.weekday())
-                else:
-                    jours.add(jour.weekday())
-                    # ...ET la date : un jour relatif désigne UN jour, pas tous les jeudis.
-                    # Sans elle, « aujourd'hui » saturé proposait jeudi prochain (R67).
-                    dates.add(jour.date().isoformat())
-                break
+        local = temps.en_local(cal.now, self.cfg) if cal is not None else None
 
-        moment = moment_exclu = None
-        for cle, mots_cles in (("matin", ("matin",)),
-                               ("apres_midi", ("apres midi", "aprem"))):
-            for mc in mots_cles:
-                if mc not in d:
-                    continue
-                nie, _ = _nie(mc)
-                if nie:
-                    moment_exclu = cle
-                else:
-                    moment = cle
-                break
-        return {"jours": jours or None, "moment": moment, "dates": dates or None,
-                "jours_exclus": exclus or None, "moment_exclu": moment_exclu,
+        def _jour(nom: str):
+            """(jour de semaine, date ou None) pour un nom du vocabulaire."""
+            if nom in self.JOURS_SEMAINE:
+                return self.JOURS_SEMAINE[nom], None
+            delta = {"aujourdhui": 0, "demain": 1, "apres_demain": 2}.get(nom)
+            if delta is None or local is None:
+                return None, None
+            jour = local + _dt.timedelta(days=delta)
+            return jour.weekday(), jour.date().isoformat()
+
+        jours, dates, exclus = set(), set(), set()
+        for nom in c["jours"]:
+            n, date = _jour(nom)
+            if n is None:
+                continue
+            jours.add(n)
+            if date:
+                dates.add(date)
+        for nom in c["exclut_jours"]:
+            n, _ = _jour(nom)
+            if n is not None:
+                exclus.add(n)
+        plancher, _ = _jour(c["pas_avant"]) if c["pas_avant"] else (None, None)
+
+        return {"jours": jours or None, "moment": c["moment"], "dates": dates or None,
+                "jours_exclus": exclus or None, "moment_exclu": c["exclut_moment"],
                 "pas_avant": plancher}
 
     def _zone_de(self, cp: str | None) -> str:
@@ -1342,9 +1300,6 @@ class Conversation:
         # `_s5` n'est atteint qu'en état S5, et un créneau bloqué fait passer en S6. Une
         # mutation l'a montrée sans effet. Sixième fois dans ce projet, et toujours la
         # même règle : du code mort qui a l'air d'une garantie est pire que rien.)
-        jour = self._jour_dit(self._dernier_client())
-        if jour:
-            self.slots["disponibilites"] = jour
 
         # Les contraintes de disponibilité sont lues EN TÊTE : la branche « rien de plus
         # tôt » comme la reproposition en dépendent toutes les deux.

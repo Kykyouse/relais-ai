@@ -29,7 +29,10 @@ Réponds UNIQUEMENT un objet JSON avec les clés présentes dans la phrase (omet
   Si tu entends plus ou moins de dix chiffres, ne renvoie PAS ce champ — ne tronque
   jamais, ne complète jamais. Un numéro à peu près juste est pire qu'un numéro absent :
   c'est le seul moyen de rappeler le client.
-- disponibilites: contraintes de dispo si exprimées
+- disponibilites: le TEXTE EXACT de ce que l'appelant a dit sur ses disponibilités,
+  recopié tel quel (une chaîne, jamais un objet). Il est lu par l'artisan, pas par la
+  machine — c'est la clé "contrainte" décrite plus bas qui porte la structure. Ne mets
+  JAMAIS d'objet ici.
 - danger_gaz: true si odeur/fuite de gaz évoquée
 - confirme: true/false si la phrase est une confirmation/refus de ce que l'agent vient de proposer
 - question_prix: true si l'appelant demande un prix, un tarif ou une fourchette
@@ -46,7 +49,7 @@ Contexte de la conversation :
 - Nous sommes {aujourdhui} (heure locale de l'appelant).
 - L'agent vient de dire : "{dernier_agent}"
 - Propositions de créneaux en cours : {propositions}
-{menu}"""
+{menu}{menu_contrainte}"""
 
 REPLY_SYSTEM = """Tu es l'assistant vocal de {nom_entreprise} ({metier}), au téléphone.
 Tu parles pour un appel VOCAL : phrases courtes, chaleureuses, naturelles. UNE seule question à la fois.
@@ -194,8 +197,13 @@ class MockLLM:
             out["statut_occupant"] = "locataire"
         if any(w in u for w in ["urgent", "urgence", "tout de suite", "aujourd'hui", "l'eau coule"]):
             out["urgence_reelle"] = True
-        if any(w in u for w in ["dispo", "après", "avant", "matin", "après-midi", "quand vous voulez", "chez moi"]):
+        if any(w in u for w in ["dispo", "après", "avant", "matin", "après-midi",
+                                "quand vous voulez", "chez moi", "soir", "week-end",
+                                "weekend", "midi", "déjeuner"]):
             out["disponibilites"] = utterance.strip()[:80]
+            # la contrainte STRUCTURÉE accompagne le texte libre, à tout état : c'est un
+            # fait sur l'appel, pas une réponse au tour des créneaux
+            out["contrainte"] = self._contrainte_mock(u)
         if re.search(r"\b(oui|d'accord|ok|parfait|ça marche|c'est bon|exact)\b", u):
             out["confirme"] = True
         # « aucun des deux », « ni l'un ni l'autre » : des refus qui ne contiennent pas
@@ -229,6 +237,12 @@ class MockLLM:
             out["action"], rang = self._action(u, out)
             if rang is not None:
                 out["rang"] = rang
+            # le TEXTE LIBRE d'une contrainte, pour le lead. Seulement là où un menu
+            # existe — un jour cité pendant le récit du problème (« aujourd'hui c'est la
+            # catastrophe ») n'est pas une disponibilité, et c'était déjà la raison pour
+            # laquelle `_jour_dit` ne vivait que dans `_s5`.
+            if out["action"] == actions.CONTRAINTE and not out.get("disponibilites"):
+                out["disponibilites"] = utterance.strip()[:80]
         return out
 
     # jours nommés : dupliqués du contrôleur à dessein. Un harnais de test qui importerait
@@ -240,6 +254,47 @@ class MockLLM:
                          "au plus tôt", "dès que possible", "dès que vous pouvez",
                          "tout de suite", "immédiatement", "en urgence", "d'urgence",
                          "plus tôt", "rien avant", "pas avant")
+
+    # Les négations, ICI et nulle part ailleurs. Elles ont vécu dans `engine.py` jusqu'au
+    # 02/09, où elles produisaient encore une INVERSION (« ni le jeudi » préférait jeudi).
+    # Un harnais de test a le droit d'être naïf ; un contrôleur non.
+    NEGATIONS_MOCK = ("pas ", "sauf", "jamais", "hormis", "excepte", "ni ", "aucun")
+    # ORDRE : le plus LONG d'abord, et on s'arrête au premier trouvé. « après-demain »
+    # contient « demain » — le même piège que `JOURS_RELATIFS` avait dans le contrôleur,
+    # et qui rendait jours={mardi, mercredi} pour un seul jour demandé.
+    RELATIFS_MOCK = (("apres-demain", "apres_demain"), ("après-demain", "apres_demain"),
+                     ("aujourd'hui", "aujourdhui"), ("demain", "demain"))
+
+    def _contrainte_mock(self, u: str) -> dict:
+        """La contrainte STRUCTURÉE, décidée par mots-clés — dans le harnais de test.
+
+        Volontairement naïf : la négation vaut pour toute la phrase, alors que le vrai
+        modèle distingue « pas le samedi mais plutôt jeudi ». Ce mock existe pour rendre la
+        machine à états jouable sans réseau, pas pour comprendre le français. Les tournures
+        réelles se mesurent dans `run_extract_eval.py`.
+        """
+        nie = any(n in u for n in self.NEGATIONS_MOCK)
+        plancher = "pas avant" in u or "a partir de" in u or "à partir de" in u
+        jours = [nom for nom in ("lundi", "mardi", "mercredi", "jeudi", "vendredi",
+                                 "samedi", "dimanche") if nom in u]
+        for mot, v in self.RELATIFS_MOCK:
+            if mot in u:
+                jours.append(v)
+                break
+        if "week-end" in u or "weekend" in u:
+            jours += ["samedi", "dimanche"]
+        moment = None
+        if "matin" in u or "avant midi" in u or "avant le dejeuner" in u                 or "avant le déjeuner" in u:
+            moment = "matin"
+        elif "après-midi" in u or "apres-midi" in u or "aprem" in u:
+            moment = "apres_midi"
+        elif "soir" in u:
+            moment = "soir"
+        if plancher and jours:
+            return {"pas_avant": jours[0]}
+        if nie:
+            return {"exclut_jours": jours, "exclut_moment": moment}
+        return {"jours": jours, "moment": moment}
 
     def _action(self, u: str, out: dict) -> tuple[str, int | None]:
         """L'action du menu, dans l'ordre de priorité que le moteur appliquait avant.
@@ -257,9 +312,22 @@ class MockLLM:
             # des FAITS, que le moteur lit par ailleurs : rien à décider ici. `pas_clair`
             # laisserait le moteur faire répéter au lieu de répondre sur le prix.
             return actions.PAS_CLAIR, None
-        if any(w in u for w in self.AU_PLUS_VITE_MOCK):
+        # « pas avant vendredi » est un PLANCHER, pas une demande d'aller plus vite :
+        # testé AVANT la famille « au plus vite », qui contient « rien avant ».
+        if ("pas avant" in u or "à partir de" in u) and any(
+                j in u for j in self.JOURS_MOCK):
+            out["contrainte"] = self._contrainte_mock(u)
+            return actions.CONTRAINTE, None
+        # Un JOUR ou un MOMENT nommé gagne sur « au plus vite » : « plutôt jeudi, le plus
+        # tôt possible » est une contrainte (jeudi) qu'on souhaite tôt DANS ce jour, pas
+        # une demande du premier créneau libre. Le contrôleur lisait ce jour dans le texte
+        # avant R83 (`_jour_dit`), ce qui masquait la question de priorité ; elle se pose
+        # maintenant franchement, et le jour nommé est la contrainte la plus précise.
+        if any(w in u for w in self.AU_PLUS_VITE_MOCK) and not any(
+                j in u for j in self.JOURS_MOCK):
             return actions.PLUS_TOT, None
         if any(j in u for j in self.JOURS_MOCK) or out.get("disponibilites"):
+            out["contrainte"] = self._contrainte_mock(u)
             return actions.CONTRAINTE, None
         if out.get("confirme") is True:
             return actions.CHOISIR, 1
@@ -378,7 +446,14 @@ class AnthropicLLM:
                 dernier_agent=context.get("dernier_agent", ""),
                 propositions=context.get("propositions", []) or "aucune",
                 aujourdhui=context.get("aujourdhui") or "(date inconnue)",
-                menu=actions.bloc_prompt(context.get("etat", ""))),
+                menu=actions.bloc_prompt(context.get("etat", "")),
+                # TOUJOURS, et pas seulement là où le menu existe : les gens annoncent
+                # leurs disponibilités dans leur première phrase (« un entretien, mais
+                # uniquement le samedi matin »). Une contrainte est un FAIT sur l'appel ;
+                # l'ACTION `contrainte` reste propre au tour des créneaux. Les confondre
+                # a fait perdre R11 pendant le refactor de R83 — et R11 existe justement
+                # parce qu'un appelant réel avait dit « que le samedi matin » d'emblée.
+                menu_contrainte=actions.bloc_prompt_contrainte()),
             messages=[{"role": "user", "content": utterance}],
         )
         return json_de(_texte_de(msg))

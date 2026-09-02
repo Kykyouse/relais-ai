@@ -16,7 +16,7 @@ Cible V1 : plombiers/chauffagistes FR. Solo dev : Geoffrey (binôme Claude) ; ma
 ```bash
 cd proto
 pip install -r requirements.txt     # anthropic, python-dotenv (inutiles en mock)
-python run_scenario.py              # suite de non-régression (mock, sans clé, ~3 s) — 85 tests
+python run_scenario.py              # suite de non-régression (mock, sans clé, ~3 s) — 86 tests
 python run_llm_eval.py --mock       # plomberie de l'éval appelant-simulé (sans clé)
 python run_extract_eval.py [--mock] [--only plus_tot]
                                     # tests unitaires d'EXTRACTION : (phrase + contexte)
@@ -81,6 +81,13 @@ Clé API : fichier `.env` à la racine (voir `.env.example`). JAMAIS commité, J
    texte** — pas un `in`, pas une liste de tournures. Les mots-clés vivent dans `MockLLM`,
    qui est un harnais de test, et les mille formulations dans `run_extract_eval.py`.
    Une tournure ratée en appel réel devient une ligne d'éval, JAMAIS une ligne de moteur.
+   **Le CONTENU d'une contrainte suit la même règle depuis R83** : le modèle remplit
+   une structure au vocabulaire fermé (`actions.valider_contrainte` — des NOMS :
+   « jeudi », « demain », « matin », « soir »), le contrôleur la valide puis la
+   CONVERTIT en jours, dates et moments. La conversion reste au code (règle n°7 :
+   un jour relatif se résout contre l'horloge de l'appel, en heure de pendule).
+   `engine.py` ne contient plus AUCUNE liste de mots-clés de disponibilité — elles
+   vivent dans `MockLLM`, qui est un harnais de test.
 2. **Toute sortie passe par `guards.check_output`** — ne jamais contourner `_say()`.
    **Et les garde-fous ne voient pas tout : ils vérifient un contenu INTERDIT, jamais la
    FIDÉLITÉ à l'instruction.** Le 02/09, le formuleur a transformé « redonnez-moi le bon

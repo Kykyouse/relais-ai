@@ -52,7 +52,11 @@ EMPTY_SLOTS = {
                                # fuite chez lui.
     "telephone_rappel": None,  # normalisé 0XXXXXXXXX
     "tel_confirme": None,      # bool — répété et confirmé
-    "disponibilites": None,    # texte libre
+    "disponibilites": None,    # texte libre — pour le LEAD (Julien lit ce que le client
+                               # a dit), plus jamais parsé par le contrôleur (R83)
+    "contrainte": None,        # la contrainte STRUCTURÉE, au vocabulaire fermé de
+                               # `actions.valider_contrainte`. C'est ELLE que le
+                               # calendrier consomme, via `_contraintes_dispo`.
     "danger_gaz": None,        # bool
 }
 

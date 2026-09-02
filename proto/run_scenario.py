@@ -3877,6 +3877,185 @@ def check_questions_de_champ_non_formulees() -> bool:
     return True
 
 
+def _contrainte_de_phrase(phrase: str) -> dict:
+    """Traduit une phrase française en contrainte STRUCTURÉE — pour les TESTS seulement.
+
+    Depuis R83, le contrôleur ne lit plus le texte : c'est le modèle qui remplit la
+    structure (`actions.valider_contrainte`). Mais les cas historiques de cette suite sont
+    écrits en français — « pas le samedi », « que le samedi matin » — et les réécrire en
+    dictionnaires ferait perdre ce qu'ils racontent : la tournure exacte qui a cassé un
+    appel réel, tel jour, avec sa date.
+
+    Cette fonction est donc un raccourci de BANC D'ESSAI, jumelé à `MockLLM._contrainte_mock`
+    et pas plus intelligent que lui. La qualité de la vraie traduction se mesure ailleurs,
+    dans `run_extract_eval.py`, sur des appels LLM réels.
+    """
+    from relais_proto import actions
+    from relais_proto.llm import MockLLM
+    # `None` est un cas légitime : R61 vérifie qu'une phrase SANS contrainte n'en produit
+    # aucune, et le traducteur doit le rendre tel quel plutôt que de casser.
+    if not phrase:
+        return actions.valider_contrainte(None)
+    return actions.valider_contrainte(MockLLM()._contrainte_mock(phrase.lower()))
+
+
+def check_contrainte_structuree() -> bool:
+    """R83 : le CONTENU d'une contrainte vient du modèle, dans un vocabulaire fermé.
+
+    Dernier endroit où une liste de mots-clés tenait lieu de compréhension. R71 avait
+    déplacé la DÉCISION de S5 vers le modèle (menu d'actions) ; le contenu de la
+    contrainte, lui, était encore lu dans le texte par `_contraintes_dispo` — noms de
+    jours, `NEGATIONS`, `PLANCHERS`, et une fenêtre de trois mots pour deviner une
+    négation.
+
+    Ce que ça coûtait, mesuré le 02/09 et resté vivant jusqu'ici :
+
+        « ni le jeudi »                  → jours=[3]        PRÉFÈRE jeudi
+        « pas le matin ni le samedi »    → jours=[5]        PRÉFÈRE samedi
+        « pas le samedi ni le dimanche » → exclut samedi ✔  PRÉFÈRE dimanche
+
+    Une inversion — l'agent propose exactement le jour qu'on refuse. Et « ni » n'est
+    qu'un mot de plus : « avant midi », « en soirée », « la semaine prochaine », « le
+    week-end », « un jour ouvré » étaient simplement ignorés. Ajouter « ni » à la liste
+    aurait été le treizième mot-clé, et Geoffrey avait tranché le 01/09 : on arrête.
+
+    Le déplacement est le même que pour les actions, et sa limite aussi. Le modèle ne
+    choisit pas des créneaux : il remplit une STRUCTURE dont le contrôleur possède chaque
+    valeur — des NOMS (« jeudi », « demain », « matin »), jamais des indices ni des dates.
+    La conversion nom → jour de semaine → date reste au code, avec la règle n°7 : un jour
+    relatif se résout contre l'horloge de l'appel, en heure de pendule.
+
+    Ce que ce test verrouille :
+
+    1. le vocabulaire est FERMÉ — une valeur inventée est écartée, pas devinée ;
+    2. l'inversion a disparu PAR CONSTRUCTION : exclure se dit `exclut_jours`, et il n'y
+       a plus de fenêtre de mots à interpréter ;
+    3. règle n°7 : « demain » à 23 h 30 UTC un lundi, c'est mardi ;
+    4. `soir` est honoré ou HONNÊTEMENT refusé — les heures s'arrêtent à 18 h, et le dire
+       vaut mieux que l'ignorer ;
+    5. le texte libre continue d'arriver dans le LEAD : Julien lit ce que le client a dit,
+       pas seulement ce que la machine en a fait.
+    """
+    import datetime as dt
+
+    from relais_proto import actions
+    from relais_proto.engine import Conversation
+    from relais_proto.scoring import build_lead
+
+    # mercredi 2 septembre 2026, 9 h à Paris
+    MERCREDI = dt.datetime(2026, 9, 2, 7, 0, tzinfo=dt.UTC)
+
+    def lu(contrainte, quand=MERCREDI):
+        """Ce que le contrôleur tire d'une contrainte STRUCTURÉE."""
+        convo = Conversation(CFG, MockLLM(), CalendarStub(CFG, now=quand))
+        convo.slots["contrainte"] = actions.valider_contrainte(contrainte)
+        return convo._contraintes_dispo()
+
+    # ---- (1) VOCABULAIRE FERMÉ : ce qui n'est pas prévu est écarté ----
+    for brut, libelle in (({"jours": ["glurb"]}, "jour inventé"),
+                          ({"moment": "nuit"}, "moment inventé"),
+                          ({"pas_avant": "septembre"}, "plancher inventé"),
+                          ({"jours": "jeudi"}, "chaîne au lieu d'une liste"),
+                          ({"jours": [3]}, "indice au lieu d'un nom"),
+                          ("jeudi", "pas un objet"),
+                          (None, "rien")):
+        v = actions.valider_contrainte(brut)
+        if any(v.values()):
+            print(f"   {libelle} : {v} — une valeur inventée est retenue")
+            return False
+
+    # ---- (2) L'INVERSION A DISPARU : exclure se DIT, ne se devine plus ----
+    c = lu({"exclut_jours": ["jeudi"]})
+    if c["jours"]:
+        print(f"   exclure jeudi produit une préférence : {c['jours']}")
+        return False
+    if 3 not in (c["jours_exclus"] or set()):
+        print(f"   jeudi n'est pas exclu : {c['jours_exclus']}")
+        return False
+
+    c = lu({"exclut_jours": ["samedi", "dimanche"], "exclut_moment": "matin"})
+    if (c["jours_exclus"] or set()) != {5, 6} or c["moment_exclu"] != "matin":
+        print(f"   exclusions multiples mal lues : {c}")
+        return False
+    if c["jours"] or c["moment"]:
+        print(f"   des exclusions produisent des préférences : {c}")
+        return False
+
+    # ---- (3) RÈGLE N°7 : un jour relatif se résout en heure de PENDULE ----
+    c = lu({"jours": ["demain"]})
+    if (c["jours"] or set()) != {3} or "2026-09-03" not in (c["dates"] or set()):
+        print(f"   « demain » un mercredi n'est pas jeudi 3 : {c}")
+        return False
+    # 23 h 30 UTC un lundi = mardi 1 h 30 à Paris, donc « demain » est MERCREDI
+    LUNDI_TARD = dt.datetime(2026, 8, 31, 23, 30, tzinfo=dt.UTC)
+    c = lu({"jours": ["demain"]}, LUNDI_TARD)
+    if "2026-09-02" not in (c["dates"] or set()):
+        print(f"   « demain » à 23h30 UTC lundi n'est pas mercredi 2 : {c['dates']}")
+        return False
+
+    c = lu({"pas_avant": "vendredi"})
+    if c["pas_avant"] != 4:
+        print(f"   le plancher « vendredi » vaut {c['pas_avant']!r} au lieu de 4")
+        return False
+
+    # ---- (4) ce que le contrôleur HONORE, de bout en bout ----
+    def propose(contrainte):
+        convo = Conversation(CFG, MockLLM(), CalendarStub(CFG, now=MERCREDI),
+                             numero_appelant="+33630301111")
+        convo.open()
+        for ligne in ("J'ai une fuite d'eau dans la salle de bain",
+                      "Nogent-sur-Marne 94130", "Benoît", "oui"):
+            convo.process(ligne)
+        convo.slots["contrainte"] = actions.valider_contrainte(contrainte)
+        convo.flags["contraintes_proposees"] = None
+        return convo._s5({"action": "contrainte"}), convo._proposes
+
+    dit, creneaux = propose({"exclut_jours": ["jeudi"]})
+    if not creneaux:
+        print(f"   exclure jeudi ne propose plus rien : « {dit} »")
+        return False
+    for cr in creneaux:
+        if dt.date.fromisoformat(cr["date"]).weekday() == 3:
+            print(f"   jeudi proposé à qui l'exclut : {cr['label']}")
+            return False
+
+    # « avant midi » — l'une des tournures qui étaient IGNORÉES. Le modèle la range
+    # désormais dans `moment: matin`, et le contrôleur l'honore.
+    dit, creneaux = propose({"moment": "matin"})
+    if not creneaux or any(int(cr["de"].split(":")[0]) >= 12 for cr in creneaux):
+        print(f"   « matin » n'est pas honoré : "
+              f"{[cr['label'] for cr in creneaux]} — « {dit} »")
+        return False
+
+    # SOIR : les heures s'arrêtent à 18 h. Ou on trouve quelque chose en fin de journée,
+    # ou on le DIT — mais on ne fait pas semblant de ne pas avoir entendu.
+    dit, creneaux = propose({"moment": "soir"})
+    if not creneaux:
+        print(f"   « soir » ne propose rien du tout : « {dit} »")
+        return False
+    tardif = all(int(cr["de"].split(":")[0]) >= 16 for cr in creneaux)
+    honnete = "plus rien" in dit.lower() or "plus tôt" in dit.lower()
+    if not tardif and not honnete:
+        print(f"   « soir » est ignoré en silence : "
+              f"{[cr['label'] for cr in creneaux]} — « {dit} »")
+        return False
+
+    # ---- (5) le TEXTE LIBRE arrive toujours dans le lead ----
+    convo = Conversation(CFG, MockLLM(), CalendarStub(CFG, now=MERCREDI),
+                         numero_appelant="+33630301111")
+    convo.open()
+    for ligne in ("J'ai une fuite d'eau dans la salle de bain",
+                  "Nogent-sur-Marne 94130", "Benoît", "oui",
+                  "plutôt jeudi, et surtout pas le matin"):
+        convo.process(ligne)
+    dispo = build_lead(convo)["slots"].get("disponibilites")
+    if not dispo or "jeudi" not in dispo.lower():
+        print(f"   ce que le client a DIT n'arrive plus dans le lead : {dispo!r}")
+        return False
+
+    return True
+
+
 def check_trois_corrections_audibles() -> bool:
     """R82 : trois choses que l'appelant ENTEND, et qui sonnaient faux.
 
@@ -3975,8 +4154,9 @@ def check_trois_corrections_audibles() -> bool:
         return False
 
     # (b ter) ET LE CAS DANGEREUX : une contrainte que le contrôleur ne sait PAS lire.
-    # « Avant midi » est reconnu comme une contrainte par le modèle, mais `_contraintes_dispo`
-    # n'en tire rien (liste de mots-clés). Les créneaux sont donc inchangés — et dire
+    # « Quand vous voulez » est reconnu comme une contrainte par le modèle, qui rend
+    # `contrainte: {}` — il a vu qu'on parlait de disponibilité et n'a rien su en exprimer
+    # dans le vocabulaire fermé. Les créneaux sont donc inchangés — et dire
     # « ces créneaux respectent déjà ce que vous me dites » serait un MENSONGE : on n'a
     # rien compris du tout. Sourd est rattrapable au tour suivant ; menteur ne l'est pas.
     #
@@ -3984,11 +4164,12 @@ def check_trois_corrections_audibles() -> bool:
     # coûtait le plus cher. Cette limite disparaîtra quand le CONTENU des contraintes
     # passera au modèle — c'est le chantier suivant.
     convo = jusqu_aux_creneaux()
-    dit = convo.process("Plutôt avant midi si vous pouvez")
+    dit = convo.process("Quand vous voulez, ça m'est égal")
     convo2 = jusqu_aux_creneaux()
-    convo2.slots["disponibilites"] = "avant midi"
+    convo2.slots["contrainte"] = _contrainte_de_phrase("quand vous voulez")
     if any(v for v in convo2._contraintes_dispo().values()):
-        print("   « avant midi » est désormais LU : la fixture ne teste plus le bon cas")
+        print("   « quand vous voulez » produit une contrainte : "
+              "la fixture ne teste plus le bon cas")
         return False
     if "déjà" in dit.lower():
         print(f"   une contrainte NON COMPRISE est dite « déjà respectée » : « {dit} »")
@@ -4002,7 +4183,7 @@ def check_trois_corrections_audibles() -> bool:
     # affirmerait « déjà respecté » d'une phrase qu'il n'a pas comprise.
     convo = jusqu_aux_creneaux()
     convo.process("En tout cas, pas le vendredi.")
-    dit = convo.process("Et plutôt avant midi")
+    dit = convo.process("Et sinon quand vous voulez")
     if "déjà" in dit.lower():
         print(f"   contrainte non comprise après une contrainte lue : « {dit} »")
         return False
@@ -5047,7 +5228,7 @@ def check_sonde_dispo() -> bool:
         return dits
 
     LIGNES = ["J'ai une fuite sous l'évier", "Nogent-sur-Marne 94130",
-              "Dupont, 06 06 30 30 11", "oui", "plutôt avant midi"]
+              "Dupont, 06 06 30 30 11", "oui", "quand vous voulez, ça m'est égal"]
 
     with tempfile.TemporaryDirectory() as tmp:
         racine = pathlib.Path(tmp)
@@ -5096,20 +5277,26 @@ def check_sonde_dispo() -> bool:
             print("   les entrées ne portent pas l'identifiant d'appel")
             return False
 
-        # (c) elle DISTINGUE les deux cécités. « Avant midi » est justement une des treize
-        # tournures que le contrôleur ne sait pas lire, et l'extracteur la retient : `brut`
-        # rempli, `entendu` faux. C'est LA ligne qu'on vient chercher dans ce fichier — si
-        # elle se confondait avec « personne n'a rien dit », la sonde ne servirait à rien.
+        # (c) elle DISTINGUE les deux cécités : `brut` rempli, `entendu` faux.
         #
-        # Le premier jet de ce test employait « dans la journée », que le MockLLM
-        # n'extrait pas : il mesurait alors la cécité de l'extracteur de TEST et non celle
-        # du contrôleur. Une fixture doit rendre POSSIBLE ce qu'elle vérifie.
+        # L'EXEMPLE A CHANGÉ DEUX FOIS, et la seconde vaut d'être notée. Le premier jet
+        # employait « dans la journée », que le MockLLM n'extrait pas : il mesurait la
+        # cécité de l'extracteur de TEST, pas celle du contrôleur. Puis « avant midi »,
+        # l'une des treize tournures ignorées du 27/08 — et R83 l'a GUÉRIE. La sonde a
+        # donc perdu son exemple de surdité parce que la surdité a été soignée, ce qui est
+        # la meilleure raison possible de réécrire un test.
+        #
+        # Ce qui reste sourd aujourd'hui n'est plus un trou de vocabulaire : c'est une
+        # contrainte que le modèle VOIT sans savoir l'exprimer dans le vocabulaire fermé
+        # (« quand vous voulez » → `contrainte: {}`). Le contrôleur le sait, et le garde
+        # de R82 l'empêche de prétendre avoir compris.
         derniere = lignes[-1]
         if not derniere["brut"]:
-            print(f"   « avant midi » n'est même pas extrait : {derniere}")
+            print(f"   « quand vous voulez » n'est même pas extrait : {derniere}")
             return False
         if derniere["entendu"]:
-            print(f"   « avant midi » compté comme entendu : {derniere['lecture']}")
+            print(f"   « quand vous voulez » compté comme entendu : "
+                  f"{derniere['lecture']}")
             return False
 
         # et le cas inverse : une tournure que le contrôleur SAIT lire ressort entendue,
@@ -5179,7 +5366,7 @@ def check_dispo_negations() -> bool:
 
     def contraintes(dispo):
         convo = Conversation(CFG, MockLLM(), CalendarStub(CFG, now=JEUDI))
-        convo.slots["disponibilites"] = dispo
+        convo.slots["contrainte"] = _contrainte_de_phrase(dispo)
         return convo._contraintes_dispo()
 
     # (a) une NÉGATION n'est jamais une préférence
@@ -5246,7 +5433,7 @@ def check_dispo_negations() -> bool:
         for ligne in ("J'ai une fuite sous l'évier, c'est urgent",
                       "Nogent-sur-Marne 94130", "Dupont, 06 06 30 30 11", "oui"):
             convo.process(ligne)
-        convo.slots["disponibilites"] = dispo
+        convo.slots["contrainte"] = _contrainte_de_phrase(dispo)
         convo.flags["contraintes_proposees"] = None
         # `action: contrainte` — c'est ce que l'extracteur renvoie quand l'appelant donne
         # une contrainte nouvelle ; son CONTENU reste lu en clair par `_contraintes_dispo`
@@ -5423,8 +5610,15 @@ def check_jour_nomme_est_une_contrainte() -> bool:
     # (a) « Aujourd'hui » quand la journée a encore de la place : on y reste
     convo = jusqu_aux_creneaux(MATIN)
     reponse = convo.process("Aujourd'hui")
+    # Le SENS vit désormais dans `contrainte` (R83) ; `disponibilites` reste le texte
+    # libre qui part dans le lead. On vérifie les deux : l'un dit ce que la machine a
+    # compris, l'autre ce que le client a dit, et Julien a besoin des deux.
+    if not (convo.slots.get("contrainte") or {}).get("jours"):
+        print(f"   « Aujourd'hui » n'est pas lu comme une contrainte de jour : "
+              f"{convo.slots.get('contrainte')}")
+        return False
     if convo.slots["disponibilites"] is None:
-        print("   « Aujourd'hui » n'est pas lu comme une disponibilité")
+        print("   « Aujourd'hui » n'arrive pas dans le lead comme texte libre")
         return False
     if not convo._proposes:
         print(f"   plus aucun créneau après « Aujourd'hui » : « {reponse} »")
@@ -6105,7 +6299,7 @@ def check_dispo_demain_aujourdhui() -> bool:
 
     def contraintes(dispo):
         convo = Conversation(CFG, MockLLM(), CalendarStub(CFG, now=LUNDI_9H))
-        convo.slots["disponibilites"] = dispo
+        convo.slots["contrainte"] = _contrainte_de_phrase(dispo)
         # depuis R68, une STRUCTURE : aux préférences (jours, moment, dates) s'ajoutent
         # les négations — exclusions et plancher. Un tuple qui s'allonge à chaque forme
         # nouvelle finit par ne plus rien dire de ce qu'il porte.
@@ -6148,7 +6342,7 @@ def check_dispo_demain_aujourdhui() -> bool:
         print(f"   préparation : {nuit} n'est pas mardi à Paris ({local_nuit})")
         return False
     convo_nuit = Conversation(CFG, MockLLM(), CalendarStub(CFG, now=nuit))
-    convo_nuit.slots["disponibilites"] = "demain"
+    convo_nuit.slots["contrainte"] = _contrainte_de_phrase("demain")
     jours_nuit = convo_nuit._contraintes_dispo()["jours"]
     if jours_nuit != {2}:                                          # mercredi
         print(f"   appel de nuit : « demain » → {jours_nuit} au lieu de "
@@ -8909,7 +9103,7 @@ def check_contrainte_prime_sur_plus_tot() -> bool:
         print("   aucune proposition initiale")
         return False
     # on force l'extraction fautive telle que Haiku l'a produite
-    convo.slots["disponibilites"] = "samedi matin uniquement"
+    convo.slots["contrainte"] = _contrainte_de_phrase("samedi matin uniquement")
     # depuis le 01/09, `_s5` lit une ACTION du menu (`actions.py`) et non plus des champs
     # de fait : « rien de plus tôt » et « le plus vite possible » sont la même action
     reponse = convo._s5({"action": "plus_tot"})
@@ -9537,6 +9731,14 @@ def run() -> int:
     if check_trois_corrections_audibles():
         print("   → la clarification est une phrase, une contrainte sans effet est dite "
               "au lieu d'être tue, et la localisation est acquittée : ✅ PASS")
+    else:
+        print("   → ❌ FAIL")
+        echecs += 1
+
+    print(f"\n──── R83_contrainte_structuree ────")
+    if check_contrainte_structuree():
+        print("   → le contenu d'une contrainte vient du modèle dans un vocabulaire "
+              "fermé : plus de mots-clés, plus d'inversion : ✅ PASS")
     else:
         print("   → ❌ FAIL")
         echecs += 1

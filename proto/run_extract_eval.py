@@ -201,6 +201,57 @@ CAS_FAITS: list[tuple[str, dict, str, object, str]] = [
 ]
 
 
+# (phrase, contexte, contrainte attendue, étiquette) — R83. Ce que le modèle doit RANGER
+# dans la structure, pas ce qu'il doit dire. Les tournures viennent des appels réels et du
+# sondage du 27/08 : celles qui étaient INVERSÉES (« ni le jeudi » préférait jeudi) et
+# celles qui étaient purement IGNORÉES (« en soirée », « le week-end », « avant midi »).
+CAS_CONTRAINTE: list[tuple[str, dict, dict, str]] = [
+    # ---- les INVERSIONS, mesurées vivantes jusqu'au 02/09 ----
+    ("Ni le jeudi.", None, {"exclut_jours": ["jeudi"]}, "contr/ni-jeudi"),
+    ("Pas le matin ni le samedi.", None,
+     {"exclut_jours": ["samedi"], "exclut_moment": "matin"}, "contr/ni-double"),
+    ("Pas le samedi ni le dimanche.", None,
+     {"exclut_jours": ["samedi", "dimanche"]}, "contr/ni-weekend"),
+    # ---- les IGNORÉES du sondage du 27/08 ----
+    ("Plutôt avant midi si vous pouvez.", None, {"moment": "matin"}, "contr/avant-midi"),
+    ("En soirée, après le travail.", None, {"moment": "soir"}, "contr/soiree"),
+    ("Surtout pas le week-end.", None,
+     {"exclut_jours": ["samedi", "dimanche"]}, "contr/week-end"),
+    ("Un jour ouvré, je ne suis pas là le week-end.", None,
+     {"exclut_jours": ["samedi", "dimanche"]}, "contr/jour-ouvre"),
+    ("Pas avant vendredi, je suis en déplacement.", None,
+     {"pas_avant": "vendredi"}, "contr/plancher"),
+    # ---- ce qui marchait déjà, à ne pas casser ----
+    ("Uniquement le samedi matin.", None,
+     {"jours": ["samedi"], "moment": "matin"}, "contr/samedi-matin"),
+    ("Plutôt jeudi.", None, {"jours": ["jeudi"]}, "contr/jeudi"),
+    ("Demain si possible.", None, {"jours": ["demain"]}, "contr/demain"),
+    ("Après-demain plutôt.", None, {"jours": ["apres_demain"]}, "contr/apres-demain"),
+    # ---- et l'honnêteté : ce qu'on ne peut pas exprimer reste VIDE ----
+    ("Quand ma femme est là, ça dépend des semaines.", None, {}, "contr/inexprimable"),
+    ("Quand vous voulez, ça m'est égal.", None, {}, "contr/peu-importe"),
+]
+
+
+def _verdict_contrainte(ex: dict, attendu: dict) -> tuple[bool, str]:
+    """La contrainte VALIDÉE, comparée à celle attendue.
+
+    On compare ce que le contrôleur exécutera (`actions.valider_contrainte`), pas le JSON
+    brut : une valeur hors vocabulaire est déjà écartée à ce stade, et c'est bien ce qui
+    compte. Les listes sont comparées en ENSEMBLES — l'ordre de « samedi, dimanche » n'a
+    aucune importance, et en faire un échec serait du bruit.
+    """
+    obtenu = actions.valider_contrainte(ex.get("contrainte"))
+    plein = actions.valider_contrainte(attendu)
+    ok = (set(obtenu["jours"]) == set(plein["jours"])
+          and set(obtenu["exclut_jours"]) == set(plein["exclut_jours"])
+          and obtenu["moment"] == plein["moment"]
+          and obtenu["exclut_moment"] == plein["exclut_moment"]
+          and obtenu["pas_avant"] == plein["pas_avant"])
+    lisible = {c: v for c, v in obtenu.items() if v}
+    return ok, str(lisible or "{}")
+
+
 def _verdict_fait(ex: dict, cle: str, attendu) -> tuple[bool, str]:
     """Un FAIT extrait, comparé à ce qu'il devrait valoir — `ABSENT` compris.
 
@@ -260,7 +311,8 @@ def main() -> int:
 
     cas = [c for c in CAS if not args.only or args.only in c[3]]
     faits = [c for c in CAS_FAITS if not args.only or args.only in c[4]]
-    if not cas and not faits:
+    contrs = [c for c in CAS_CONTRAINTE if not args.only or args.only in c[3]]
+    if not cas and not faits and not contrs:
         print(f"aucun cas ne correspond à --only {args.only!r}")
         return 2
 
@@ -281,7 +333,7 @@ def main() -> int:
         # modèle qu'on croit mesurer
         llm = AnthropicLLM(model=modele)
 
-    print(f"extraction · {len(cas)} actions + {len(faits)} faits · modèle {modele}\n")
+    print(f"extraction · {len(cas)} actions + {len(faits)} faits + {len(contrs)} contraintes · modèle {modele}\n")
     resultats, reussis = [], 0
     for phrase, attendu, rang_attendu, etiquette in cas:
         debut = time.monotonic()
@@ -332,6 +384,22 @@ def main() -> int:
                           "attendu": str(attendu), "obtenu": f"{cle}={obtenu}",
                           "ok": ok, "brut": ex, "ms": ms})
 
+    for phrase, ctx, attendu, etiquette in contrs:
+        debut = time.monotonic()
+        try:
+            ex = llm.extract(phrase, ctx or CTX_S5)
+        except Exception as exc:                                      # noqa: BLE001
+            ex = {"_erreur": repr(exc)}
+        ms = int((time.monotonic() - debut) * 1000)
+        ok, obtenu = _verdict_contrainte(ex, attendu)
+        reussis += ok
+        att = {c: v for c, v in actions.valider_contrainte(attendu).items() if v}
+        print(f"{'OK' if ok else 'KO'} {etiquette:30} {phrase[:40]:42} "
+              f"{obtenu[:46]:48} (attendu {att or '{}'}) {ms:>5} ms")
+        resultats.append({"etiquette": etiquette, "phrase": phrase, "attendu": str(att),
+                          "obtenu": f"contrainte={obtenu}", "ok": ok, "brut": ex,
+                          "ms": ms})
+
     # p50 ET p95, pas une moyenne : au téléphone c'est la QUEUE qui s'entend. Un modèle
     # à 200 ms de médiane et 2 s de p95 fait attendre un appelant sur vingt, et c'est
     # précisément celui-là qui raccroche.
@@ -340,7 +408,7 @@ def main() -> int:
         return lat[min(len(lat) - 1, int(part * len(lat)))]
     print(f"\nlatence : p50 {_q(0.50)} ms · p95 {_q(0.95)} ms · max {lat[-1]} ms")
 
-    print(f"{reussis}/{len(cas) + len(faits)} compris")
+    print(f"{reussis}/{len(cas) + len(faits) + len(contrs)} compris")
     if args.mock:
         # EN MOCK, LE CRITÈRE N'EST PAS LA COMPRÉHENSION. Le harnais par mots-clés se
         # trompe forcément — il rend « choisir/2 » sur « le chien a renversé la gamelle,
@@ -361,7 +429,7 @@ def main() -> int:
                 print(f"   PLOMBERIE : {r['etiquette']} → {r['obtenu']} "
                       f"{r['brut'].get('_erreur', '')}")
             return 1
-        print(f"plomberie OK sur {len(cas) + len(faits)} cas — le score ci-dessus ne mesure PAS le "
+        print(f"plomberie OK sur {len(cas) + len(faits) + len(contrs)} cas — le score ci-dessus ne mesure PAS le "
               f"modèle (lancer sans --mock pour cela)")
         return 0
     if not args.mock:
@@ -373,13 +441,13 @@ def main() -> int:
         chemin = dossier / f"extract-{time.strftime('%Y%m%d-%H%M%S')}.json"
         chemin.write_text(json.dumps(
             {"modele": modele, "reussis": reussis,
-             "total": len(cas) + len(faits),
+             "total": len(cas) + len(faits) + len(contrs),
              "latence_p50_ms": _q(0.50), "latence_p95_ms": _q(0.95),
              "latence_max_ms": lat[-1], "cas": resultats},
             ensure_ascii=False, indent=2, default=str),
             encoding="utf-8")
         print(f"→ {chemin}")
-    return 0 if reussis == len(cas) + len(faits) else 1
+    return 0 if reussis == len(cas) + len(faits) + len(contrs) else 1
 
 
 if __name__ == "__main__":

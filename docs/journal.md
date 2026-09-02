@@ -300,6 +300,71 @@ Le spike vocal ne s'ouvre **qu'en session dédiée**. Le Sender ID et l'OAuth Go
 le nom commercial — c'est-à-dire le cousin, pas nous.
 ---
 
+## 02/09 (soir) — Le contenu des contraintes passe au modèle (R83)
+
+Dernier endroit où une liste de mots-clés tenait lieu de compréhension, et le seul qui
+portait encore une INVERSION vivante. R71 avait déplacé la DÉCISION de S5 vers le modèle ;
+le contenu d'une contrainte était encore lu dans le texte par `_contraintes_dispo`.
+
+Ce que ça coûtait, vérifié vivant juste avant le chantier :
+
+    « ni le jeudi »                  → jours=[3]        PRÉFÉRAIT jeudi
+    « pas le matin ni le samedi »    → jours=[5]        PRÉFÉRAIT samedi
+    « pas le samedi ni le dimanche » → exclut samedi ✔  PRÉFÉRAIT dimanche
+
+Et « ni » n'était qu'un mot de plus : « avant midi », « en soirée », « le week-end »,
+« un jour ouvré » étaient purement ignorés. C'est ce que Geoffrey avait tranché le 01/09 —
+on arrête d'allonger la liste.
+
+**Le modèle remplit une STRUCTURE, en NOMS.** `{"exclut_jours": ["jeudi"], "moment":
+"matin", "pas_avant": "vendredi"}` — jamais un indice, jamais une date. La conversion
+nom → jour de semaine → date reste au code, avec la règle n°7. Demander au modèle de
+calculer une date serait lui demander de l'arithmétique, qui n'a jamais été son travail
+ici. `engine.py` a perdu `NEGATIONS`, `PLANCHERS`, `_nie`, `JOURS_RELATIFS` et
+`_jour_dit` : plus une seule liste de mots-clés de disponibilité.
+
+**`soir` a été AJOUTÉ au vocabulaire alors que les journées s'arrêtent à 18 h**, et c'est
+délibéré : le vocabulaire décrit ce que l'appelant peut VOULOIR, le calendrier répond ce
+qu'il a. Seuil à 16 h — un seuil à 18 h aurait rendu `soir` toujours vide, donc un
+vocabulaire qui promet ce qu'il ne sait pas tenir. Quand il n'y a rien, le repli honnête
+de R67 prend la main (« je n'ai plus rien à ce moment-là… ») : « en soirée » cesse d'être
+ignoré en silence.
+
+**Deux régressions attrapées par la suite, et la première était grave.**
+
+R11 : « je veux un entretien, mais uniquement le samedi matin » — dit dans la PREMIÈRE
+phrase. Le menu d'actions n'existe qu'en S5, donc la contrainte était perdue. Les gens
+annoncent leurs disponibilités d'emblée : une contrainte est un FAIT sur l'appel,
+extractible à tout moment ; l'ACTION `contrainte` reste propre au tour des créneaux. Les
+avoir confondus a coûté R11, qui existe justement parce qu'un appelant réel avait dit
+« que le samedi matin » dès le début.
+
+R67 : un jour cité HORS du choix de créneau (« aujourd'hui c'est la catastrophe, j'ai une
+fuite ») ne doit pas devenir une contrainte. C'était la raison pour laquelle `_jour_dit`
+ne vivait que dans `_s5`, et le harnais l'avait oubliée.
+
+**Le banc a mesuré, et il a corrigé le CONTRAT trois fois.** Premier passage : 11/14 sur
+les contraintes. Aucun des trois échecs n'était de la compréhension :
+
+- `"exclut_moment": ["matin"]` — une liste d'un élément au lieu d'une chaîne. Le sens
+  était PARFAIT. Le validateur tolère désormais cette forme : on accepte une forme dont
+  le sens ne fait aucun doute, jamais un sens deviné.
+- `"disponibilites": {"moment": "matin"}` — le modèle a rangé la structure dans le champ
+  qui portait le nom du sujet. **Collision de noms que j'avais créée moi-même** : deux
+  champs sur la même chose. `disponibilites` est maintenant décrit comme du TEXTE
+  verbatim, lu par l'artisan et pas par la machine.
+- « Après-demain plutôt » → `pas_avant`. Mon `pas_avant` disait « ce jour-là ou plus
+  tard », ce qui ressemble à « après-demain ». Restreint aux bornes explicites.
+
+Après correction : **14/14 sur les contraintes.** Puis deux NOUVEAUX échecs, d'une
+ambiguïté que j'avais introduite : « le matin » quand une proposition EST le matin. Mes
+deux contrats se contredisaient — le menu disait « ça désigne une proposition », le bloc
+contrainte disait « c'est un moment ». Priorité écrite : ce qui désigne une proposition en
+cours est un CHOIX, pas une contrainte. **Banc complet : 61/63**, les deux restants étant
+les violations connues du modèle sur le numéro, que le contrôleur attrape (R55/R75).
+
+86 tests au vert, éval mock 19/19, p50 1074 ms.
+
 ## 02/09 (soir) — Le numéro gratuit Vapi ne prend pas les appels internationaux (R81)
 
 Geoffrey appelle le numéro Vapi fraîchement provisionné : **tonalité occupée immédiate**,

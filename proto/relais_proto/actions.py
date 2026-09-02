@@ -99,6 +99,129 @@ MENUS: dict[str, tuple[str, ...]] = {
 }
 
 
+# ---- le CONTENU d'une contrainte : un vocabulaire fermé, en NOMS -------------------
+#
+# R83. Le menu d'actions avait déplacé la DÉCISION vers le modèle ; le contenu d'une
+# contrainte restait lu dans le texte par `engine._contraintes_dispo` — noms de jours,
+# négations, planchers, et une fenêtre de trois mots pour deviner ce qui était nié. Ce
+# qu'il en coûtait, mesuré et resté vivant jusqu'au 02/09 :
+#
+#     « ni le jeudi »                  → PRÉFÈRE jeudi
+#     « pas le matin ni le samedi »    → PRÉFÈRE samedi
+#     « pas le samedi ni le dimanche » → exclut samedi, PRÉFÈRE dimanche
+#
+# Une inversion : l'agent propose le jour qu'on refuse. Et « ni » n'était qu'un mot de
+# plus — « avant midi », « en soirée », « la semaine prochaine », « le week-end », « un
+# jour ouvré » étaient purement ignorés.
+#
+# DES NOMS, PAS DES INDICES NI DES DATES. Le modèle dit « jeudi », « demain », « matin » ;
+# la conversion nom → jour de semaine → date reste au code, avec la règle n°7 (un jour
+# relatif se résout contre l'horloge de l'appel, en heure de pendule). Demander au modèle
+# de calculer une date serait lui demander de l'arithmétique — et l'arithmétique n'a
+# jamais été son travail ici.
+JOURS_NOMMES = ("lundi", "mardi", "mercredi", "jeudi", "vendredi", "samedi", "dimanche")
+JOURS_RELATIFS_NOMMES = ("aujourdhui", "demain", "apres_demain")
+JOURS_VOCABULAIRE = JOURS_NOMMES + JOURS_RELATIFS_NOMMES
+
+# `soir` existe alors que les journées s'arrêtent à 18 h. C'est délibéré : le vocabulaire
+# décrit ce que l'appelant peut VOULOIR, et le calendrier répond ce qu'il a. Un « en
+# soirée » qui ne trouve rien déclenche le repli honnête de R67 — « je n'ai plus rien à ce
+# moment-là, le plus tôt que je peux, c'est… ». C'est infiniment mieux que de l'ignorer,
+# ce qui était le comportement d'avant.
+MOMENTS = ("matin", "apres_midi", "soir")
+
+CONTRAINTE_CHAMPS = {
+    "jours": "préférence de jour",
+    "exclut_jours": "jours à ÉVITER",
+    "moment": "préférence de moment",
+    "exclut_moment": "moment à ÉVITER",
+    "pas_avant": "borne basse : ce jour-là ou plus tard",
+}
+
+
+def bloc_prompt_contrainte() -> str:
+    """Le morceau de prompt qui décrit la structure d'une contrainte.
+
+    Généré depuis les mêmes constantes que la validation : une valeur ajoutée ici est
+    immédiatement offerte au modèle ET acceptée par le contrôleur. C'est la leçon de R70,
+    où « rejeu » et « affinage » étaient définis deux fois.
+    """
+    return (
+        '\nDISPONIBILITÉS. Dès que l\'appelant dit quelque chose sur QUAND il est '
+        'disponible — à n\'importe quel moment de l\'appel, y compris dans sa toute '
+        'première phrase — ajoute la clé "contrainte", un objet dont toutes les clés '
+        'sont optionnelles :\n'
+        f'- "jours" : liste de jours SOUHAITÉS, parmi {list(JOURS_VOCABULAIRE)}\n'
+        f'- "exclut_jours" : liste de jours à ÉVITER, mêmes valeurs\n'
+        f'- "moment" : un moment SOUHAITÉ, parmi {list(MOMENTS)}\n'
+        f'- "exclut_moment" : un moment à ÉVITER, mêmes valeurs\n'
+        f'- "pas_avant" : SEULEMENT si l\'appelant pose une BORNE explicite — « pas '
+        f'avant vendredi », « à partir de jeudi », « au plus tôt lundi ». Un jour cité '
+        f'seul (« après-demain plutôt ») va dans "jours", PAS ici.\n'
+        'N\'emploie QUE ces valeurs, exactement écrites ainsi (sans accent, sans '
+        'majuscule). Traduis vers elles : « avant midi » → moment "matin" ; « en fin de '
+        'journée », « en soirée » → moment "soir" ; « pas le week-end » → exclut_jours '
+        '["samedi","dimanche"] ; « ni le jeudi » → exclut_jours ["jeudi"] ; « pas le '
+        'matin ni le samedi » → exclut_moment "matin" ET exclut_jours ["samedi"] (une '
+        'phrase peut porter plusieurs clés à la fois) ; « pas avant '
+        'vendredi » → pas_avant "vendredi" ; « un jour ouvré » → exclut_jours '
+        '["samedi","dimanche"].\n'
+        'Une semaine ou un mois ne sont PAS dans ce vocabulaire : pour « la semaine '
+        'prochaine », donne pas_avant sur le lundi suivant. Si tu ne peux rien exprimer '
+        'avec ces clés, renvoie "contrainte": {} — le contrôleur le verra et fera '
+        'répéter plutôt que d\'agir de travers.\n')
+
+
+def _noms(valeur, permis: tuple[str, ...]) -> list[str]:
+    """Les noms d'une liste qui appartiennent au vocabulaire. Tout le reste tombe.
+
+    Une chaîne seule n'est PAS acceptée à la place d'une liste : « jours: "jeudi" »
+    serait itéré caractère par caractère, et « j », « e », « u » ne sont dans aucun
+    vocabulaire — donc le résultat serait vide, ce qui est correct mais par accident.
+    On refuse explicitement, pour que la raison soit lisible.
+    """
+    if not isinstance(valeur, list):
+        return []
+    return [v for v in valeur if isinstance(v, str) and v in permis]
+
+
+def valider_contrainte(brut: object) -> dict:
+    """La contrainte que le contrôleur va exécuter, réduite au vocabulaire connu.
+
+    Rend toujours la même forme, avec des valeurs vides quand rien n'est exploitable :
+    l'appelant du 02/09 a montré ce que coûte une contrainte à moitié comprise, et une
+    structure incomplète est plus dangereuse qu'une structure vide — le contrôleur croit
+    avoir compris. Vide, il le sait et fait répéter (le garde de R82).
+    """
+    vide = {"jours": [], "exclut_jours": [], "moment": None,
+            "exclut_moment": None, "pas_avant": None}
+    if not isinstance(brut, dict):
+        return vide
+    # UNE LISTE D'UN ÉLÉMENT VAUT LA VALEUR. Mesuré le 02/09 : sur « pas le matin ni le
+    # samedi », le modèle a rendu `"exclut_moment": ["matin"]` — la compréhension était
+    # PARFAITE, la forme non, et le cas comptait pour un échec. Refuser une forme dont le
+    # sens ne fait aucun doute, c'est se priver d'une bonne réponse pour une virgule.
+    #
+    # Ça ne rouvre pas le vocabulaire : la valeur passe ensuite par le même contrôle
+    # d'appartenance. On tolère une FORME, jamais un sens deviné — la différence est
+    # exactement celle entre lire et interpréter.
+    def _scalaire(v):
+        if isinstance(v, list) and len(v) == 1:
+            return v[0]
+        return v
+
+    moment = _scalaire(brut.get("moment"))
+    exclut_moment = _scalaire(brut.get("exclut_moment"))
+    pas_avant = _scalaire(brut.get("pas_avant"))
+    return {
+        "jours": _noms(brut.get("jours"), JOURS_VOCABULAIRE),
+        "exclut_jours": _noms(brut.get("exclut_jours"), JOURS_VOCABULAIRE),
+        "moment": moment if moment in MOMENTS else None,
+        "exclut_moment": exclut_moment if exclut_moment in MOMENTS else None,
+        "pas_avant": pas_avant if pas_avant in JOURS_VOCABULAIRE else None,
+    }
+
+
 def menu(etat: str) -> tuple[str, ...]:
     """Les actions permises dans cet état, ou rien du tout.
 
@@ -139,6 +262,11 @@ def bloc_prompt(etat: str) -> str:
         "\nACTION. L'agent attend une réponse. Ajoute la clé \"action\" avec EXACTEMENT "
         "l'une de ces valeurs :\n"
         f"{lignes}\n"
+        "PRIORITÉ, quand deux lectures sont possibles : si ce que dit l'appelant "
+        "DÉSIGNE une des propositions ci-dessus — par son rang, son heure, son "
+        "jour ou son moment — c'est \"choisir\", pas \"contrainte\". « Le matin » alors "
+        "qu'une des propositions EST le matin, c'est la PRENDRE. \"contrainte\" ne "
+        "vaut que pour ce qui ne correspond à AUCUNE proposition en cours.\n"
         "INTERPRÈTE LE SENS de la phrase comme le ferait une secrétaire expérimentée, pas "
         "comme un formulaire : les gens ne parlent pas en mots-clés. Si l'intention est "
         "claire, traduis-la, même si la formulation est inattendue. Si elle ne l'est pas — "

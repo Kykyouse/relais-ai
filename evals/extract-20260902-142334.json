@@ -1,0 +1,124 @@
+{
+  "modele": "claude-haiku-4-5",
+  "reussis": 7,
+  "total": 9,
+  "latence_p50_ms": 955,
+  "latence_p95_ms": 1466,
+  "latence_max_ms": 1466,
+  "cas": [
+    {
+      "etiquette": "choisir/rang-1",
+      "phrase": "Le premier.",
+      "attendu": "choisir/1",
+      "obtenu": "choisir/1",
+      "ok": true,
+      "brut": {
+        "action": "choisir",
+        "rang": 1
+      },
+      "ms": 1466
+    },
+    {
+      "etiquette": "choisir/rang-2",
+      "phrase": "Le deuxième ira très bien.",
+      "attendu": "choisir/2",
+      "obtenu": "choisir/2",
+      "ok": true,
+      "brut": {
+        "action": "choisir",
+        "rang": 2
+      },
+      "ms": 955
+    },
+    {
+      "etiquette": "choisir/par-moment",
+      "phrase": "Le matin, plutôt.",
+      "attendu": "choisir/1",
+      "obtenu": "contrainte",
+      "ok": false,
+      "brut": {
+        "action": "contrainte",
+        "contrainte": {
+          "moment": "matin"
+        },
+        "disponibilites": "Le matin, plutôt."
+      },
+      "ms": 1126
+    },
+    {
+      "etiquette": "choisir/par-heure",
+      "phrase": "Celui de 14 heures.",
+      "attendu": "choisir/2",
+      "obtenu": "choisir/2",
+      "ok": true,
+      "brut": {
+        "action": "choisir",
+        "rang": 2
+      },
+      "ms": 1135
+    },
+    {
+      "etiquette": "choisir/apres-midi",
+      "phrase": "L'après-midi m'arrange mieux.",
+      "attendu": "choisir/2",
+      "obtenu": "contrainte",
+      "ok": false,
+      "brut": {
+        "action": "contrainte",
+        "disponibilites": "L'après-midi m'arrange mieux.",
+        "contrainte": {
+          "moment": "apres_midi"
+        }
+      },
+      "ms": 1374
+    },
+    {
+      "etiquette": "choisir/acceptation",
+      "phrase": "Oui, c'est parfait.",
+      "attendu": "choisir/1",
+      "obtenu": "choisir/1",
+      "ok": true,
+      "brut": {
+        "action": "choisir",
+        "rang": 1
+      },
+      "ms": 890
+    },
+    {
+      "etiquette": "choisir/ca-me-va",
+      "phrase": "Ça me va.",
+      "attendu": "choisir/1",
+      "obtenu": "choisir/1",
+      "ok": true,
+      "brut": {
+        "action": "choisir",
+        "rang": 1
+      },
+      "ms": 870
+    },
+    {
+      "etiquette": "choisir/heure-nue",
+      "phrase": "Huit heures c'est bon pour moi.",
+      "attendu": "choisir/1",
+      "obtenu": "choisir/1",
+      "ok": true,
+      "brut": {
+        "action": "choisir",
+        "rang": 1
+      },
+      "ms": 873
+    },
+    {
+      "etiquette": "choisir/second",
+      "phrase": "Le second créneau.",
+      "attendu": "choisir/2",
+      "obtenu": "choisir/2",
+      "ok": true,
+      "brut": {
+        "action": "choisir",
+        "rang": 2
+      },
+      "ms": 917
+    }
+  ]
+}

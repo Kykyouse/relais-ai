@@ -9,6 +9,17 @@ import datetime as dt
 
 from . import temps
 
+# LE SOIR COMMENCE À 16 H, et c'est un choix, pas une évidence (R83). Les journées de la
+# config s'arrêtent à 18 h : « en soirée » ne peut donc désigner que la toute fin de
+# journée, et le seuil doit laisser passer une fenêtre de deux heures (16–18) sinon il ne
+# laisse rien passer du tout. Un seuil à 18 h aurait rendu `soir` toujours vide — donc un
+# vocabulaire qui promet ce qu'il ne sait pas tenir, exactement ce qu'on cherche à éviter.
+#
+# Quand il n'y a réellement rien, le repli honnête de R67 prend la main (« je n'ai plus
+# rien à ce moment-là, le plus tôt que je peux, c'est… ») : « en soirée » cesse d'être
+# ignoré en silence, ce qui était le comportement jusqu'au 02/09.
+SOIR_DES = 16
+
 JOURS_FR = ["lundi", "mardi", "mercredi", "jeudi", "vendredi", "samedi", "dimanche"]
 MOIS_FR = ["janvier", "février", "mars", "avril", "mai", "juin", "juillet", "août",
            "septembre", "octobre", "novembre", "décembre"]
@@ -103,6 +114,8 @@ class CalendarStub:
             return h < 12
         if moment == "apres_midi":
             return h >= 12
+        if moment == "soir":
+            return h >= SOIR_DES
         return False
 
     @staticmethod
@@ -127,6 +140,8 @@ class CalendarStub:
             return h < 12
         if moment == "apres_midi":
             return h >= 12
+        if moment == "soir":
+            return h >= SOIR_DES
         return True
 
     def get_slots(self, prestation: str | None, urgent: bool, n: int = 2, skip: int = 0,
