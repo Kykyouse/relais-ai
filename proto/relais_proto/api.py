@@ -299,6 +299,33 @@ def creer_app(depot, registre: Registre, fabrique_llm, horloge=None,
             return JSONResponse(
                 _vapi.reponse_openai(_sonde.PHRASE_SONDE, modele or "", t))
 
+    # ---- capture du payload sur la route de PRODUCTION (hors produit) ----
+    # La sonde de l'étape 0 ne capture que `/voix/sonde`. Or la question du 02/09 — la
+    # plateforme nous transmet-elle le numéro APPELANT ? — ne se pose que sur un appel
+    # téléphonique réel, qui passe par `/voix/vapi`. Faire basculer l'URL de l'assistant
+    # vers la sonde le temps d'un appel répondrait, mais l'appel ne jouerait plus le
+    # produit : on mesurerait la plateforme sans mesurer l'agent.
+    #
+    # Un seul appel doit donc faire les deux. Même journal, même variable
+    # (`RELAIS_SONDE_VOIX`), donc éteinte par défaut comme le reste — et UNE SEULE fois
+    # par appel, au premier tour : le payload est réémis à chaque tour, et le fichier
+    # doit rester lisible.
+    def _capturer_payload(corps: dict, entetes: dict, t, voie_auth: str | None) -> None:
+        """Consigne la charge utile et ses identifiants candidats. Ne remonte JAMAIS rien.
+
+        Même arbitrage que `_noter_dispo` : une exception dans un outil de diagnostic
+        ferait raccrocher au nez d'un client.
+        """
+        if sonde_voix is None:
+            return
+        try:
+            resume = _sonde.resume(corps, entetes, t, voie_auth)
+            resume["identifiants_candidats"] = _sonde.identifiants_candidats(corps)
+            resume["route"] = "/voix/vapi"
+            _sonde.journaliser(resume, pathlib.Path(sonde_voix))
+        except Exception:                                            # noqa: BLE001
+            pass
+
     # ---- sonde des tournures de temps (hors produit, éteinte par défaut) ----
     _chemin_dispo = pathlib.Path(sonde_dispo) if sonde_dispo is not None else None
 
@@ -391,6 +418,8 @@ def creer_app(depot, registre: Registre, fabrique_llm, horloge=None,
             texte = convo.open()
             if appel is None:
                 depot.ouvrir_appel(artisan.id, t, appel_id=appel_id)
+                # premier tour de CET appel : le seul moment où l'on capture
+                _capturer_payload(corps, entetes, t, voie)
             depot.enregistrer_etat(appel_id, convo.to_dict())
             return _repondre_voix(texte, modele, t, corps)
 

@@ -4518,6 +4518,125 @@ def check_transcription_qui_se_precise() -> bool:
     return True
 
 
+def check_capture_payload_production() -> bool:
+    """R80 : capturer le payload de la route de PRODUCTION, une fois par appel.
+
+    Écrit le 02/09, quand Geoffrey a provisionné un numéro Vapi (+1 934 599 0358) pour
+    que la plateforme nous transmette enfin le numéro APPELANT — impossible sur les appels
+    web, qui n'en portent aucun (mesuré : zéro champ `number`/`phone`/`customer` dans les
+    payloads capturés).
+
+    Problème pratique : la sonde de l'étape 0 ne capture que `/voix/sonde`. La question ne
+    se pose que sur un appel téléphonique réel, qui passe par `/voix/vapi`. Basculer l'URL
+    de l'assistant vers la sonde le temps d'un appel répondrait — mais l'appel ne jouerait
+    plus le produit, et on mesurerait la plateforme sans mesurer l'agent. **Un seul appel
+    doit faire les deux.**
+
+    Ce que ce test verrouille, et c'est la même liste que R69 parce que c'est la même
+    classe d'outil :
+
+    1. éteinte par défaut — sans chemin, RIEN n'est appelé ;
+    2. UNE SEULE entrée par appel, pas une par tour : le payload est réémis à chaque tour,
+       et un journal illisible ne sert à rien ;
+    3. les identifiants candidats sont là — c'est la seule raison d'être du fichier ;
+    4. en panne, l'appel continue.
+    """
+    try:
+        from fastapi.testclient import TestClient
+    except ImportError:
+        print("   fastapi/httpx absents : pip install -r requirements.txt")
+        return False
+
+    import tempfile
+
+    from relais_proto import sonde_voix
+    from relais_proto.api import creer_app
+    from relais_proto.registre import Artisan, Registre, empreinte as emp
+
+    SECRET, NUM = "secret-voix", "+19345990358"
+    AUTH = {"Authorization": f"Bearer {SECRET}"}
+    registre = Registre([Artisan("art-dupont", NUM, emp("tok"), CFG)], emp(SECRET))
+
+    def charge(appel_id, textes, numero_appelant=None):
+        """Un appel TÉLÉPHONIQUE : numéro composé présent, et un numéro appelant."""
+        appel = {"id": appel_id, "type": "inboundPhoneCall",
+                 "phoneNumber": {"number": NUM}}
+        if numero_appelant:
+            appel["customer"] = {"number": numero_appelant}
+        return {"model": "gpt-4", "stream": True, "call": appel,
+                "messages": [{"role": "system", "content": "x"}]
+                            + [{"role": "user", "content": t} for t in textes]}
+
+    def appel(chemin, appel_id="01a06200-0000-7000-8000-000000000001"):
+        depot = DepotMemoire()
+        app = creer_app(depot, registre, MockLLM, lambda: LUNDI_9H, sonde_voix=chemin)
+        with TestClient(app) as c:
+            for textes in ([], ["J'ai une fuite"], ["J'ai une fuite", "Nogent 94130"]):
+                r = c.post("/voix/vapi/chat/completions",
+                           json=charge(appel_id, textes, "+33630301111"), headers=AUTH)
+                if r.status_code != 200:
+                    return None
+        return True
+
+    with tempfile.TemporaryDirectory() as tmp:
+        racine = pathlib.Path(tmp)
+
+        # (1) ÉTEINTE PAR DÉFAUT, vérifié par un ESPION et non par l'absence de fichier —
+        # la leçon de R69, où deux mutations avaient survécu à ce raccourci.
+        vues = []
+        vrai_resume = sonde_voix.resume
+        sonde_voix.resume = lambda *a, **k: vues.append(a) or {}
+        try:
+            if appel(None) is None:
+                print("   l'appel échoue alors que la capture est éteinte")
+                return False
+        finally:
+            sonde_voix.resume = vrai_resume
+        if vues:
+            print(f"   capture éteinte, et pourtant {len(vues)} appel(s) à la sonde")
+            return False
+        if list(racine.rglob("*.jsonl")):
+            print("   capture éteinte, et pourtant un journal")
+            return False
+
+        # (2)(3) ALLUMÉE : UNE entrée pour TROIS tours, avec les candidats
+        journal = racine / "sonde.jsonl"
+        if appel(journal) is None:
+            print("   l'appel échoue alors que la capture est allumée")
+            return False
+        lignes = [json.loads(l)
+                  for l in journal.read_text(encoding="utf-8").splitlines()]
+        if len(lignes) != 1:
+            print(f"   {len(lignes)} entrées pour un seul appel (3 tours) — le journal "
+                  f"devient illisible")
+            return False
+        candidats = lignes[0].get("identifiants_candidats") or {}
+        if not candidats:
+            print(f"   aucun identifiant candidat : {sorted(lignes[0])}")
+            return False
+        # LE CHAMP QU'ON CHERCHE : le numéro appelant doit ressortir des candidats, sinon
+        # l'outil ne répond pas à la question pour laquelle il a été écrit.
+        if not any("+33630301111" == str(v) for v in candidats.values()):
+            print(f"   le numéro APPELANT ne ressort pas des candidats : {candidats}")
+            return False
+        # et le secret n'a pas fui : les en-têtes sont réduits à leurs NOMS
+        if "secret-voix" in json.dumps(lignes[0], ensure_ascii=False):
+            print("   le secret figure dans le journal")
+            return False
+
+        # (4) EN PANNE, L'APPEL CONTINUE.
+        sonde_voix.resume = lambda *a, **k: (_ for _ in ()).throw(RuntimeError("boum"))
+        try:
+            r = appel(racine / "b.jsonl", "01a06200-0000-7000-8000-000000000002")
+        finally:
+            sonde_voix.resume = vrai_resume
+        if r is None:
+            print("   une capture en panne fait tomber l'appel")
+            return False
+
+    return True
+
+
 def check_sonde_dispo() -> bool:
     """R69 : la sonde des tournures de temps observe sans jamais peser sur l'appel.
 
@@ -8999,6 +9118,14 @@ def run() -> int:
         print("   → la sonde des tournures de temps observe sans peser : eteinte par "
               "defaut, muette en panne, et elle distingue extracteur sourd de "
               "controleur sourd : ✅ PASS")
+    else:
+        print("   → ❌ FAIL")
+        echecs += 1
+
+    print(f"\n──── R80_capture_payload_production ────")
+    if check_capture_payload_production():
+        print("   → le payload de la route de production est capturé une fois par appel, "
+              "avec le numéro appelant, sans jamais peser sur l'appel : ✅ PASS")
     else:
         print("   → ❌ FAIL")
         echecs += 1

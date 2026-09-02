@@ -1,9 +1,9 @@
 {
-  "_lecture": "Registre des artisans (V1 : fichier ; deviendra la table `artisan`). Jetons stockés en SHA-256 uniquement. Les valeurs ci-dessous sont des jetons de DÉV publics : 'dev-token-dupont', 'dev-token-martin'. Secret webhook de dév : 'dev-secret-webhook'.",
+  "_lecture": "Registre des artisans (V1 : fichier ; deviendra la table `artisan`). ⚠️ art-dupont porte +19345990358 : un numero VAPI GRATUIT (US), provisionne le 02/09 pour que la plateforme nous transmette enfin le numero APPELANT — impossible sur les appels web, qui n'en portent aucun. Ce n'est PAS un numero de production : un numero francais exige un dossier reglementaire (K-bis, justificatif d'adresse), en cours. Le rattachement d'un appel a un artisan se fait par le numero COMPOSE : si celui-ci n'est pas dans ce fichier, l'appel meurt sans repli, et c'est voulu — servir un artisan au hasard serait pire que raccrocher. Jetons stockés en SHA-256 uniquement. Les valeurs ci-dessous sont des jetons de DÉV publics : 'dev-token-dupont', 'dev-token-martin'. Secret webhook de dév : 'dev-secret-webhook'.",
   "artisans": [
     {
       "id": "art-dupont",
-      "numero_relais": "+33189701234",
+      "numero_relais": "+19345990358",
       "telephone": "+33612345678",
       "config": "dupont.json",
       "token_sha256": "1053e0fec0718ec5f85742ce46058fba89bc5569eafeaedeb8e8716408a40888"
