@@ -300,6 +300,49 @@ Le spike vocal ne s'ouvre **qu'en session dédiée**. Le Sender ID et l'OAuth Go
 le nom commercial — c'est-à-dire le cousin, pas nous.
 ---
 
+## 02/09 (soir) — La chaîne après l'appel, et une moitié de produit injoignable (R84)
+
+Chantier n°3 : jouer la chaîne que le travail voix avait laissée de côté depuis une
+semaine — appel → RDV en attente → push à l'artisan → validation → SMS au client.
+Elle fonctionne. Et elle a trouvé deux choses qu'aucun test ne pouvait trouver.
+
+**R84 — l'envoyeur « journal » ne journalisait rien.** Geoffrey ouvre `/connexion`, entre
+son numéro, reçoit « code incorrect ». Cause : le code à six chiffres part par
+`EnvoyeurJournal`, qui gardait tout en mémoire et n'écrivait NULLE PART. Le code existait,
+dans une table, sous forme d'empreinte — et aucun humain ne pouvait le lire.
+
+**Conséquence : en mode journal, personne ne peut se connecter à la boîte de validation.**
+C'est le mode par défaut tant qu'aucun fournisseur n'est câblé, donc le mode de tout
+développement local. La moitié artisan du produit était injoignable, sans erreur, sans
+trace, juste « code incorrect ». Le nom disait pourtant quoi faire : journaliser, c'est
+écrire quelque part qu'on peut lire.
+
+Deux détails qui comptent dans le correctif : le texte est imprimé EN ENTIER (un code
+tronqué ne sert à rien), et la mention « rien n'est parti » est sur la même ligne — pour
+qu'on ne puisse pas relire ce journal comme une confirmation d'envoi trois jours plus
+tard. `.value` et non l'énumération, aussi : `Canal.SMS` est un `str, Enum` et son
+f-string rend « Canal.SMS » depuis Python 3.11.
+
+**Et un piège de séquence qui m'a coûté un aller-retour.** J'avais donné le code à
+Geoffrey AVANT qu'il le demande sur la page — or demander un code invalide le précédent
+(« un seul code vivant », et 3 essais maximum avant destruction). Il a tapé l'ancien, l'a
+tapé trois fois, et le code a été détruit. L'ordre est donc : il demande, PUIS on lit.
+Après R84 il n'y a plus d'aller-retour du tout : le code s'affiche dans sa console
+uvicorn, puisque l'API l'expédie immédiatement (filtre `seulement=` — un code qui attend
+le cron n'est pas un code).
+
+**La file n'avait jamais été vidée.** Sept messages en attente depuis le 29/08, et le
+worker a expiré QUATRE RDV qui traînaient sans validation. Comportement correct — mais ça
+veut dire que le cron n'a jamais tourné, et que des clients de test auraient reçu
+« créneau non validé » si l'expéditeur avait été câblé. À brancher avant le premier vrai
+client.
+
+**Observation non corrigée** : `rdv.creneau` ne porte pas `label_parle` alors que le hold
+l'a. Sans conséquence aujourd'hui (le RDV n'est pas prononcé, les SMS et les pages
+utilisent l'écrit), mais la reproposition pourrait en avoir besoin. Consigné.
+
+87 tests au vert, éval mock 19/19.
+
 ## 02/09 (soir) — Le contenu des contraintes passe au modèle (R83)
 
 Dernier endroit où une liste de mots-clés tenait lieu de compréhension, et le seul qui

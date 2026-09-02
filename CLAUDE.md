@@ -16,7 +16,7 @@ Cible V1 : plombiers/chauffagistes FR. Solo dev : Geoffrey (binôme Claude) ; ma
 ```bash
 cd proto
 pip install -r requirements.txt     # anthropic, python-dotenv (inutiles en mock)
-python run_scenario.py              # suite de non-régression (mock, sans clé, ~3 s) — 86 tests
+python run_scenario.py              # suite de non-régression (mock, sans clé, ~3 s) — 87 tests
 python run_llm_eval.py --mock       # plomberie de l'éval appelant-simulé (sans clé)
 python run_extract_eval.py [--mock] [--only plus_tot]
                                     # tests unitaires d'EXTRACTION : (phrase + contexte)
@@ -56,6 +56,12 @@ curl localhost:8000/sante           # dit la RÉVISION qui tourne vraiment (R65)
                                     # c'est le routage ; si les deux sont vieilles,
                                     # uvicorn n'a pas été redémarré.
 python worker.py [--a-vide]         # un passage : expiration puis expédition (cron).
+                                    # En mode journal il IMPRIME ce qui serait
+                                    # parti (R84). ⚠️ Le code de CONNEXION, lui,
+                                    # part tout de suite depuis l'API : il
+                                    # s'affiche dans la console d'UVICORN, pas
+                                    # dans celle du worker. Seule son empreinte
+                                    # est en base — le clair ne se récupère pas.
                                     # RELAIS_SMS=journal (défaut, rien ne part) | ovh
 python semer_artisans.py [--ecrire] # ecrit config/artisans.json dans la table `artisan`
                                     # (blanc par defaut). La table EST le registre.

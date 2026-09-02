@@ -3899,6 +3899,99 @@ def _contrainte_de_phrase(phrase: str) -> dict:
     return actions.valider_contrainte(MockLLM()._contrainte_mock(phrase.lower()))
 
 
+def check_journal_journalise() -> bool:
+    """R84 : un envoyeur qui s'appelle « journal » doit journaliser quelque chose.
+
+    Trouvé le 02/09 en jouant la chaîne après l'appel avec Geoffrey. Il ouvre
+    `/connexion`, entre son numéro, reçoit « code incorrect » — et pour cause : le code
+    à six chiffres part en FILE, la file est vidée par le worker, et le worker en mode
+    `journal` ne montrait RIEN. Le code existait, dans une table, et aucun humain ne
+    pouvait le lire.
+
+    **Conséquence réelle : en mode journal, un artisan ne peut jamais se connecter.**
+    C'est le mode PAR DÉFAUT tant qu'aucun fournisseur n'est câblé — donc c'est le mode
+    de tout développement local, et la boîte de validation y était inatteignable. Le
+    produit avait une moitié injoignable sans que rien ne le signale : ni erreur, ni
+    trace, juste « code incorrect ».
+
+    Le nom disait pourtant ce qu'il fallait faire. `EnvoyeurJournal` gardait tout en
+    mémoire — utile au test, invisible à l'usage. « Journaliser » veut dire écrire
+    quelque part qu'on peut lire.
+
+    Ce que ce test verrouille :
+
+    1. l'envoyeur ÉCRIT ce qu'il aurait envoyé — canal, cible, texte ;
+    2. il continue de tout GARDER en mémoire : les tests s'appuient sur `envoyes`, et
+       les remplacer par une lecture de sortie standard serait un recul ;
+    3. il ne prétend pas avoir envoyé : la mention « rien n'est parti » subsiste.
+    """
+    import io
+    from contextlib import redirect_stdout
+
+    from relais_proto.envoi import EnvoyeurJournal
+    from relais_proto.messages import MessageSortant
+
+    from relais_proto.messages import Canal as _Canal, Destinataire as _Dest
+
+    msg = MessageSortant(
+        id="m-1", cle_idempotence="k-1", destinataire=_Dest.ARTISAN, canal=_Canal.SMS,
+        cible="+33612345678",
+        texte="Nelyo : votre code de connexion est 123456. Valable 10 minutes.",
+        cree_a=LUNDI_9H)
+
+    envoyeur = EnvoyeurJournal()
+    tampon = io.StringIO()
+    with redirect_stdout(tampon):
+        envoi = envoyeur.envoyer(msg, CFG)
+    sorti = tampon.getvalue()
+
+    # (1) ce qu'on aurait envoyé est LISIBLE
+    for morceau in ("sms", "+33612345678", "123456"):
+        if morceau not in sorti:
+            print(f"   {morceau!r} n'apparaît pas dans la sortie : {sorti!r}")
+            return False
+    # le texte doit y être en ENTIER : un code tronqué ne sert à rien
+    if msg.texte not in sorti:
+        print(f"   le texte est tronqué : {sorti!r}")
+        return False
+
+    # (3) …sans prétendre que c'est parti
+    if not any(m in sorti.lower() for m in ("rien", "journal", "non envoyé")):
+        print(f"   la sortie laisse croire à un envoi réel : {sorti!r}")
+        return False
+
+    # (2) et la mémoire reste : toute la suite s'appuie dessus
+    if len(envoyeur.envoyes) != 1 or envoyeur.envoyes[0] is not msg:
+        print(f"   le message n'est plus gardé en mémoire : {envoyeur.envoyes}")
+        return False
+    if not envoi.reference.startswith("journal:") or envoi.cout < 1:
+        print(f"   l'envoi rendu est incohérent : {envoi}")
+        return False
+
+    # ET LE BOUT DE LA CHAÎNE : le worker doit rendre le code lisible, parce que c'est
+    # LUI qu'on lance en développement. Vérifier l'envoyeur seul laisserait passer un
+    # worker qui l'appelle sans montrer sa sortie.
+    from relais_proto.envoi import Expediteur
+
+    from relais_proto.messages import Brouillon, Canal, Destinataire
+
+    depot = DepotMemoire()
+    depot.enfiler_message(
+        Brouillon(cle_idempotence="k-2", destinataire=Destinataire.ARTISAN,
+                  canal=Canal.SMS, cible="+33612345678",
+                  texte="Nelyo : votre code de connexion est 654321.",
+                  artisan_id="art-dupont"), LUNDI_9H)
+    envoyeur2 = EnvoyeurJournal()
+    tampon = io.StringIO()
+    with redirect_stdout(tampon):
+        Expediteur(depot, envoyeur2, lambda a: CFG).passer(LUNDI_9H)
+    if "654321" not in tampon.getvalue():
+        print(f"   l'expédition ne montre pas le code : {tampon.getvalue()!r}")
+        return False
+
+    return True
+
+
 def check_contrainte_structuree() -> bool:
     """R83 : le CONTENU d'une contrainte vient du modèle, dans un vocabulaire fermé.
 
@@ -9739,6 +9832,14 @@ def run() -> int:
     if check_contrainte_structuree():
         print("   → le contenu d'une contrainte vient du modèle dans un vocabulaire "
               "fermé : plus de mots-clés, plus d'inversion : ✅ PASS")
+    else:
+        print("   → ❌ FAIL")
+        echecs += 1
+
+    print(f"\n──── R84_journal_journalise ────")
+    if check_journal_journalise():
+        print("   → l'envoyeur « journal » écrit ce qu'il aurait envoyé : en mode dév, "
+              "un artisan peut enfin lire son code et se connecter : ✅ PASS")
     else:
         print("   → ❌ FAIL")
         echecs += 1

@@ -85,15 +85,40 @@ def choisir_envoyeur() -> tuple[Envoyeur, str]:
 
 
 class EnvoyeurJournal:
-    """Double de test et mode dév : n'envoie rien, garde tout. Volontairement dans le code
-    de production : c'est le mode par défaut tant qu'aucun fournisseur n'est choisi, et il
-    vaut mieux un envoi journalisé qu'un envoi vers un fournisseur mal configuré."""
+    """Double de test et mode dév : n'envoie rien, garde tout, ET L'ÉCRIT.
+
+    Volontairement dans le code de production : c'est le mode par défaut tant qu'aucun
+    fournisseur n'est choisi, et il vaut mieux un envoi journalisé qu'un envoi vers un
+    fournisseur mal configuré.
+
+    ⚠️ IL N'ÉCRIVAIT RIEN JUSQU'AU 02/09, et ça rendait la moitié du produit
+    inatteignable en développement. Geoffrey ouvre `/connexion`, entre son numéro, et
+    reçoit « code incorrect » : le code à six chiffres partait en file, la file était
+    vidée par le worker, et le worker ne montrait rien. Le code existait, dans une table,
+    et aucun humain ne pouvait le lire — donc **personne ne pouvait se connecter à la
+    boîte de validation en local**. Ni erreur, ni trace, juste « code incorrect ».
+
+    Le nom disait pourtant quoi faire. « Journaliser » veut dire écrire quelque part
+    qu'on peut lire, pas garder en mémoire pour soi.
+
+    La mémoire (`envoyes`) reste : toute la suite de tests s'appuie dessus, et la
+    remplacer par une lecture de sortie standard serait un recul.
+    """
 
     def __init__(self) -> None:
         self.envoyes: list[MessageSortant] = []
 
     def envoyer(self, message: MessageSortant, cfg: dict) -> Envoi:
         self.envoyes.append(message)
+        # Le TEXTE EN ENTIER : un code de connexion tronqué ne sert à rien, et c'est le
+        # cas d'usage qui a motivé cette ligne. La mention « rien n'est parti » est sur la
+        # même ligne, pour qu'on ne puisse pas lire ce journal comme une confirmation
+        # d'envoi en relisant une capture d'écran trois jours plus tard.
+        # `.value` et non l'énumération : `Canal.SMS` est un `str, Enum`, et son f-string
+        # rend « Canal.SMS » depuis Python 3.11 — illisible dans un journal qu'on relit
+        # à la va-vite.
+        print(f"[journal · rien n'est parti] {message.canal.value} → {message.cible} : "
+              f"{message.texte}", flush=True)
         # coût simulé d'après la vraie règle de facturation : le mode dév doit donner un
         # ordre de grandeur juste, sinon les chiffres de coût seraient faux en test
         return Envoi(reference=f"journal:{message.id}",
