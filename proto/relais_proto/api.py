@@ -393,6 +393,12 @@ def creer_app(depot, registre: Registre, fabrique_llm, horloge=None,
             raise HTTPException(400, "identifiant d'appel absent (call.id)")
         artisan, voie = _vapi.artisan_de_l_appel(corps, registre, voix_artisan_defaut)
         if artisan is None:
+            # ON CAPTURE AVANT DE REFUSER. L'appel qu'on rejette est précisément celui
+            # dont le payload nous manque le plus : un numéro composé absent du registre
+            # ne se diagnostique pas autrement, et un appel réel se paie — parfois en
+            # international. Capturer après le refus revenait à faire payer un appel pour
+            # zéro information, ce qui est le contraire d'une sonde.
+            _capturer_payload(corps, entetes, maintenant(), voie)
             raise HTTPException(
                 404, "aucun artisan pour cet appel : ni numéro appelé reconnu, ni "
                      "artisan par défaut configuré (RELAIS_VOIX_ARTISAN)")

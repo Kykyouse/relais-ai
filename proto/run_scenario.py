@@ -4624,6 +4624,24 @@ def check_capture_payload_production() -> bool:
             print("   le secret figure dans le journal")
             return False
 
+        # (3 bis) UN APPEL REFUSÉ EST CAPTURÉ QUAND MÊME. C'est le cas le plus utile de
+        # tous : un numéro composé absent du registre ne se diagnostique pas autrement, et
+        # un appel réel se paie. Capturer après le refus revenait à faire payer un appel
+        # pour zéro information.
+        inconnu = racine / "inconnu.jsonl"
+        depot = DepotMemoire()
+        app = creer_app(depot, registre, MockLLM, lambda: LUNDI_9H, sonde_voix=inconnu)
+        with TestClient(app) as c:
+            corps = charge("01a06200-0000-7000-8000-00000000000f", [], "+33630301111")
+            corps["call"]["phoneNumber"]["number"] = "+15550000000"   # jamais vu
+            r = c.post("/voix/vapi/chat/completions", json=corps, headers=AUTH)
+        if r.status_code != 404:
+            print(f"   un numéro inconnu ne devrait pas être servi : {r.status_code}")
+            return False
+        if not inconnu.exists():
+            print("   un appel REFUSÉ n'est pas capturé — l'appel est payé pour rien")
+            return False
+
         # (4) EN PANNE, L'APPEL CONTINUE.
         sonde_voix.resume = lambda *a, **k: (_ for _ in ()).throw(RuntimeError("boum"))
         try:
