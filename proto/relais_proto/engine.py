@@ -1094,6 +1094,27 @@ class Conversation:
             return self._say(f"{lieu}À quel nom, et sur quel numéro "
                              f"{self._prenom} peut vous confirmer le rendez-vous ?",
                              verbatim=True)
+        # UN NUMÉRO VALIDE EFFACE L'ARDOISE (R78). Le 02/09, l'appelant a dicté huit
+        # chiffres deux fois, puis DIX — captés et relus —, puis s'est corrigé après la
+        # relecture. Sa correction est tombée sur un compteur déjà à deux, et l'appel a
+        # été perdu au tour suivant. **Le filet de sécurité punissait celui qui s'en
+        # sert** : la relecture existe pour qu'il corrige (règle n°5).
+        #
+        # Les deux échecs étaient PÉRIMÉS : entre-temps un numéro valide avait été capté,
+        # donc on sait qu'il sait dicter des chiffres. Le budget borne quelqu'un qui n'y
+        # ARRIVE PAS, pas quelqu'un qui se reprend.
+        #
+        # Même raisonnement que `confirmations_tel` trois branches plus bas — écrit là
+        # depuis T09 et jamais appliqué au compteur voisin. Mais PAS la même forme, et la
+        # différence vaut d'être dite : `confirmations_tel` a besoin d'un marqueur
+        # (`tel_repete_pour`) parce qu'il est lu TANT QUE le numéro est là, donc le
+        # remettre à zéro à chaque tour l'annulerait. Celui-ci n'est lu que dans la
+        # branche « numéro ABSENT » : une remise à zéro répétée n'a aucun effet, et le
+        # marqueur que j'avais ajouté par symétrie était du CODE MORT — une mutation y a
+        # survécu. Septième fois dans ce projet, et toujours la même leçon.
+        if self.slots["telephone_rappel"]:
+            self.flags["tel_incomplets"] = 0
+
         if self.slots["telephone_rappel"] is None:
             # une QUESTION (prix...) n'est pas un REFUS : on y répond avec la liste
             # blanche et on redemande, sans consommer le quota (bug T05-LLM : Katz
@@ -1190,6 +1211,18 @@ class Conversation:
             elif ex.get("confirme") is False:
                 # le numéro répété est FAUX : on l'efface et on redemande (jamais re-répéter le faux)
                 self.slots["telephone_rappel"] = None
+                # BORNE DES CORRECTIONS (R78). Remettre `tel_incomplets` à zéro à chaque
+                # numéro valide rend la boucle « numéro valide → non → autre numéro
+                # valide → non » infinie : chaque tour repartait à neuf, et
+                # `confirmations_tel` se remet à zéro lui aussi dès que le numéro change.
+                # Il fallait donc une borne PROPRE à la correction — trois refus de la
+                # relecture ne convergeront pas, et l'artisan est mieux placé que nous.
+                #
+                # Trois, et non deux : ce sont trois refus DE L'APPELANT, pas des
+                # malentendus de transcription. Il a le droit de se tromper deux fois.
+                self.flags["corrections_tel"] = self.flags.get("corrections_tel", 0) + 1
+                if self.flags["corrections_tel"] >= 3:
+                    return self._sans_rdv()
                 # LE CAS DU 02/09 : le formuleur a transformé cette phrase en
                 # « Quel est votre problème avec votre plomberie ? », et l'appelant s'est
                 # entendu redemander ce qu'il avait dit trois tours plus tôt.
@@ -1451,6 +1484,33 @@ class Conversation:
         return texte
 
     def _sans_rdv(self) -> str:
+        # SANS NUMÉRO, PAS DE PROMESSE DE RAPPEL (R79). Le 02/09, un appel s'est terminé
+        # sur « il vous rappelle sous 2 heures » alors qu'aucun numéro n'avait pu être
+        # noté. Deux dommages en une phrase :
+        #
+        #   — au CLIENT, une promesse intenable. C'est exactement ce que tout le produit
+        #     s'interdit : `guards` empêche le formuleur d'inventer un engagement, et le
+        #     contrôleur en faisait un faux lui-même, verbatim, avec l'autorité du code ;
+        #   — à JULIEN, un lead marqué « à rappeler » sans numéro. Il ne pourra jamais le
+        #     traiter et ne le saura qu'en l'ouvrant. Un lead inexploitable qui ressemble
+        #     à un lead exploitable coûte du temps et de la confiance.
+        #
+        # On dit donc les choses : on n'a pas pu noter le numéro, et l'appelant peut
+        # rappeler. Une issue, pas une porte fermée — il n'a rien fait de mal, c'est
+        # souvent la transcription qui a échoué.
+        if not self.slots.get("telephone_rappel"):
+            self.flags["categorie"] = "injoignable"
+            texte = self._say(
+                # Formulation NEUTRE, vraie dans les deux cas qui mènent ici : celui
+                # dont on n'a pas réussi à noter le numéro, et celui qui a refusé de le
+                # donner. « Je n'arrive pas à noter votre numéro » accusait le second à
+                # tort — il l'avait très bien dit, il ne voulait pas le donner.
+                "Sans numéro, je ne peux pas faire rappeler. N'hésitez pas à rappeler "
+                "ce numéro quand vous voulez — on reprendra tranquillement. "
+                "Bonne journée !",
+                verbatim=True)  # ce qu'on s'engage à faire, ou pas : jamais réécrit
+            self.state = State.S11_CLOTURE
+            return texte
         self.flags["categorie"] = self.flags["categorie"] or "a_rappeler"
         promesse = self.cfg["accueil"]["promesse_rappel"]["ouvree"]
         texte = self._say(

@@ -208,7 +208,10 @@ SCENARIOS = {
             "Non, pas de numéro je vous dis",
             "Non vraiment pas",
         ],
-        "attendu": {"score": 1, "categorie": "a_rappeler", "rdv": False},
+        # `injoignable` depuis R79 (02/09) : celui qui refuse son numéro n'est pas
+        # « à rappeler », il est injoignable. Le lead reste utile — problème, commune,
+        # transcript — mais il ne prétend plus qu'un rappel est possible.
+        "attendu": {"score": 1, "categorie": "injoignable", "rdv": False},
     },
 }
 
@@ -3575,6 +3578,197 @@ def check_creneaux_verbatim() -> bool:
     return True
 
 
+def check_pas_de_promesse_sans_numero() -> bool:
+    """R79 : ne pas promettre un rappel quand on n'a aucun numéro pour rappeler.
+
+    Geoffrey, le 02/09, en voyant l'appel perdu : « il transmet quoi à Julien si les trois
+    numéros incomplets sont enregistrés ? C'est débile en fait. Si le client est
+    injoignable, autant qu'il lui dise cash que l'appel est infructueux. »
+
+    Il a raison, et c'est pire que débile. Vérifié sur l'appel réel : le lead est parti avec
+    `categorie: a_rappeler` et AUCUN `telephone_rappel`. Deux dommages en une phrase :
+
+    - au CLIENT, une promesse intenable — « il vous rappelle sous 2 heures » alors que
+      personne ne peut le joindre. C'est exactement ce que tout le produit s'interdit :
+      `guards` empêche le formuleur d'inventer une promesse, et le contrôleur en faisait
+      une fausse lui-même, verbatim, avec l'autorité du code ;
+    - à JULIEN, un lead marqué « à rappeler » sans numéro. Il ne pourra jamais le traiter,
+      et il ne le saura qu'en l'ouvrant. Un lead inexploitable qui ressemble à un lead
+      exploitable est pire qu'une absence de lead : il coûte du temps et de la confiance.
+
+    Ce que ce test verrouille :
+
+    1. sans numéro, AUCUNE promesse de rappel n'est prononcée ;
+    2. l'appelant s'entend dire clairement qu'on n'a pas pu noter son numéro, et qu'il peut
+       rappeler — une issue, pas une porte fermée ;
+    3. le lead est catégorisé `injoignable` et non `a_rappeler` ;
+    4. et AVEC un numéro, la promesse reste exactement celle d'avant (invariant n°2 : pas
+       de RDV sans rappel — le repli normal ne doit pas être abîmé par ce correctif).
+    """
+    import datetime as dt
+
+    from relais_proto.engine import Conversation, State
+    from relais_proto.scoring import build_lead
+
+    QUAND = dt.datetime(2026, 9, 2, 10, 12, tzinfo=dt.UTC)
+
+    def jusqu_au_numero():
+        convo = Conversation(CFG, MockLLM(), CalendarStub(CFG, now=QUAND))
+        convo.open()
+        convo.process("J'ai une fuite d'eau dans la salle de bain")
+        convo.process("Je suis à Nogent-sur-Marne 94130")
+        convo.process("Le nom, c'est Benoît")
+        return convo
+
+    # (1)(2)(3) SANS NUMÉRO : l'appelant a tout donné sauf un numéro exploitable.
+    convo = jusqu_au_numero()
+    for _ in range(4):
+        dit = convo.process("0 6 30 30")
+        if convo.state == State.S11_CLOTURE:
+            break
+    if convo.state != State.S11_CLOTURE:
+        print("   l'appel ne se termine plus")
+        return False
+    if convo.slots.get("telephone_rappel"):
+        print(f"   la mise en place a quand même un numéro : "
+              f"{convo.slots['telephone_rappel']}")
+        return False
+    for interdit in ("rappelle", "rappeler sous", "transmets"):
+        if interdit in dit.lower():
+            print(f"   promesse de rappel SANS numéro : « {dit} »")
+            return False
+    if "numéro" not in dit.lower():
+        print(f"   l'appelant n'apprend pas pourquoi ça s'arrête : « {dit} »")
+        return False
+    lead = build_lead(convo)
+    if lead["categorie"] != "injoignable":
+        print(f"   lead catégorisé {lead['categorie']!r} sans numéro — "
+              f"Julien ne peut pas le traiter et ne le saura qu'en l'ouvrant")
+        return False
+
+    # (4) AVEC UN NUMÉRO : le repli normal est intact. Un correctif qui abîmerait le
+    # chemin nominal coûterait plus qu'il ne rapporte — c'est celui-là qui sert le plus.
+    convo = jusqu_au_numero()
+    convo.process("06 30 30 11 11")
+    convo.process("Oui")
+    for _ in range(3):
+        convo.process("Non, aucun ne me convient")
+        if convo.state == State.S11_CLOTURE:
+            break
+    dit = convo.transcript[-1][1]
+    if "rappelle" not in dit.lower():
+        print(f"   la promesse de rappel a disparu alors qu'on a un numéro : « {dit} »")
+        return False
+    lead = build_lead(convo)
+    if lead["categorie"] != "a_rappeler":
+        print(f"   lead catégorisé {lead['categorie']!r} alors qu'il est rappelable")
+        return False
+    if lead["slots"].get("telephone_rappel") != "0630301111":
+        print(f"   le numéro n'est pas dans le lead : {lead['slots'].get('telephone_rappel')!r}")
+        return False
+
+    return True
+
+
+def check_ardoise_du_numero() -> bool:
+    """R78 : se corriger après la relecture ne doit pas coûter ses dernières tentatives.
+
+    APPEL RÉEL du 02/09, 12 h 12, perdu — et R75/R76 y fonctionnaient parfaitement :
+
+        CLIENT : Et le numéro c'est le 0 6 30 30 11.     (8 chiffres → refusé, R75)
+        AGENT  : Ce numéro me semble incomplet…                      tel_incomplets = 1
+        CLIENT : 0 6 30 30. 11.                          (8 chiffres → refusé)
+        AGENT  : Excusez-moi, je n'y arrive pas…                     tel_incomplets = 2
+        CLIENT : 0 6 30 30. 11 12.                      (10 chiffres → ACCEPTÉ)
+        AGENT  : Je répète votre numéro : 06 30 30 11 12, c'est bien ça ?
+        CLIENT : Non.
+        AGENT  : Au temps pour moi — redonnez-moi le bon numéro ?     (R76, mot pour mot)
+        CLIENT : Le 06. 30 30 11 11 11.                 (12 chiffres → refusé)
+        AGENT  : Je transmets tout ça à Julien.                      tel_incomplets = 3 → repli
+
+    **Le filet de sécurité punissait celui qui s'en sert.** La relecture existe pour que
+    l'appelant CORRIGE (règle n°5) — et corriger lui coûtait sa dernière tentative, parce
+    que `tel_incomplets` gardait deux échecs devenus périmés. Entre-temps un numéro valide
+    avait bien été capté : on savait qu'il sait dicter des chiffres.
+
+    Le précédent était déjà dans le fichier, à trois lignes de là : `confirmations_tel`
+    repart à zéro à chaque nouveau numéro, « une correction relance une confirmation
+    neuve, elle ne doit pas être pénalisée par les tours passés sur le numéro précédent ».
+    Le même raisonnement n'avait pas été appliqué au compteur voisin.
+
+    Et la contrepartie, car remettre un compteur à zéro peut ouvrir une boucle sans fin :
+    les CORRECTIONS sont désormais comptées et bornées. Quelqu'un qui refuse trois fois la
+    relecture ne convergera pas, et l'artisan est mieux placé que nous — mais c'est trois
+    refus de SA part, pas deux malentendus de transcription.
+    """
+    import datetime as dt
+
+    from relais_proto.engine import Conversation, State
+
+    QUAND = dt.datetime(2026, 9, 2, 10, 12, tzinfo=dt.UTC)
+
+    def jusqu_au_numero():
+        convo = Conversation(CFG, MockLLM(), CalendarStub(CFG, now=QUAND))
+        convo.open()
+        convo.process("J'ai une fuite d'eau dans la salle de bain")
+        convo.process("Je suis à Nogent-sur-Marne 94130")
+        convo.process("Le nom, c'est Benoît")
+        return convo
+
+    # (1) L'APPEL RÉEL, rejoué. Il doit se poursuivre.
+    convo = jusqu_au_numero()
+    for ligne in ("Et le numéro c'est le 0 6 30 30 11.",
+                  "0 6 30 30. 11.",
+                  "0 6 30 30. 11 12.",
+                  "Non."):
+        convo.process(ligne)
+    if convo.state == State.S11_CLOTURE:
+        print("   l'appel est déjà perdu avant la correction")
+        return False
+    dit = convo.process("Le 06. 30 30 11 11 11.")
+    if convo.state == State.S11_CLOTURE:
+        print(f"   la correction coûte encore l'appel : « {dit} »")
+        return False
+
+    # …et il aboutit quand l'appelant finit par dicter dix chiffres
+    dit = convo.process("06 30 30 11 11")
+    if "06 30 30 11 11" not in dit:
+        print(f"   le numéro correct n'est pas relu : « {dit} »")
+        return False
+    dit = convo.process("Oui")
+    if not convo._proposes:
+        print(f"   aucun créneau proposé après confirmation : « {dit} »")
+        return False
+
+    # (2) LA BORNE TIENT pour celui qui ne donne jamais dix chiffres : sans cela, le
+    # remède ouvrirait un appel sans fin (invariant n°2 — pas de RDV sans rappel).
+    convo = jusqu_au_numero()
+    for _ in range(4):
+        convo.process("0 6 30 30")
+    if convo.state != State.S11_CLOTURE:
+        print("   un numéro jamais complet ne termine plus l'appel")
+        return False
+
+    # (3) ET LES CORRECTIONS SONT BORNÉES. Remettre le compteur à zéro à chaque numéro
+    # valide rendait la boucle « numéro valide → non → autre numéro valide → non »
+    # infinie : chaque tour repartait à neuf. Un appelant qui refuse trois relectures ne
+    # converge pas.
+    convo = jusqu_au_numero()
+    for numero in ("06 11 11 11 11", "06 22 22 22 22", "06 33 33 33 33",
+                   "06 44 44 44 44", "06 55 55 55 55"):
+        convo.process(numero)
+        if convo.state == State.S11_CLOTURE:
+            break
+        convo.process("Non")
+        if convo.state == State.S11_CLOTURE:
+            break
+    if convo.state != State.S11_CLOTURE:
+        print("   la boucle des corrections n'est bornée par rien")
+        return False
+
+    return True
+
+
 def check_questions_de_champ_non_formulees() -> bool:
     """R76 : demander un CHAMP est verbatim ; répondre à quelqu'un reste au formuleur.
 
@@ -5309,13 +5503,26 @@ def check_relance_numero_variee() -> bool:
               f"« {seconde} »")
         return False
 
-    # (b) la borne tient : au troisième échec, on prend le lead
+    # (b) la borne tient : au troisième échec, on conclut.
+    #
+    # CE POINT A CHANGÉ le 02/09. Il exigeait qu'un rappel soit PROMIS en sortie — or ce
+    # scénario n'obtient jamais de numéro exploitable, et il codifiait donc une promesse
+    # intenable : « il vous rappelle sous 2 heures » à quelqu'un que personne ne peut
+    # joindre. R79 l'a retirée. Ce qu'on vérifie maintenant, c'est l'inverse : la borne
+    # tient, ET aucun engagement n'est pris qu'on ne puisse honorer.
     troisieme = convo.process("0 6 30 30 40 40 45")
     if convo.state.value not in ("S11", "FIN"):
         print(f"   la relance n'est plus bornée : état {convo.state.value}")
         return False
-    if "rappelle" not in troisieme.lower():
-        print(f"   la sortie ne promet pas de rappel : « {troisieme} »")
+    if convo.slots.get("telephone_rappel"):
+        print(f"   la mise en place a finalement un numéro : "
+              f"{convo.slots['telephone_rappel']} — le cas testé n'est plus le bon")
+        return False
+    if "rappelle" in troisieme.lower():
+        print(f"   promesse de rappel sans numéro (R79 défait) : « {troisieme} »")
+        return False
+    if "numéro" not in troisieme.lower():
+        print(f"   l'appelant n'apprend pas pourquoi ça s'arrête : « {troisieme} »")
         return False
 
     # (c) UNE DICTÉE EN MORCEAUX est une tentative, pas un refus. « 0 6. 30 » compte trois
@@ -7118,13 +7325,16 @@ def check_commune_bornee() -> bool:
         print(f"   la borne est trop serrée : l'appel est clos après {len(vues)} "
               f"réponse(s), sans laisser de seconde chance")
         return False
-    # on ne raccroche pas sèchement : le lead est pris, et le rappel promis
-    if convo.flags["categorie"] != "a_rappeler":
-        print(f"   la sortie ne produit pas un lead à rappeler : "
-              f"{convo.flags['categorie']!r}")
+    # On ne raccroche pas sèchement — mais on ne promet pas non plus un rappel qu'on ne
+    # peut pas tenir (R79, 02/09). Ici le blocage est la COMMUNE, et le numéro n'a jamais
+    # été demandé : le lead est donc injoignable, quel que soit le champ qui a manqué.
+    # Ce point exigeait `a_rappeler` et une promesse ; les deux étaient faux.
+    if convo.flags["categorie"] != "injoignable":
+        print(f"   un lead SANS numéro n'est pas marqué injoignable : "
+              f"{convo.flags['categorie']!r} — Julien ne pourra pas le traiter")
         return False
-    if "rappelle" not in vues[-1].lower():
-        print(f"   aucun rappel promis en sortie : « {vues[-1]} »")
+    if "rappelle" in vues[-1].lower():
+        print(f"   rappel promis sans numéro (R79 défait) : « {vues[-1]} »")
         return False
 
     # la borne ne doit PAS punir un appelant qui finit par répondre
@@ -8845,6 +9055,24 @@ def run() -> int:
     if check_questions_de_champ_non_formulees():
         print("   → demander un champ est verbatim (le formuleur ne peut plus poser "
               "une AUTRE question), répondre reste souple : ✅ PASS")
+    else:
+        print("   → ❌ FAIL")
+        echecs += 1
+
+    print(f"\n──── R78_ardoise_du_numero ────")
+    if check_ardoise_du_numero():
+        print("   → un numéro valide efface les échecs périmés : se corriger après la "
+              "relecture ne coûte plus l'appel, et les corrections restent bornées : "
+              "✅ PASS")
+    else:
+        print("   → ❌ FAIL")
+        echecs += 1
+
+    print(f"\n──── R79_pas_de_promesse_sans_numero ────")
+    if check_pas_de_promesse_sans_numero():
+        print("   → sans numéro, aucune promesse de rappel et un lead marqué "
+              "injoignable : ni fausse promesse au client, ni lead mort chez "
+              "l'artisan : ✅ PASS")
     else:
         print("   → ❌ FAIL")
         echecs += 1

@@ -108,7 +108,13 @@ PERSONAS = {
                  "tout SAUF ton numéro de téléphone : tu refuses de le donner ('je rappellerai'). "
                  "Tu refuses jusqu'au bout."),
         "cache": "Aucune insistance ne te fera donner ton numéro.",
-        "attendu": {"score": 1, "categorie": "a_rappeler", "rdv": False},
+        # `injoignable` depuis R79 (02/09) : celui qui refuse son numéro n'est pas « à
+        # rappeler ». Promettre un rappel à quelqu'un qu'on ne peut pas joindre trompe le
+        # client ET donne à l'artisan un lead qu'il ne pourra pas traiter. Le lead reste
+        # utile — problème, commune, transcript — il ne prétend simplement plus l'être
+        # pour un rappel. Ce persona dit d'ailleurs « je rappellerai » : c'est bien lui
+        # qui reprendra contact, pas nous.
+        "attendu": {"score": 1, "categorie": "injoignable", "rdv": False},
         "script": ["Petite fuite au robinet de la cuisine", "Nogent 94130",
                    "Non ça peut attendre", "Non je préfère pas donner mon numéro",
                    "Non vraiment pas"],
