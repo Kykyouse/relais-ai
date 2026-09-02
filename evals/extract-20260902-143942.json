@@ -1,0 +1,50 @@
+{
+  "modele": "claude-haiku-4-5",
+  "reussis": 1,
+  "total": 3,
+  "latence_p50_ms": 2321,
+  "latence_p95_ms": 2880,
+  "latence_max_ms": 2880,
+  "cas": [
+    {
+      "etiquette": "contr/portee-negation",
+      "phrase": "Plutôt jeudi, et pas le matin.",
+      "attendu": "{'jours': ['jeudi'], 'exclut_moment': 'matin'}",
+      "obtenu": "contrainte={}",
+      "ok": false,
+      "brut": {
+        "_erreur": "OverloadedError(\"Error code: 529 - {'type': 'error', 'error': {'type': 'overloaded_error', 'message': 'Overloaded'}, 'request_id': 'req_011CeedMCPtaYDarvgYJch7S'}\")"
+      },
+      "ms": 2321
+    },
+    {
+      "etiquette": "contr/portee-samedi",
+      "phrase": "Samedi si possible, mais pas l'après-midi.",
+      "attendu": "{'jours': ['samedi'], 'exclut_moment': 'apres_midi'}",
+      "obtenu": "contrainte={'jours': ['samedi'], 'exclut_moment': 'apres_midi'}",
+      "ok": true,
+      "brut": {
+        "action": "contrainte",
+        "contrainte": {
+          "jours": [
+            "samedi"
+          ],
+          "exclut_moment": "apres_midi"
+        },
+        "disponibilites": "Samedi si possible, mais pas l'après-midi."
+      },
+      "ms": 2880
+    },
+    {
+      "etiquette": "contr/portee-demain",
+      "phrase": "Demain, et surtout pas en soirée.",
+      "attendu": "{'jours': ['demain'], 'exclut_moment': 'soir'}",
+      "obtenu": "contrainte={}",
+      "ok": false,
+      "brut": {
+        "_erreur": "OverloadedError(\"Error code: 529 - {'type': 'error', 'error': {'type': 'overloaded_error', 'message': 'Overloaded'}, 'request_id': 'req_011CeedMZ4cDLBZaVZ1674Kq'}\")"
+      },
+      "ms": 2147
+    }
+  ]
+}

@@ -221,6 +221,20 @@ CAS_CONTRAINTE: list[tuple[str, dict, dict, str]] = [
      {"exclut_jours": ["samedi", "dimanche"]}, "contr/jour-ouvre"),
     ("Pas avant vendredi, je suis en déplacement.", None,
      {"pas_avant": "vendredi"}, "contr/plancher"),
+    # ---- PORTÉE de la négation : elle ne vaut que pour ce qu'elle accompagne ----
+    # Relevé le 02/09 en jouant la chaîne complète contre la vraie base : le modèle a
+    # rendu `exclut_jours: ["jeudi"]` là où l'appelant disait « PLUTÔT jeudi, et pas le
+    # matin ». Jeudi était souhaité ; l'agent a proposé aujourd'hui et vendredi, soit
+    # exactement le contraire. C'est la faute que faisait l'ancien parseur par mots-clés
+    # avec sa fenêtre de trois mots — un modèle peut la faire aussi, la différence est
+    # qu'elle se mesure ici au lieu de se deviner.
+    ("Plutôt jeudi, et pas le matin.", None,
+     {"jours": ["jeudi"], "exclut_moment": "matin"}, "contr/portee-negation"),
+    ("Samedi si possible, mais pas l'après-midi.", None,
+     {"jours": ["samedi"], "exclut_moment": "apres_midi"}, "contr/portee-samedi"),
+    ("Demain, et surtout pas en soirée.", None,
+     {"jours": ["demain"], "exclut_moment": "soir"}, "contr/portee-demain"),
+
     # ---- ce qui marchait déjà, à ne pas casser ----
     ("Uniquement le samedi matin.", None,
      {"jours": ["samedi"], "moment": "matin"}, "contr/samedi-matin"),
@@ -353,21 +367,6 @@ def main() -> int:
                           "attendu": attendu_lu, "obtenu": obtenu, "ok": ok,
                           "brut": ex, "ms": ms})
 
-    # UN APPEL QUI N'A PAS ABOUTI N'EST PAS UNE INCOMPRÉHENSION. Le premier passage réel
-    # de cet outil, le 01/09, a rendu « 6/36 compris » sur une clé API invalide : trente
-    # 401 avaient dégradé en `pas_clair`, et le tableau se lisait comme un verdict sur le
-    # modèle. C'est la panne silencieuse contre laquelle tout ce projet est écrit, et je
-    # venais de la fabriquer dans l'outil censé la débusquer.
-    #
-    # Sortie 2, comme `run_depot_pg.py` quand il n'a rien testé : « ça n'a pas marché » et
-    # « ça a marché et c'est mauvais » ne doivent pas se ressembler.
-    casses = [r for r in resultats if r["brut"].get("_erreur")]
-    if casses:
-        print(f"\n⚠️  {len(casses)}/{len(cas)} appels ont ÉCHOUÉ — ce passage ne mesure "
-              f"RIEN.")
-        print(f"    première erreur : {casses[0]['brut']['_erreur'][:160]}")
-        print("    (clé dans .env à la racine ; RELAIS_MODEL pour le modèle)")
-        return 2
 
     for phrase, ctx, cle, attendu, etiquette in faits:
         debut = time.monotonic()
@@ -399,6 +398,29 @@ def main() -> int:
         resultats.append({"etiquette": etiquette, "phrase": phrase, "attendu": str(att),
                           "obtenu": f"contrainte={obtenu}", "ok": ok, "brut": ex,
                           "ms": ms})
+
+    # UN APPEL QUI N'A PAS ABOUTI N'EST PAS UNE INCOMPRÉHENSION. Le premier passage réel
+    # de cet outil, le 01/09, a rendu « 6/36 compris » sur une clé API invalide : trente
+    # 401 avaient dégradé en `pas_clair`, et le tableau se lisait comme un verdict sur le
+    # modèle. C'est la panne silencieuse contre laquelle tout ce projet est écrit, et je
+    # venais de la fabriquer dans l'outil censé la débusquer.
+    #
+    # ⚠️ CE GARDE A REGRESSÉ LE 02/09, et de la façon la plus banale : en ajoutant deux
+    # boucles (faits, puis contraintes) APRÈS lui, je l'ai laissé n'inspecter que la
+    # première. Avec `--only contr`, il examinait une liste VIDE et laissait passer
+    # « 1/3 compris » sur deux erreurs 529. Il est donc désormais tout en bas, après
+    # toutes les boucles — sa place naturelle, puisqu'il juge le passage ENTIER.
+    #
+    # Sortie 2, comme `run_depot_pg.py` quand il n'a rien testé : « ça n'a pas marché » et
+    # « ça a marché et c'est mauvais » ne doivent pas se ressembler.
+    total = len(cas) + len(faits) + len(contrs)
+    casses = [r for r in resultats if r["brut"].get("_erreur")]
+    if casses:
+        print(f"\n⚠️  {len(casses)}/{total} appels ont ÉCHOUÉ — ce passage ne mesure "
+              f"RIEN.")
+        print(f"    première erreur : {casses[0]['brut']['_erreur'][:160]}")
+        print("    (clé dans .env ; 529 Overloaded = API saturée, réessayer plus tard)")
+        return 2
 
     # p50 ET p95, pas une moyenne : au téléphone c'est la QUEUE qui s'entend. Un modèle
     # à 200 ms de médiane et 2 s de p95 fait attendre un appelant sur vingt, et c'est
