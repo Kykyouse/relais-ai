@@ -43,7 +43,8 @@ from .states import EMPTY_SLOTS, State, URGENT_PRESTATIONS
 
 
 class Conversation:
-    def __init__(self, config: dict, llm, calendar: CalendarStub | None = None):
+    def __init__(self, config: dict, llm, calendar: CalendarStub | None = None,
+                 numero_appelant: str | None = None):
         self.cfg = config
         self.llm = llm
         self.cal = calendar or CalendarStub(config)
@@ -55,6 +56,22 @@ class Conversation:
                             "tentatives_tel": 0, "hold": None, "categorie": None}
         self._proposes: list[dict] = []
         self._silences = 0
+        # LE NUMÉRO D'OÙ L'ON APPELLE (R81). Idée de Geoffrey : le proposer plutôt que le
+        # faire dicter. La dictée d'un numéro à dix chiffres au téléphone a produit à elle
+        # seule R55, R58, R62, R75 et R78, et coûté deux appels réels ; un numéro que la
+        # plateforme nous donne déjà supprime tout ce chemin pour presque tout le monde.
+        #
+        # VALIDÉ comme n'importe quel numéro : un appelant masqué, un numéro étranger ou
+        # tronqué ne doit pas être prononcé — on retombe alors sur la demande normale.
+        #
+        # Il est rangé dans SON slot, et recopié dans `telephone_rappel` pour que la
+        # confirmation existante s'applique telle quelle. `tel_confirme` reste faux : la
+        # règle n°5 ne bouge pas, on ne réserve rien sur un numéro que l'appelant n'a pas
+        # validé à voix haute. C'est une PROPOSITION, pas un acquis.
+        propose = self._numero_fr(self._depuis_e164(numero_appelant))
+        if propose:
+            self.slots["numero_appelant"] = propose
+            self.slots["telephone_rappel"] = propose
 
     # ------------------------------------------------------------------ utils
     @property
@@ -262,6 +279,43 @@ class Conversation:
         # 00 et 99 ne sont pas des départements. Contrôle léger, mais il écarte les
         # suites de cinq chiffres qui n'en sont pas.
         return chiffres if "01" <= chiffres[:2] <= "98" else None
+
+    def _phrase_confirme_tel(self, relance: bool = False) -> str:
+        """La demande de confirmation du numéro, selon son ORIGINE.
+
+        « Je répète votre numéro » est faux quand l'appelant ne l'a jamais dit : il vient
+        de son identifiant d'appel (R81). Le lui présenter comme une répétition sonne
+        comme si on avait mal écouté — et c'est le tour le plus important de l'appel,
+        celui qui décide si on peut le rappeler.
+
+        Le fond ne change pas : dans les deux cas on énonce les chiffres et on attend un
+        oui. Seule la façon de les introduire diffère, et elle doit être exacte.
+        """
+        suffixe = " Répondez simplement oui ou non." if relance else ""
+        if self.slots.get("numero_appelant") \
+                and self.slots["telephone_rappel"] == self.slots["numero_appelant"]:
+            return (f"Je vous rappelle sur le {self._tel_espace()}, celui d'où vous "
+                    f"appelez — c'est bien le bon ?{suffixe}")
+        # virgule et non point : cf. la note de la branche de correction
+        return (f"Je répète votre numéro : {self._tel_espace()}, "
+                f"c'est bien ça ?{suffixe}")
+
+    @staticmethod
+    def _depuis_e164(valeur) -> str | None:
+        """« +33630301111 » → « 0630301111 ». Tout le reste passe INCHANGÉ.
+
+        Uniquement pour l'identifiant d'appel, qui arrive en E.164 depuis la plateforme.
+        Volontairement PAS appliqué à ce que l'appelant dicte : la sévérité de `_numero_fr`
+        sur la forme nationale est une fonctionnalité, et R55/R75 comparent les chiffres
+        extraits à ceux prononcés — élargir la conversion là-bas rendrait ces contrôles
+        plus flous sans rien gagner (personne ne dicte son indicatif pays au téléphone).
+        Un indicatif étranger reste donc tel quel, et `_numero_fr` le refusera : c'est le
+        comportement voulu, on ne propose pas de rappeler un numéro qu'on ne sait pas lire.
+        """
+        chiffres = "".join(c for c in str(valeur or "") if c.isdigit())
+        if chiffres.startswith("33") and len(chiffres) == 11:
+            return "0" + chiffres[2:]
+        return valeur
 
     @staticmethod
     def _numero_fr(valeur) -> str | None:
@@ -1075,7 +1129,13 @@ class Conversation:
         return self._s4({})
 
     def _s4(self, ex: dict) -> str:
-        if not self.flags.get("identite_demandee") and self.slots["telephone_rappel"] is None:
+        # On pose la question d'identité aussi quand le numéro vient de l'identifiant
+        # d'appel : il faut toujours le NOM (il part dans le SMS et dans le lead), mais
+        # plus le numéro. Demander « sur quel numéro ? » à quelqu'un dont on a le numéro
+        # affiché à l'écran est le genre de détail qui fait sonner faux tout le reste.
+        if not self.flags.get("identite_demandee") \
+                and (self.slots["telephone_rappel"] is None
+                     or self.slots["telephone_rappel"] == self.slots["numero_appelant"]):
             self.flags["identite_demandee"] = True
             # C'est ICI que la commune est acquittée, et c'est le seul endroit où le
             # client peut vérifier qu'on l'a compris. Le 26/08, le formuleur y a prononcé
@@ -1091,6 +1151,9 @@ class Conversation:
             # Même remède que R38 : là où le fond compte, le contrôleur parle lui-même.
             lieu = (f"C'est noté pour {self.slots['commune']}. "
                     if self.slots.get("commune") else "Très bien. ")
+            if self.slots.get("numero_appelant"):
+                return self._say(f"{lieu}À quel nom {self._prenom} peut-il noter le "
+                                 f"rendez-vous ?", verbatim=True)
             return self._say(f"{lieu}À quel nom, et sur quel numéro "
                              f"{self._prenom} peut vous confirmer le rendez-vous ?",
                              verbatim=True)
@@ -1204,8 +1267,8 @@ class Conversation:
                 # chiffres est lu par la synthèse vocale comme une fin d'énoncé, et le
                 # « c'est bien ça ? » arrive détaché, comme une phrase sans rapport
                 # (entendu le 26/08). Une virgule garde la question dans le même souffle.
-                return self._say(f"Je répète votre numéro : {self._tel_espace()}, "
-                                 f"c'est bien ça ?", verbatim=True)  # chiffres jamais réécrits
+                return self._say(self._phrase_confirme_tel(),
+                                 verbatim=True)  # chiffres jamais réécrits
             if ex.get("confirme") is True:
                 self.slots["tel_confirme"] = True
             elif ex.get("confirme") is False:
@@ -1248,8 +1311,7 @@ class Conversation:
                     # On ne réserve donc pas — on conclut avec un lead exploitable, le
                     # numéro entendu inclus, et c'est l'artisan qui rappellera.
                     return self._sans_rdv()
-                return self._say(f"Je répète votre numéro : {self._tel_espace()}, "
-                                 f"c'est bien ça ? Répondez simplement oui ou non.",
+                return self._say(self._phrase_confirme_tel(relance=True),
                                  verbatim=True)  # chiffres jamais réécrits
         self.state = State.S5_CRENEAU
         return self._s5({})

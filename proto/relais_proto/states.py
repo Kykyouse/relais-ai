@@ -45,6 +45,11 @@ EMPTY_SLOTS = {
     "urgence_reelle": None,    # bool
     "statut_occupant": None,   # proprietaire | locataire | syndic | autre
     "nom": None,
+    "numero_appelant": None,   # le numéro D'OÙ l'on appelle, donné par la plateforme.
+                               # Jamais un numéro de rappel tant qu'il n'a pas été
+                               # confirmé à voix haute (règle n°5) : c'est une
+                               # PROPOSITION. Quelqu'un peut appeler du bureau pour une
+                               # fuite chez lui.
     "telephone_rappel": None,  # normalisé 0XXXXXXXXX
     "tel_confirme": None,      # bool — répété et confirmé
     "disponibilites": None,    # texte libre

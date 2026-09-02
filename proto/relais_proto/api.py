@@ -419,8 +419,14 @@ def creer_app(depot, registre: Registre, fabrique_llm, horloge=None,
             # Le calendrier est calé sur l'horloge de l'appel (cf. `/webhooks/appel`) :
             # son `now` voyage dans l'état sérialisé, donc « demain entre 08h et 10h »
             # garde le même sens jusqu'à la fin de l'appel, même passé minuit.
+            # Le numéro D'OÙ l'on appelle, transmis par la plateforme (R81). Passé à
+            # l'OUVERTURE seulement : il est une propriété de l'appel, pas du tour, et il
+            # voyage ensuite dans l'état sérialisé comme le reste. Le contrôleur décide
+            # s'il est exploitable — un appelant masqué ou un indicatif étranger ne doit
+            # pas être prononcé.
             convo = Conversation(artisan.config, fabrique_llm(),
-                                 CalendarStub(artisan.config, now=t))
+                                 CalendarStub(artisan.config, now=t),
+                                 numero_appelant=_vapi.numero_appelant(corps))
             texte = convo.open()
             if appel is None:
                 depot.ouvrir_appel(artisan.id, t, appel_id=appel_id)

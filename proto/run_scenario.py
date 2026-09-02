@@ -3877,6 +3877,171 @@ def check_questions_de_champ_non_formulees() -> bool:
     return True
 
 
+def check_numero_appelant_propose() -> bool:
+    """R81 : proposer le numéro d'où l'on appelle, au lieu de le faire dicter.
+
+    Idée de Geoffrey le 02/09 : « serait-il possible de lire le numéro depuis lequel on
+    reçoit l'appel, de le proposer, et de demander si c'est bien le bon ? Ça ferait déjà
+    une épine en moins dans 98 % des cas. »
+
+    Il a raison, et le chiffre n'est pas exagéré. La dictée d'un numéro à dix chiffres au
+    téléphone a produit à elle seule R55 (troncature), R58 (dictée par morceaux), R62
+    (relance figée), R75 (fabrication) et R78 (ardoise), plus deux appels réels perdus.
+    Un numéro que la plateforme nous donne déjà supprime tout ce chemin — pour ceux qui
+    appellent depuis le numéro où ils veulent être rappelés, c'est-à-dire presque tous.
+
+    CE QUI NE BOUGE PAS D'UN MILLIMÈTRE : la règle n°5, téléphone CONFIRMÉ avant tout
+    rendez-vous. On ne réserve jamais sur un numéro que l'appelant n'a pas validé à voix
+    haute. L'identifiant d'appel n'est pas une confirmation — c'est une PROPOSITION, qui
+    passe par la même relecture que s'il l'avait dicté. Il reste des cas où ce n'est pas
+    le bon numéro : quelqu'un qui appelle du bureau pour une fuite chez lui, un fixe
+    d'immeuble, un syndic. D'où « proposer et demander », jamais « prendre ».
+
+    Et le numéro proposé est VALIDÉ comme les autres (`_numero_fr`) : un appelant masqué,
+    un numéro étranger ou tronqué ne doit pas être prononcé — on retombe alors sur la
+    demande normale, qui marche déjà.
+
+    Champ lu : `call.customer.number`, documenté par la plateforme pour les appels
+    téléphoniques entrants. Le premier appel réel le confirmera — la capture du payload
+    (R80) relève tous les chemins candidats, donc un nom de champ différent se corrige en
+    une ligne, sans deviner.
+    """
+    import datetime as dt
+
+    from relais_proto.engine import Conversation
+
+    QUAND = dt.datetime(2026, 9, 2, 10, 0, tzinfo=dt.UTC)
+
+    # LE LECTEUR CÔTÉ PLATEFORME. Les cas ci-dessous construisent la conversation
+    # directement ; sans ce point, `vapi.numero_appelant` pouvait être vidé sans que rien
+    # ne le signale — une mutation y a survécu.
+    from relais_proto import vapi as _v
+
+    def payload(client):
+        appel = {"id": "x", "type": "inboundPhoneCall",
+                 "phoneNumber": {"number": "+19345990358"}}
+        if client is not None:
+            appel["customer"] = client
+        return {"call": appel, "messages": []}
+
+    for client, attendu, libelle in (({"number": "+33630301111"}, "+33630301111",
+                                      "appel téléphonique"),
+                                     (None, None, "aucun client (appel web)"),
+                                     ({}, None, "client sans numéro"),
+                                     ({"number": ""}, None, "numéro vide")):
+        lu = _v.numero_appelant(payload(client))
+        if lu != attendu:
+            print(f"   lecture plateforme · {libelle} : {lu!r} au lieu de {attendu!r}")
+            return False
+    if _v.numero_appelant({}) is not None or _v.numero_appelant(None) is not None:
+        print("   lecture plateforme : une charge utile vide ne rend pas None")
+        return False
+
+    def convo_avec(appelant):
+        convo = Conversation(CFG, MockLLM(), CalendarStub(CFG, now=QUAND),
+                             numero_appelant=appelant)
+        convo.open()
+        convo.process("J'ai une fuite d'eau dans la salle de bain")
+        convo.process("Nogent-sur-Marne 94130")
+        return convo
+
+    # (1) LE CHEMIN QUI DISPARAÎT : le numéro est PROPOSÉ, pas demandé.
+    #
+    # Mais le NOM reste demandé — il part dans le SMS de confirmation et dans le lead.
+    # Une mutation qui supprimait cette question a survécu à la première version de ce
+    # test : l'appel « marchait » toujours, et l'artisan recevait un rendez-vous sans nom.
+    convo = convo_avec("+33630301111")
+    dit_identite = convo.transcript[-1][1]
+    if "nom" not in dit_identite.lower():
+        print(f"   le nom n'est plus demandé : « {dit_identite} »")
+        return False
+    if "numéro" in dit_identite.lower():
+        print(f"   on demande le numéro alors qu'on l'a déjà : « {dit_identite} »")
+        return False
+
+    dit = convo.process("Le nom, c'est Benoît")
+    if "0630301111" not in dit.replace(" ", ""):
+        print(f"   le numéro d'appel n'est pas proposé : « {dit} »")
+        return False
+    for interdit in ("quel est votre numéro", "il me faut un numéro"):
+        if interdit in dit.lower():
+            print(f"   on demande le numéro alors qu'on l'a : « {dit} »")
+            return False
+    # ET LA PHRASE DIT LA VÉRITÉ. « Je répète votre numéro » est faux d'un numéro que
+    # l'appelant n'a jamais prononcé : ça sonne comme si on avait mal écouté, au tour le
+    # plus important de l'appel. Une mutation qui remettait cette formulation a survécu
+    # tant que le test se contentait de chercher les chiffres.
+    if "répète" in dit.lower():
+        print(f"   un numéro jamais prononcé est présenté comme une répétition : "
+              f"« {dit} »")
+        return False
+    if "d'où vous appelez" not in dit.lower():
+        print(f"   la phrase ne dit pas d'où vient le numéro : « {dit} »")
+        return False
+    # et il n'est PAS encore confirmé : la règle n°5 tient
+    if convo.slots.get("tel_confirme"):
+        print("   le numéro d'appel est pris pour confirmé sans que l'appelant ait dit oui")
+        return False
+
+    # un « oui » le confirme, et l'appel avance jusqu'aux créneaux
+    dit = convo.process("Oui c'est bien ça")
+    if not convo.slots.get("tel_confirme"):
+        print(f"   un « oui » ne confirme pas le numéro proposé : « {dit} »")
+        return False
+    if convo.slots["telephone_rappel"] != "0630301111":
+        print(f"   mauvais numéro retenu : {convo.slots['telephone_rappel']!r}")
+        return False
+    if not convo._proposes:
+        print(f"   aucun créneau après confirmation : « {dit} »")
+        return False
+
+    # (2) « NON » : ce n'est pas le bon numéro (bureau, fixe d'immeuble, syndic). On
+    # retombe sur la dictée, qui marche déjà — et le numéro refusé est effacé.
+    convo = convo_avec("+33630301111")
+    convo.process("Le nom, c'est Benoît")
+    dit = convo.process("Non")
+    if convo.slots.get("telephone_rappel"):
+        print(f"   le numéro refusé est conservé : {convo.slots['telephone_rappel']!r}")
+        return False
+    if "numéro" not in dit.lower():
+        print(f"   après un refus, on ne redemande pas le numéro : « {dit} »")
+        return False
+    dit = convo.process("C'est plutôt le 06 44 55 66 77")
+    if "0644556677" not in dit.replace(" ", ""):
+        print(f"   le numéro dicté en remplacement n'est pas relu : « {dit} »")
+        return False
+
+    # (2 bis) ET L'INVERSE : un numéro DICTÉ reste présenté comme une répétition. Sans
+    # ce point, figer une seule des deux formulations passerait le test.
+    convo = convo_avec(None)
+    convo.process("Le nom, c'est Benoît")
+    dit = convo.process("06 44 55 66 77")
+    if "répète" not in dit.lower():
+        print(f"   un numéro DICTÉ n'est plus présenté comme une répétition : « {dit} »")
+        return False
+    if "d'où vous appelez" in dit.lower():
+        print(f"   un numéro dicté est présenté comme l'identifiant d'appel : « {dit} »")
+        return False
+
+    # (3) CE QUI N'EST PAS PROPOSABLE ne doit pas être prononcé. On retombe alors sur la
+    # demande normale — le chemin d'avant, qui reste la référence.
+    for appelant, libelle in ((None, "appelant masqué"),
+                              ("", "champ vide"),
+                              ("+12125550123", "numéro étranger"),
+                              ("+3363030", "numéro tronqué"),
+                              ("anonymous", "valeur non numérique")):
+        convo = convo_avec(appelant)
+        dit = convo.process("Le nom, c'est Benoît")
+        if "numéro" not in dit.lower():
+            print(f"   {libelle} : l'agent ne demande plus de numéro : « {dit} »")
+            return False
+        if any(c.isdigit() for c in dit):
+            print(f"   {libelle} : des chiffres sont prononcés : « {dit} »")
+            return False
+
+    return True
+
+
 def check_numero_fabrique() -> bool:
     """R75 : un numéro que personne n'a prononcé ne doit pas entrer dans le produit.
 
@@ -9192,6 +9357,14 @@ def run() -> int:
     if check_numero_fabrique():
         print("   → un numéro que personne n'a prononcé est écarté, et la dictée "
               "par morceaux passe toujours : ✅ PASS")
+    else:
+        print("   → ❌ FAIL")
+        echecs += 1
+
+    print(f"\n──── R81_numero_appelant_propose ────")
+    if check_numero_appelant_propose():
+        print("   → le numéro d'où l'on appelle est PROPOSÉ puis confirmé, jamais pris "
+              "d'office, et rien n'est prononcé quand il n'est pas exploitable : ✅ PASS")
     else:
         print("   → ❌ FAIL")
         echecs += 1

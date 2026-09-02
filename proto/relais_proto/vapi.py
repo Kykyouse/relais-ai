@@ -67,6 +67,33 @@ def numero_appele(corps: dict) -> str | None:
     return str(appel["phoneNumberId"]) if appel.get("phoneNumberId") else None
 
 
+def numero_appelant(corps: dict) -> str | None:
+    """Le numéro D'OÙ l'appelant appelle, quand la plateforme le fournit.
+
+    `call.customer.number`, documenté pour les appels téléphoniques entrants. Absent des
+    appels WEB, qui n'ont aucune ligne derrière — mesuré le 25/08 puis le 02/09 : la sonde
+    de l'étape 0 balaie les clés qui ressemblent à un identifiant (`number`, `phone`,
+    `customer`…) et n'en a relevé AUCUNE sur un `webCall`.
+
+    Écrit contre le champ DOCUMENTÉ, et non deviné : la capture du payload (R80) relève
+    tous les chemins candidats au premier appel réel, donc un nom de champ différent se
+    corrige en une ligne. Ce qui aurait été imprudent, c'est de coder contre un champ
+    dont personne n'a jamais parlé.
+
+    Rendu tel quel : c'est le CONTRÔLEUR qui décide si ce numéro est exploitable
+    (`_numero_fr`), pas ce traducteur. Un appelant masqué peut donner « anonymous »,
+    « +266696687 » ou une chaîne vide selon l'opérateur ; aucune de ces valeurs ne doit
+    être prononcée, et ce n'est pas ici qu'on en juge.
+    """
+    appel = (corps or {}).get("call")
+    if not isinstance(appel, dict):
+        return None
+    client = appel.get("customer")
+    if isinstance(client, dict) and client.get("number"):
+        return str(client["number"])
+    return None
+
+
 def messages_utilisateur(corps: dict) -> list[str]:
     """Les tours de l'APPELANT, dans l'ordre. Le message système et les tours de l'agent
     sont écartés ici même : ils n'ont aucun rôle chez nous."""

@@ -300,6 +300,69 @@ Le spike vocal ne s'ouvre **qu'en session dédiée**. Le Sender ID et l'OAuth Go
 le nom commercial — c'est-à-dire le cousin, pas nous.
 ---
 
+## 02/09 (soir) — Le numéro gratuit Vapi ne prend pas les appels internationaux (R81)
+
+Geoffrey appelle le numéro Vapi fraîchement provisionné : **tonalité occupée immédiate**,
+rien n'arrive au serveur. Sa configuration était bonne — elle n'a simplement jamais été
+sollicitée.
+
+**Cause, et c'est mon erreur.** Les numéros gratuits Vapi sont « available for US national
+use » : appels nationaux américains uniquement. Un appel depuis un mobile français est
+rejeté par l'opérateur avant d'atteindre Vapi. J'avais cette phrase sous les yeux dans mes
+propres résultats de recherche et je l'ai lue comme « numéro basé aux US » au lieu de
+« appels nationaux US seulement ». Fable l'a relevé ; la doc et la tonalité occupée
+concordent. Voie qui marche : acheter un numéro chez Twilio (qui accepte l'international
+entrant) et l'importer dans Vapi. C'est aussi le compte qui portera le dossier
+réglementaire français plus tard — pas un détour, la première pierre.
+
+**Décidé de ne pas attendre pour écrire le code.** `call.customer.number` est DOCUMENTÉ
+pour les appels téléphoniques entrants — ce n'est pas un champ supposé. Combiné à la
+capture du payload (R80), qui relève tous les chemins candidats au premier appel réel, un
+nom de champ différent se corrigerait en une ligne. Le premier appel Twilio devient donc
+une CONFIRMATION au lieu d'être un prérequis.
+
+**R81 — proposer le numéro d'où l'on appelle.** L'idée est de Geoffrey : « ça ferait déjà
+une épine en moins dans 98 % des cas. » Le chiffre n'est pas exagéré. La dictée d'un numéro
+à dix chiffres au téléphone a produit à elle seule R55 (troncature), R58 (dictée par
+morceaux), R62 (relance figée), R75 (fabrication) et R78 (ardoise), et coûté deux appels
+réels. Un numéro que la plateforme nous donne déjà supprime tout ce chemin.
+
+La conversation passe de cinq tours à trois :
+
+    AGENT  : C'est noté pour Nogent-sur-Marne. À quel nom Julien peut-il noter le RDV ?
+    CLIENT : Benoît.
+    AGENT  : Je vous rappelle sur le 06 30 30 11 11, celui d'où vous appelez —
+             c'est bien le bon ?
+
+**CE QUI NE BOUGE PAS : la règle n°5.** L'identifiant d'appel n'est pas une confirmation,
+c'est une PROPOSITION. `tel_confirme` reste faux jusqu'au « oui », et le numéro passe par
+la même relecture que s'il avait été dicté. Il reste des cas où ce n'est pas le bon —
+quelqu'un qui appelle du bureau pour une fuite chez lui, un fixe d'immeuble, un syndic.
+D'où « proposer et demander », jamais « prendre ».
+
+Trois détails qui comptent :
+
+- Le numéro est VALIDÉ comme les autres. Un appelant masqué (« anonymous », chaîne vide),
+  un indicatif étranger ou un numéro tronqué ne doit pas être prononcé : on retombe alors
+  sur la demande normale, qui marche déjà. La conversion E.164 n'accepte que `+33`, et
+  volontairement pas les autres indicatifs.
+- La conversion E.164 n'est PAS appliquée à ce que l'appelant dicte. La sévérité de
+  `_numero_fr` là-bas est une fonctionnalité dont R55 et R75 dépendent (ils comparent les
+  chiffres extraits à ceux prononcés), et personne ne dicte son indicatif pays.
+- Le NOM reste demandé — il part dans le SMS et dans le lead. Une mutation qui supprimait
+  cette question a survécu à ma première version du test : l'appel « marchait » toujours,
+  et l'artisan recevait un rendez-vous sans nom.
+
+**Et la formulation dit la vérité sur l'origine du numéro** : « je répète votre numéro »
+est faux d'un numéro jamais prononcé — ça sonne comme si on avait mal écouté, au tour le
+plus important de l'appel. Deux phrases, choisies par le contrôleur selon la provenance.
+
+Banque de mutations : 4/8 au premier passage, et les quatre survivantes étaient toutes des
+trous de MON test — la question du nom, la formulation, et le lecteur côté plateforme que
+les cas contournaient en construisant la conversation directement. Resserré → 7/8.
+
+84 tests au vert, éval mock 19/19.
+
 ## 02/09 — Le formuleur peut poser une autre question, et les garde-fous ne le voient pas
 
 Appel réel du matin, rendez-vous PRIS — et R72/R73 confirmés en production : « Le jeudi »
