@@ -28,7 +28,7 @@ voix marche de bout en bout — mais **aucun numéro n'est joignable depuis la F
 
 ```bash
 cd proto
-python run_scenario.py                              # 94 tests, ~3 s, sans clé ni base
+python run_scenario.py                              # 95 tests, ~3 s, sans clé ni base
 python run_extract_eval.py [--mock] [--only …]      # banc d'EXTRACTION : 64/66, p50 1080 ms
 python run_llm_eval.py [--mock] [--n 3]             # éval appelant-simulé (mock 19/19)
 python run_depot_pg.py [--migrer]                   # contrat du port contre Supabase
@@ -230,6 +230,67 @@ datées ; l'en-tête de `vapi.py` porte le format de fil SSE. **Les lire avant d
 chantier voix.**
 
 ---
+
+## 09/09 (fin) — Deux bases, et une base de prod qui dit non elle-même (R92)
+
+« Sépare la base dev et prod alors », après que j'ai signalé que les deux services Render
+allaient taper la base de développement.
+
+**La séparation elle-même ne demande aucun code** : le `.env` local pointe la dev, les
+variables de Render pointent la prod. Ajouter un `RELAIS_ENV` serait une chose de plus à se
+tromper, pour aucun gain. Ce qui demande du soin, c'est de ne jamais se tromper de base.
+
+**La protection existante est bonne, et elle reste.** `run_depot_pg.py` tronque des tables,
+et sa garde n'est pas un nom de variable mais un MARQUEUR écrit dans la base — le docstring
+explique déjà pourquoi un contrôle par nom ne se déclencherait jamais (« toutes les bases
+Supabase s'appellent `postgres` »).
+
+**Mais séparer les bases ouvre un trou que ce marqueur seul ne bouche pas.** Le
+consentement est un mot sur une ligne de commande : `--migrer --autoriser-truncate` lancé
+avec un `.env` qui pointe la production POSE le marqueur puis TRONQUE la production. Le
+geste qui protège et le geste qui détruit sont le même geste, à l'environnement près — et
+l'environnement est précisément ce qu'on se trompe.
+
+D'où `relais_production`, second marqueur de sens opposé et de même nature. Trois
+propriétés voulues :
+
+1. **il vit dans la BASE**, comme l'autre — une variable d'environnement sur la mauvaise
+   machine est exactement le mode de panne visé ;
+2. **la production GAGNE** si les deux marqueurs sont là : un doute ne se résout pas en
+   faveur du `truncate` ;
+3. **il est asymétrique** : le poser demande un mot, le retirer demande un `drop table` à
+   la main. Aucun `--annuler` n'est fourni — l'enlever doit coûter plus cher que de créer
+   une base de test.
+
+Et la garde est évaluée AVANT toute écriture, marqueur de test compris : poser le
+consentement puis découvrir qu'on est en production, ce serait poser le consentement EN
+production. `--migrer` reste permis sur une base de prod : migrer la production est
+légitime, la tronquer non.
+
+`verdict_truncate` est une fonction PURE, éprouvée contre une fausse base. **La logique qui
+décide de tronquer une base est le dernier endroit où l'on peut accepter « ça ne se teste
+qu'en réel ».**
+
+### Le piège que la séparation crée, et qui était silencieux
+
+En écrivant la procédure, un mode de panne est apparu : passer `DATABASE_URL=<prod>` en
+ligne de commande **sans passer aussi** `DATABASE_URL_POOLER` laisse le pooler du `.env` —
+donc la DEV — dans l'environnement. Comme l'hôte direct de Supabase est en IPv6 et peut
+échouer, le repli nous ramène sur la dev **en croyant être en prod**. Et le script
+n'affichait que le libellé, « directe » ou « session pooler », jamais SUR QUELLE BASE.
+
+Il affiche désormais l'hôte : `directe : ✓ connectée → db.<ref>.supabase.co:5432`. C'est
+la dernière chance de s'apercevoir qu'on visait la prod et qu'on a atterri ailleurs.
+`hote_de` est pure et testée, y compris sur un mot de passe contenant un « @ » — elle
+manipule un DSN qui porte un secret et ne doit jamais en rendre une miette : **un message
+de diagnostic qui fuite un secret est pire que pas de message.**
+
+Vérifié au passage, et rassurant : tous les points d'entrée qui touchent la base
+(`run_depot_pg`, `semer_artisans`, `worker`, `serveur`) chargent le `.env` SANS `override`,
+donc la ligne de commande gagne. Seuls `chat.py` et `run_llm_eval.py` font l'inverse, et
+ils ne touchent pas la base.
+
+95 tests au vert, contrat du port rejoué contre le Postgres de dev.
 
 ## 09/09 (fin) — Deux arbitrages rendus, et une spec que j'avais perdue de vue
 

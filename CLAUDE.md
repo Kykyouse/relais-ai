@@ -16,7 +16,7 @@ Cible V1 : plombiers/chauffagistes FR. Solo dev : Geoffrey (binôme Claude) ; ma
 ```bash
 cd proto
 pip install -r requirements.txt     # anthropic, python-dotenv (inutiles en mock)
-python run_scenario.py              # suite de non-régression (mock, sans clé, ~3 s) — 94 tests
+python run_scenario.py              # suite de non-régression (mock, sans clé, ~3 s) — 95 tests
 python run_llm_eval.py --mock       # plomberie de l'éval appelant-simulé (sans clé)
 python run_extract_eval.py [--mock] [--only plus_tot]
                                     # tests unitaires d'EXTRACTION : (phrase + contexte)
@@ -88,6 +88,17 @@ python run_depot_pg.py [--migrer] [--autoriser-truncate]   # contrat du port Dep
                                     # contre un vrai Postgres. DATABASE_URL (directe) puis
                                     # DATABASE_URL_POOLER en repli. Tronque les tables :
                                     # exige un marqueur en base, posé 1 fois. Sort 2 si rien testé.
+                                    # Affiche l'HÔTE atteint (R92) : « directe » ne dit pas
+                                    # sur QUELLE base on est tombé, et ce script tronque.
+python run_depot_pg.py --declarer-production   # sur la base de PROD, UNE fois : pose
+                                    # `relais_production`, et ce script refusera desormais
+                                    # de la preparer — aucun drapeau ne le fera changer
+                                    # d'avis (R92). `--migrer` reste possible sur elle :
+                                    # migrer la prod est legitime, la tronquer non.
+                                    # ⚠️ Toujours passer les DEUX variables ensemble pour
+                                    # viser une autre base — sinon le pooler du .env (la
+                                    # dev) reste dans l'environnement et le repli IPv6 y
+                                    # ramene en silence.
 ```
 
 Clé API : fichier `.env` à la racine (voir `.env.example`). JAMAIS commité, JAMAIS dans le code.
@@ -198,6 +209,24 @@ RACCROCHER, barge-in) — versionnée, poussée par `configurer_assistant_vapi.p
 Pièges connus : les modèles à réflexion adaptative (Sonnet 5) comptent leurs tokens de réflexion
 dans `max_tokens` (mettre large) et renvoient des ThinkingBlocks (ne lire que les blocs `text`,
 cf. `_texte_de`). Timeout API court (10 s) : au téléphone on dégrade vite plutôt que d'attendre.
+
+## Bases dev et prod (depuis le 09/09)
+
+**Deux bases Supabase distinctes.** Le `.env` local pointe la DEV ; les variables de Render
+pointent la PROD. Aucun code ne connaît cette distinction — c'est deux jeux de valeurs, et
+c'est voulu : un `RELAIS_ENV` de plus serait une chose à se tromper en plus.
+
+Ce qui protège n'est donc pas un nom mais **deux marqueurs posés DANS les bases** :
+`relais_base_de_test` (consentement au truncate) et `relais_production` (refus définitif).
+Si les deux sont présents, **la production gagne**. Pour viser une base autre que celle du
+`.env`, passer les DEUX variables ensemble :
+
+```bash
+DATABASE_URL="…" DATABASE_URL_POOLER="…" python run_depot_pg.py --migrer --declarer-production
+```
+
+(les points d'entrée qui touchent la base chargent le `.env` SANS `override` : la ligne de
+commande gagne. `chat.py` et `run_llm_eval.py` font l'inverse, mais ne touchent pas la base.)
 
 ## Hébergement
 

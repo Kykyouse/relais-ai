@@ -1,7 +1,9 @@
 #!/usr/bin/env python3
 """Joue la suite de contrat du port `Depot` contre un VRAI Postgres.
 
-    python run_depot_pg.py --migrer --autoriser-truncate   # première fois
+    python run_depot_pg.py --migrer --autoriser-truncate   # première fois (base de TEST)
+    python run_depot_pg.py --declarer-production          # sur la base de PROD, une fois :
+                                                          # elle refusera tout truncate
     python run_depot_pg.py --migrer                        # après un changement de schéma
     python run_depot_pg.py                                 # tests seuls
 
@@ -15,6 +17,13 @@ Ce script TRONQUE les tables. La garde n'est pas le nom de la variable ni celui 
 jamais. Elle est un MARQUEUR écrit dans la base, une fois, par `--autoriser-truncate` :
 consentement explicite, porté par la base elle-même, insensible au renommage des variables
 et valable depuis n'importe quelle machine.
+
+Depuis R92 (09/09), un SECOND marqueur de sens opposé : `--declarer-production` pose
+`relais_production` sur la base de prod, et ce script refuse alors de la préparer — aucun
+drapeau ne le fera changer d'avis. Motif : le consentement au truncate est un mot sur une
+ligne de commande, et `--migrer --autoriser-truncate` lancé avec un `.env` qui pointe la
+production posait le marqueur PUIS tronquait la production. Si les deux marqueurs sont
+présents, la production gagne.
 
 Codes de sortie : 0 = tout passe · 1 = écarts de contrat · 2 = rien testé (pas de base,
 pas de marqueur, préparation impossible). Jamais 0 sans avoir rien testé.
@@ -64,20 +73,100 @@ def _connecter():
     seulement ici (défaut constaté le 24/08)."""
     import psycopg
 
-    from relais_proto.depot_pg import candidats_env, resoudre_connexion
+    from relais_proto.depot_pg import candidats_env, hote_de, resoudre_connexion
     try:
         dsn, opts, libelle = resoudre_connexion(candidats_env(), DELAI_CONNEXION)
     except Exception as exc:  # noqa: BLE001
         print(f"   {exc}")
         return None, None, None, None
-    print(f"   {libelle} : ✓ connectée")
+    # L'HÔTE, pas seulement le libellé (R92) : « directe » et « session pooler » ne disent
+    # pas SUR QUELLE BASE on est tombé, et ce script tronque des tables. Voir l'hôte est la
+    # dernière chance de s'apercevoir qu'on visait la prod et qu'on a atterri ailleurs —
+    # ou l'inverse.
+    print(f"   {libelle} : ✓ connectée → {hote_de(dsn)}")
     return psycopg.connect(dsn, autocommit=True, **opts), dsn, libelle, opts
 
 
+MARQUEUR_PROD = "relais_production"
+
+
+class _Base:
+    """Ce que la garde a besoin de savoir d'une base : quels marqueurs y sont posés.
+
+    Une classe pour une seule question, parce que `verdict_truncate` doit être éprouvable
+    SANS Postgres. La logique qui décide de tronquer une base est le dernier endroit où
+    l'on peut accepter « ce n'est testable qu'en réel ».
+    """
+
+    def __init__(self, cx):
+        self.cx = cx
+
+    def marqueur_present(self, nom: str) -> bool:
+        with self.cx.cursor() as cur:
+            cur.execute("select to_regclass(%s) is not null", (nom,))
+            return bool(cur.fetchone()[0])
+
+
+def verdict_truncate(base, autoriser: bool, declarer_production: bool
+                     ) -> tuple[bool, str | None]:
+    """Peut-on préparer cette base (donc la TRONQUER) ? Et sinon, pourquoi ?
+
+    R92, demandé le 09/09 en séparant les bases dev et prod. Le marqueur de test existait
+    déjà et reste : il porte le consentement dans la BASE, insensible au renommage des
+    variables et valable depuis n'importe quelle machine. Mais séparer les bases révèle un
+    trou : ce consentement est un mot sur une ligne de commande, et
+    `--migrer --autoriser-truncate` lancé avec un `.env` qui pointe la production POSE le
+    marqueur puis tronque la production. Le geste qui protège et le geste qui détruit sont
+    le même geste, à l'environnement près — et l'environnement est ce qu'on se trompe.
+
+    D'où un second marqueur de sens opposé, `relais_production`. Trois propriétés voulues :
+
+    - il vit dans la BASE, comme l'autre : une variable d'environnement sur la mauvaise
+      machine est précisément le mode de panne visé ;
+    - **la production GAGNE** si les deux sont présents : un doute ne se résout pas en
+      faveur du `truncate` ;
+    - il est ASYMÉTRIQUE : le poser demande un mot, le retirer demande une requête SQL à
+      la main. Aucun `--annuler` n'est fourni — l'enlever doit coûter plus cher que de
+      créer une base de test.
+    """
+    prod = base.marqueur_present(MARQUEUR_PROD)
+    test = base.marqueur_present(MARQUEUR)
+
+    if declarer_production:
+        if test:
+            return False, (
+                f"cette base porte « {MARQUEUR} » : elle a servi de cible à des truncate. "
+                f"La déclarer production masquerait son passé — crée une base neuve.")
+        return True, None
+
+    if prod:
+        return False, (
+            f"cette base est déclarée PRODUCTION (table « {MARQUEUR_PROD} »). "
+            f"Ce script tronque les tables : il refuse, et aucun drapeau ne le fera "
+            f"changer d'avis. Pointe DATABASE_URL sur une base de test.")
+
+    if not (test or autoriser):
+        return False, (
+            f"la table « {MARQUEUR} » est absente de cette base : rien ne dit qu'elle est "
+            f"une base de test.")
+
+    return True, None
+
+
 def _marqueur_present(cx) -> bool:
+    return _Base(cx).marqueur_present(MARQUEUR)
+
+
+def _poser_marqueur_prod(cx) -> None:
+    import socket
     with cx.cursor() as cur:
-        cur.execute("select to_regclass(%s) is not null", (MARQUEUR,))
-        return bool(cur.fetchone()[0])
+        cur.execute(f"create table if not exists {MARQUEUR_PROD} ("
+                    "declaree_le timestamp not null default now(), machine text)")
+        cur.execute(f"insert into {MARQUEUR_PROD} (machine) values (%s)",
+                    (socket.gethostname(),))
+    print(f"   marqueur « {MARQUEUR_PROD} » posé : cette base est déclarée PRODUCTION.")
+    print(f"   Aucun script de test ne la tronquera plus. Pour annuler — et il faut que "
+          f"ce soit pénible — : drop table {MARQUEUR_PROD};")
 
 
 def _poser_marqueur(cx) -> None:
@@ -124,15 +213,26 @@ def run() -> int:
     try:
         if "--migrer" in sys.argv:
             _migrer(cx)
-        if "--autoriser-truncate" in sys.argv:
-            _poser_marqueur(cx)
-        if not _marqueur_present(cx):
-            print(f"\nRefus : la table « {MARQUEUR} » est absente de cette base.")
-            print("Ce script tronque les tables. Si — et seulement si — cette base est")
-            print("bien une base de TEST, autorise-la une fois pour toutes :")
-            print("   python run_depot_pg.py --autoriser-truncate")
+        # La garde est évaluée AVANT toute écriture, marqueur de test compris : poser le
+        # consentement puis découvrir qu'on est en production serait poser le consentement
+        # EN production (R92).
+        autoriser = "--autoriser-truncate" in sys.argv
+        declarer = "--declarer-production" in sys.argv
+        ok, motif = verdict_truncate(_Base(cx), autoriser=autoriser,
+                                     declarer_production=declarer)
+        if not ok:
+            print(f"\nRefus : {motif}")
+            if not declarer and "PRODUCTION" not in (motif or ""):
+                print("Si — et seulement si — cette base est bien une base de TEST :")
+                print("   python run_depot_pg.py --autoriser-truncate")
             cx.close()
             return 2
+        if declarer:
+            _poser_marqueur_prod(cx)
+            cx.close()
+            return 0
+        if autoriser:
+            _poser_marqueur(cx)
         _vider(cx)
     except Exception as exc:  # noqa: BLE001
         print(f"Préparation impossible : {type(exc).__name__}: {exc}")

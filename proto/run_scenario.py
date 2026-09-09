@@ -3676,6 +3676,129 @@ def check_pas_de_promesse_sans_numero() -> bool:
     return True
 
 
+def check_base_de_production_dit_non() -> bool:
+    """R92 : une base de PRODUCTION doit pouvoir refuser d'être tronquée, elle-même.
+
+    Demandé par Geoffrey le 09/09 — « sépare la base dev et prod alors » — après que j'ai
+    signalé que les deux services Render allaient taper la base de développement.
+
+    La protection existante est bonne et reste : `run_depot_pg.py` tronque des tables, et
+    sa garde est un MARQUEUR écrit dans la base (`--autoriser-truncate`), pas un nom de
+    variable — parce que toutes les bases Supabase s'appellent `postgres` et qu'un contrôle
+    par nom ne se déclencherait jamais.
+
+    **Mais séparer les bases crée un trou que le marqueur seul ne bouche pas.** Le
+    consentement est un mot sur une ligne de commande : le jour où l'un de nous lance
+    `run_depot_pg.py --migrer --autoriser-truncate` avec un `.env` qui pointe la
+    production, cette commande POSE le marqueur puis TRONQUE la production. Le geste qui
+    protège et le geste qui détruit sont le même geste, à l'environnement près — et
+    l'environnement est justement ce qu'on se trompe.
+
+    D'où un second marqueur, de sens opposé et de même nature : `relais_production`, posé
+    une fois par `--declarer-production`. Trois propriétés, toutes délibérées :
+
+    1. **il vit dans la BASE**, comme l'autre. Une variable d'environnement sur la mauvaise
+       machine est exactement le mode de panne qu'on cherche à couvrir ;
+    2. **la production GAGNE** : si les deux marqueurs sont présents, on refuse. Un doute
+       ne se résout pas en faveur du `truncate` ;
+    3. **il est asymétrique** : le poser demande un mot explicite, l'enlever demande une
+       requête SQL à la main. On ne fournit pas de `--annuler` — le retirer doit coûter
+       plus cher que de créer une base de test.
+
+    Ce que ce test verrouille, contre une FAUSSE base (un espion, pas de Postgres — la
+    logique de garde ne doit pas exiger de réseau pour être éprouvée) :
+
+    1. base déclarée production → aucun `truncate`, sortie 2, et le message dit pourquoi ;
+    2. base de test (marqueur de test seul) → le contrat s'exécute comme avant ;
+    3. les DEUX marqueurs → refus, la production gagne ;
+    4. `--declarer-production` sur une base déjà déclarée base de test → refus aussi :
+       cette base a servi de cible à des `truncate`, la promouvoir en production
+       masquerait son passé.
+    """
+    import io
+    import contextlib
+
+    from run_depot_pg import MARQUEUR, MARQUEUR_PROD, verdict_truncate
+    from relais_proto.depot_pg import hote_de
+
+    # Un faux curseur : `to_regclass(x) is not null` selon les tables déclarées présentes.
+    class FausseBase:
+        def __init__(self, tables):
+            self.tables = set(tables)
+
+        def marqueur_present(self, nom):
+            return nom in self.tables
+
+    CAS = [
+        # (tables présentes, autoriser, declarer, autorisé ?, mot attendu dans le motif)
+        ({MARQUEUR_PROD},        True,  False, False, "production"),
+        ({MARQUEUR},             False, False, True,  ""),
+        ({MARQUEUR, MARQUEUR_PROD}, True, False, False, "production"),
+        (set(),                  False, False, False, MARQUEUR),
+        (set(),                  True,  False, True,  ""),
+    ]
+    for tables, autoriser, declarer, attendu_ok, mot in CAS:
+        ok, motif = verdict_truncate(FausseBase(tables), autoriser=autoriser,
+                                     declarer_production=declarer)
+        if ok != attendu_ok:
+            print(f"   tables={sorted(tables)} autoriser={autoriser} → "
+                  f"autorisé={ok}, attendu {attendu_ok} ({motif})")
+            return False
+        if mot and mot not in (motif or "").lower():
+            print(f"   le refus ne dit pas pourquoi : « {motif} » "
+                  f"(attendu qu'il parle de « {mot} »)")
+            return False
+
+    # (4) promouvoir en production une base qui a servi de cible à des truncate : refus
+    ok, motif = verdict_truncate(FausseBase({MARQUEUR}), autoriser=False,
+                                 declarer_production=True)
+    if ok or "test" not in (motif or "").lower():
+        print(f"   une base de test a pu être déclarée production : ok={ok} « {motif} »")
+        return False
+
+    # et le chemin nominal de la déclaration : une base vierge accepte
+    ok, motif = verdict_truncate(FausseBase(set()), autoriser=False,
+                                 declarer_production=True)
+    if not ok:
+        print(f"   une base vierge ne peut pas être déclarée production : « {motif} »")
+        return False
+
+    # (5) LE MESSAGE COMPTE AUTANT QUE LA GARDE. Un refus qui n'explique pas se contourne
+    # par tâtonnement — c'est comme ça qu'on finit par passer le drapeau qui détruit.
+    _, motif = verdict_truncate(FausseBase({MARQUEUR_PROD}), autoriser=True,
+                                declarer_production=False)
+    if MARQUEUR_PROD not in motif:
+        print(f"   le refus ne nomme pas le marqueur qu'il faudrait retirer : « {motif} »")
+        return False
+
+    # (6) SAVOIR SUR QUELLE BASE ON EST TOMBÉ. Le repli directe → pooler rend le piège
+    # silencieux : passer DATABASE_URL=<prod> sans passer AUSSI le pooler laisse celui du
+    # `.env` — la dev — dans l'environnement, et une directe en IPv6 qui échoue nous y
+    # ramène. `hote_de` le dit. Et comme elle manipule un DSN qui contient un mot de
+    # passe, elle ne doit JAMAIS en rendre une miette.
+    DSN = [
+        ("postgresql://postgres:mdp-tres-secret@db.abcdef.supabase.co:5432/postgres"
+         "?sslmode=require", "db.abcdef.supabase.co:5432"),
+        ("postgresql://postgres.abcdef:mdp@aws-0-eu-west-3.pooler.supabase.com:6543/"
+         "postgres", "aws-0-eu-west-3.pooler.supabase.com:6543"),
+        # un mot de passe contenant un « @ » : le découpage doit prendre le DERNIER
+        ("postgresql://user:m@t@de@passe@hote.exemple.com:5432/db",
+         "hote.exemple.com:5432"),
+    ]
+    for dsn, attendu in DSN:
+        rendu = hote_de(dsn)
+        if rendu != attendu:
+            print(f"   hote_de : « {rendu} » au lieu de « {attendu} »")
+            return False
+        for secret in ("mdp-tres-secret", "mdp", "passe", "postgres:"):
+            if secret in rendu:
+                print(f"   hote_de FUITE un identifiant : « {rendu} » contient "
+                      f"« {secret} »")
+                return False
+
+    return True
+
+
 def check_repondre_nest_pas_demander_un_humain() -> bool:
     """R91 : donner son numéro n'est pas demander à parler à quelqu'un.
 
@@ -10611,6 +10734,14 @@ def run() -> int:
     if check_repondre_nest_pas_demander_un_humain():
         print("   → donner son numéro n'escalade plus, l'escalade reste "
               "intacte sans numéro, et elle n'est que différée : ✅ PASS")
+    else:
+        print("   → ❌ FAIL")
+        echecs += 1
+
+    print(f"\n──── R92_base_de_production_dit_non ────")
+    if check_base_de_production_dit_non():
+        print("   → une base déclarée production refuse le truncate elle-même, "
+              "et le refus dit quoi retirer pour l'annuler : ✅ PASS")
     else:
         print("   → ❌ FAIL")
         echecs += 1

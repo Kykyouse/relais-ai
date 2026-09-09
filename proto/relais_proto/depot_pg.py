@@ -41,6 +41,27 @@ def options_dsn(dsn: str) -> dict:
     return {"prepare_threshold": None} if ":6543/" in dsn or dsn.rstrip("/").endswith(":6543") else {}
 
 
+def hote_de(dsn: str) -> str:
+    """`hote:port` d'un DSN, SANS aucun identifiant. Pour dire à l'opérateur sur quelle
+    base il vient de tomber.
+
+    R92 : séparer les bases dev et prod crée un piège que le repli directe → pooler rend
+    silencieux. Passer `DATABASE_URL=<prod>` en ligne de commande sans passer AUSSI
+    `DATABASE_URL_POOLER` laisse le pooler du `.env` — donc la DEV — dans l'environnement ;
+    si la directe échoue (l'hôte Supabase est en IPv6), on bascule sur la dev en croyant
+    être en prod. Le libellé « directe » ou « session pooler » ne le dit pas, l'hôte le dit.
+
+    Fonction PURE et testée : elle est manipulée avec un DSN qui contient un mot de passe,
+    et elle ne doit JAMAIS en rendre une miette — un message de diagnostic qui fuite un
+    secret est pire que pas de message.
+    """
+    reste = dsn.split("://", 1)[-1]
+    # tout ce qui précède le dernier « @ » est l'identifiant : on le jette sans le lire
+    if "@" in reste:
+        reste = reste.rsplit("@", 1)[1]
+    return reste.split("/", 1)[0].split("?", 1)[0] or "(hôte illisible)"
+
+
 def resoudre_connexion(candidats: list[tuple[str, str]], timeout: int = 8):
     """Essaie chaque `(libellé, dsn)` dans l'ordre et rend le premier qui répond, sous la
     forme `(dsn, options, libellé)`.
