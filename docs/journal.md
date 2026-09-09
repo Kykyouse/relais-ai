@@ -231,6 +231,98 @@ chantier voix.**
 
 ---
 
+## 09/09 (fin) — Deux arbitrages rendus, et une spec que j'avais perdue de vue
+
+Geoffrey, après que j'ai écrit qu'un tableau de bord n'était pas nécessaire : « on a oublié
+des spec. La validation one tap c'était plus les interactions rapides, mais le but serait
+qu'il y ait quand même une application/site pour voir l'état de nos rendez-vous, surtout
+s'ils n'utilisent pas de calendar spécialisé, pouvoir suivre plein de stats sur les appels
+reçus, manqués, aussi gérer la facturation, l'abonnement… même au niveau de la souscription
+faudra bien qu'il rentre certaines données pour l'IA. »
+
+**Il a raison, et ce n'était pas oublié dans les specs — c'était oublié dans mon
+ordonnancement.** `spec-produit-v1.md` §6 porte une décision du 22/08, étiquetée
+« 🔜 rien de construit — prochaine grosse brique » : site web + app mobile, avec la
+validation, les leads, le funnel, la config, la facturation et l'onboarding. J'ai écrit
+« le front vient à la fin » contre une décision écrite trois semaines plus tôt.
+
+**Et mon erreur sur l'agenda est une INVERSION, pas une nuance.** J'ai pris « la plupart
+des artisans n'ont pas d'agenda numérique » pour justifier de repousser la vue agenda. Le
+§7 dit l'inverse, noir sur blanc : *« mode sans calendrier connecté (notre calendrier fait
+foi) pour les artisans papier — probablement le mode bêta par défaut »*. Si notre
+calendrier fait foi, une vue agenda n'est pas de la V2 : c'est le corollaire obligatoire du
+mode bêta. Sans elle, l'artisan a des rendez-vous qui n'existent nulle part où il puisse
+les regarder. Le même fait servait à conclure les deux choses opposées ; c'est le genre de
+raisonnement qu'il faut attraper.
+
+**Ce que l'onboarding est vraiment.** Le schéma de `config-artisan-v1.md` fait ~70 champs
+sur 14 blocs, et la règle du projet est que le LLM ne sait RIEN hors config : chaque champ
+non rempli est une chose que l'agent ne saura pas dire. L'onboarding n'est donc pas une
+création de compte, c'est **le formulaire qui nourrit l'agent** — et 70 champs devant un
+plombier, c'est un mur. La spec posait déjà la question de l'onboarding *assisté* ; elle
+prend tout son sens ici.
+
+### Arbitrage 1 — la facturation : la nôtre uniquement
+
+Tranché : l'abonnement Nelyo, nos factures, le portail client. **Pas** la facturation de
+l'artisan à ses clients — §1 l'excluait déjà (« ce n'est PAS un logiciel de gestion BTP »),
+le marché est pris, et ce serait un autre produit.
+
+### Arbitrage 2 — WEB RESPONSIVE d'abord, natif ensuite
+
+La spec renvoyait le choix (React Native/Expo ou Flutter) à « la phase backend ». Elle est
+finie : la décision était due. Trois motifs, et le premier est décisif — **la base de code
+existe déjà** : `pages.py` est servi par le même uvicorn que l'API, même origine, session
+par cookie en place, ni CORS ni second déploiement ni revue de magasin. Les deux écrans
+actuels deviennent les premiers écrans de l'app au lieu d'être des jetables. Et ils sont
+déjà mobiles — vérifié : `viewport`, `max-width: 30rem`, police 17 px, boutons de 52 px,
+mode sombre. Le responsive n'est pas un pari, c'est un constat.
+
+**Ce qu'on sacrifie, nommément : le push natif.** Supportable parce que la boucle de
+validation tourne sur SMS, qui marche partout sans rien installer. Le natif se justifiera
+le jour où le push sera le goulot — et l'API n'aura pas à bouger.
+
+### Arbitrage 3 — Render, et `render.yaml` écrit
+
+Le motif est le CRON, pas le prix : Fly ne planifie nativement qu'en hourly/daily/weekly,
+donc un passage toutes les dix minutes y demanderait d'embarquer Supercronic ou Cron
+Manager — maintenir un ordonnanceur, c'est-à-dire exactement le risque qu'on a nommé le
+matin même (« un processus permanent bloqué sur une exception avalée ressemble à un
+processus en bonne santé »). Render a le cron comme TYPE DE SERVICE, en syntaxe Unix, et
+`worker.py` reste UN PASSAGE.
+
+Pas de Dockerfile : Docker n'est pas installé sur cette machine, et écrire un artefact de
+déploiement qu'on ne peut pas éprouver serait précisément ce que ce projet évite. Render
+construit un service Python nativement ; `requirements.txt` est complet (vérifié contre
+les imports réels de `serveur.py`, `worker.py` et `relais_proto/`).
+
+Quatre décisions dans ce fichier, chacune commentée à côté de sa ligne :
+
+- **palier payant, pas le gratuit** : le gratuit s'endort, et Vapi attend notre réponse en
+  une seconde — un démarrage à froid ne rate pas « une requête », il tue le PREMIER TOUR ;
+- **pas de `healthCheckPath` sur `/sante`** : il interroge la base, donc en faire le
+  contrôle de vivacité ferait redémarrer l'app quand Supabase hoquette — un incident de
+  DÉPENDANCE transformé en incident de PROCESSUS. `/sante` reste une donnée qu'on
+  interroge, pas une gâchette. C'est la distinction que R65 et R86 servaient à établir ;
+- **`RELAIS_VERSION` depuis `RENDER_GIT_COMMIT`** : sans ça, `git rev-parse` échouerait
+  dans le conteneur et `/sante` rendrait « inconnue », ce qui viderait R65 de son sens.
+  L'override existait déjà dans le code ;
+- **`RELAIS_SMS=journal` et `RELAIS_MODEL` en DUR**, pas en `sync: false` : le défaut
+  inoffensif et une décision mesurée se versionnent. Passer à `ovh` envoie de vrais SMS à
+  de vrais clients — ça doit être un commit qu'on relit, pas une case cochée un soir.
+
+Et un œuf-et-poule à connaître avant de cliquer : `serveur.py` EXIGE `RELAIS_BASE_URL` au
+démarrage, or Render n'attribue le domaine qu'après création du service. Le premier
+déploiement échouera donc une fois, avec un message explicite. Ce n'est pas une panne,
+c'est l'ordre des choses — mais mieux vaut le savoir que le découvrir.
+
+### Ordre qui en découle
+
+Héberger → leads → agenda → funnel → onboarding → abonnement. L'hébergement reste devant
+tout : aujourd'hui ces pages sont servies depuis un portable derrière un tunnel, et le lien
+de validation du SMS est censé être cliqué par un client deux heures après l'appel. **Le
+front n'est pas le goulot, son accessibilité l'est.**
+
 ## 09/09 (suite) — Répondre à la question n'est pas demander un humain (R91)
 
 L'éval réelle ×3 (57 conversations) rend **56/57**, et le seul échec est la TROISIÈME

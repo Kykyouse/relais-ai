@@ -99,9 +99,26 @@ backend est éprouvé par mutation (on casse la règle, on exige que le test éc
 **Décision 22/08 : site web (SaaS) + application mobile.** Les artisans vivent sur leur
 smartphone : l'app mobile est l'interface principale du quotidien (validation, leads,
 notifications **push natives**) et doit être d'une simplicité radicale ; le site web porte
-le reste (config détaillée, funnel/stats, facturation, onboarding). Conséquence technique
-probable : app cross-platform (type React Native/Expo ou Flutter — à trancher en phase
-backend) pour iOS + Android avec une seule base de code, partageant l'API du site.
+le reste (config détaillée, funnel/stats, facturation, onboarding).
+
+**ARBITRAGE TECHNIQUE RENDU LE 09/09 : WEB RESPONSIVE D'ABORD**, le natif ensuite. La spec
+renvoyait ce choix (React Native/Expo ou Flutter) à « la phase backend » : elle est finie,
+la décision est donc due, et elle est celle-ci. Motifs :
+
+- **une seule base de code, et c'est celle qui tourne déjà.** Les deux écrans existants
+  (`pages.py` : page client, boîte de validation) sont servis par le même uvicorn que
+  l'API — même origine, session par cookie déjà en place (`session.py`), pas de CORS, pas
+  de second déploiement, pas de revue de store. Ils deviennent les premiers écrans de
+  l'app au lieu d'être des jetables ;
+- **ils sont déjà mobiles** : `viewport`, `max-width: 30rem`, police 17 px, boutons de
+  52 px de haut, mode sombre — vérifié le 09/09. Le pari du responsive n'est pas un pari ;
+- **pour un dev solo**, le natif coûte un magasin, deux cycles de publication et une
+  chaîne de build, pour livrer les mêmes listes et les mêmes formulaires.
+
+**Ce qu'on sacrifie, nommément : le PUSH NATIF.** C'est le seul manque réel, et il est
+supportable aujourd'hui parce que la boucle de validation tourne sur **SMS**, qui marche
+sur tous les téléphones sans rien installer. Le natif devient justifié le jour où le push
+est le goulot — pas avant. À ce moment-là, l'API est déjà là et ne bouge pas.
 
 - **La boîte de validation** (app mobile) : les RDV en attente, validation/modification/
   refus en 1 tap, renégociation d'horaire par SMS (§3.5bis) avec les réponses client
@@ -109,6 +126,10 @@ backend) pour iOS + Android avec une seule base de code, partageant l'API du sit
 - **La liste des leads** : carte par lead (score + raisons, ex. « 🔥 5/5 — fuite active,
   Créteil, propriétaire, dispo 14h–18h »), catégories (à rappeler, prioritaire, hors zone…),
   transcript consultable.
+- **L'abonnement et la facturation NELYO** (portée tranchée le 09/09) : le paiement de
+  l'abonnement, les factures que NOUS émettons, le portail client. **Pas** la facturation
+  de l'artisan à ses clients (devis, factures de chantier) : §1 l'exclut, le marché est
+  pris (Obat, Tolteck), et ce serait un autre produit — pas un écran de plus.
 - **Le funnel du mois** : appels traités → qualifiés → RDV pris → honorés → chantiers gagnés
   → € générés. Principe clé hérité des discussions amont : ne JAMAIS inventer le « CA
   récupéré » — l'artisan marque gagné/perdu + montant (plus tard : auto via intégrations).

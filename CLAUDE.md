@@ -199,6 +199,21 @@ Pièges connus : les modèles à réflexion adaptative (Sonnet 5) comptent leurs
 dans `max_tokens` (mettre large) et renvoient des ThinkingBlocks (ne lire que les blocs `text`,
 cf. `_texte_de`). Timeout API court (10 s) : au téléphone on dégrade vite plutôt que d'attendre.
 
+## Hébergement
+
+`render.yaml` (racine) déclare les DEUX services : `nelyo-api` (web, uvicorn) et
+`nelyo-worker` (cron, `*/10 * * * *`). Arbitrage du 09/09 : **Render plutôt que Fly**, et
+le motif est le CRON — Fly ne planifie nativement qu'à l'heure, donc il faudrait embarquer
+un ordonnanceur, alors que Render a le cron comme type de service et que `worker.py` reste
+UN PASSAGE. Lire l'en-tête du fichier avant d'y toucher : il porte les raisons de chaque
+réglage, dont trois pièges (palier payant obligatoire sinon le conteneur s'endort et le
+premier tour de l'appel meurt ; `RELAIS_BASE_URL` exigée au démarrage mais attribuée après
+la création du service ; pas de `healthCheckPath` sur `/sante`, qui interroge la base).
+
+**Ce qui est en dur dans le fichier plutôt qu'en `sync: false` l'est exprès** :
+`RELAIS_SMS=journal` (passer à `ovh` envoie de vrais SMS — ça doit être un commit qu'on
+relit) et `RELAIS_MODEL` (une décision mesurée se versionne).
+
 ## Workflow git
 
 Monorepo, branche `wip` pour l'encours, commit+push à chaque fin de session (2 machines).

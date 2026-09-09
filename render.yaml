@@ -1,0 +1,111 @@
+# Hébergement de Nelyo — arbitrage du 09/09 : PaaS, et Render plutôt que Fly.
+#
+# LE MOTIF EST LE CRON, pas le prix. Fly ne planifie nativement qu'en hourly/daily/weekly ;
+# un passage toutes les dix minutes y demanderait d'embarquer Supercronic ou Cron Manager,
+# c'est-à-dire de maintenir un ordonnanceur dans notre conteneur. Or c'est exactement le
+# risque identifié le 09/09 : un processus permanent bloqué sur une exception avalée
+# ressemble à un processus en bonne santé. Render a le cron comme TYPE DE SERVICE, en
+# syntaxe Unix — et `worker.py` reste UN PASSAGE, ce qui le rend testable et idempotent.
+#
+# Une heure d'attente serait intenable : la file sortante porte le SMS de confirmation
+# client. Un client qui attend soixante minutes après un « c'est réservé », c'est le cœur
+# du produit qui se dégrade.
+#
+# CE QUE CE FICHIER DÉBLOQUE, au-delà du cron : une URL PUBLIQUE STABLE. Aujourd'hui tout
+# vit derrière un tunnel depuis un portable — le lien de validation du SMS meurt avec le
+# tunnel, alors qu'il est censé être cliqué par un client deux heures après l'appel, et
+# l'assistant Vapi pointe sur une URL éphémère. Le front n'est pas le goulot, son
+# accessibilité l'est.
+#
+# ⚠️ LES MIGRATIONS NE SONT PAS JOUÉES AU DÉPLOIEMENT, et c'est volontaire : un `deploy`
+#    ne doit pas pouvoir toucher au schéma d'une base de production par surprise. Elles
+#    restent manuelles : `python run_depot_pg.py --migrer`.
+
+services:
+  # ------------------------------------------------------------------ l'API + le front
+  - name: nelyo-api
+    type: web
+    runtime: python
+    region: frankfurt          # UE : RGPD, et la latence compte à chaque tour d'appel
+    plan: starter              # ⚠️ PAS le palier gratuit : il s'endort après inactivité, et
+                               # Vapi attend notre réponse en ~1 s. Un démarrage à froid ne
+                               # rate pas « une requête », il tue le PREMIER TOUR de l'appel.
+    rootDir: proto
+    buildCommand: pip install -r requirements.txt
+    # `RELAIS_VERSION` : sans lui, `serveur.py` tente `git rev-parse` et retomberait sur
+    # « inconnue » si le conteneur n'a pas de dépôt git — ce qui viderait R65 de son sens
+    # (« dater ce qui tourne doit être une donnée, pas un raisonnement »). Render expose le
+    # commit déployé ; l'override existe déjà dans le code, on s'en sert. Le `:-` garantit
+    # qu'une variable absente ne casse pas le démarrage.
+    startCommand: >-
+      RELAIS_VERSION="${RENDER_GIT_COMMIT:-inconnue}"
+      uvicorn serveur:app --host 0.0.0.0 --port $PORT
+
+    # PAS de `healthCheckPath`, et c'est un choix. `/sante` interroge la base (il rend le
+    # dernier passage du worker) : en faire le contrôle de vivacité, c'est faire redémarrer
+    # l'application quand Supabase hoquette — un incident de DÉPENDANCE transformé en
+    # incident de PROCESSUS, et un redémarrage ne répare pas une base injoignable. Render
+    # vérifie déjà que le port écoute, ce qui est la question à laquelle un contrôle de
+    # vivacité doit répondre. `/sante` reste ce qu'on interroge SOI-MÊME pour savoir la
+    # vérité (révision déployée, dernier passage du worker) — une donnée, pas une gâchette.
+
+    envVars:
+      - key: DATABASE_URL          # connexion directe Supabase
+        sync: false
+      - key: DATABASE_URL_POOLER   # repli (pooler) — cf. run_depot_pg.py
+        sync: false
+      - key: ANTHROPIC_API_KEY
+        sync: false
+      - key: RELAIS_WEBHOOK_SECRET # porte de la plateforme vocale (Vapi : champ « API Key »)
+        sync: false
+      - key: RELAIS_MODEL          # PAS un secret : une DÉCISION, et elle est mesurée.
+        value: claude-haiku-4-5    # Le 01/09, Haiku et Sonnet à égalité de justesse
+                                   # (36/36) mais 1,5 à 5 s de latence en plus par tour
+                                   # pour Sonnet, avec un timeout client à 10 s. Une
+                                   # décision documentée par des chiffres se versionne ;
+                                   # la mettre en `sync: false` la reléguerait dans un
+                                   # champ de tableau de bord que personne ne relit.
+                                   # `RELAIS_MODEL_EXTRACTEUR` / `_FORMULEUR` se règlent
+                                   # séparément le jour où la mesure le justifiera.
+      - key: RELAIS_BASE_URL       # l'URL PUBLIQUE de ce service : elle compose les liens
+        sync: false                # des SMS et l'URL du custom LLM de l'assistant Vapi.
+                                   #
+                                   # ⚠️ L'ŒUF ET LA POULE, à savoir avant le premier
+                                   # déploiement : `serveur.py` l'EXIGE au démarrage (il
+                                   # refuse de tourner à moitié configuré), or Render
+                                   # n'attribue le domaine qu'une fois le service créé. Le
+                                   # premier déploiement échouera donc, une fois, avec un
+                                   # message explicite — ce n'est pas une panne, c'est
+                                   # l'ordre des choses. Renseigner la variable avec le
+                                   # domaine attribué, puis relancer le déploiement.
+      - key: RELAIS_COOKIE_SECURE  # « true » ici : on est en https, et le cookie de session
+        value: "true"              # de l'artisan n'a aucune raison de voyager en clair.
+
+  # ------------------------------------------------------------------ le worker de fond
+  - name: nelyo-worker
+    type: cron
+    runtime: python
+    region: frankfurt
+    plan: starter
+    rootDir: proto
+    schedule: "*/10 * * * *"   # expiration des RDV + expédition de la file. Dix minutes :
+                               # assez fin pour que le SMS de confirmation ne traîne pas,
+                               # assez espacé pour ne pas marteler la base. Les échéances,
+                               # elles, ne dépendent PAS du cron — c'est l'échéance qui fait
+                               # foi (décision verrouillée), le worker ne fait que constater.
+    buildCommand: pip install -r requirements.txt
+    startCommand: python worker.py
+
+    envVars:
+      - key: DATABASE_URL
+        sync: false
+      - key: DATABASE_URL_POOLER
+        sync: false
+      - key: RELAIS_BASE_URL       # les liens de validation partent d'ici aussi
+        sync: false
+      - key: RELAIS_SMS            # ⚠️ VALEUR EN DUR, PAS `sync: false` : le défaut
+        value: journal             # inoffensif doit être VERSIONNÉ. Passer à « ovh » envoie
+                                   # de vrais SMS à de vrais clients ; ça doit être un
+                                   # commit qu'on relit, pas une case cochée un soir dans un
+                                   # tableau de bord. Le jour venu : cette ligne + les
+                                   # quatre OVH_* en `sync: false`.
