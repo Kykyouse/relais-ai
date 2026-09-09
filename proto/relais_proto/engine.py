@@ -1658,10 +1658,19 @@ class Conversation:
         extra = f" {reco}" if reco else ""
         texte = self._say(
             f"Je suis désolé, ce n'est pas un type de travaux que "
-            f"{self.cfg['entreprise']['nom']} réalise.{extra} Bonne continuation !")
+            f"{self.cfg['entreprise']['nom']} réalise.{extra} Bonne continuation !",
+            # VERBATIM par R90 : c'est une SORTIE TERMINALE, et c'est la phrase de fin qui
+            # fait raccrocher la plateforme (`endCallPhrases` compare le texte DIT à une
+            # liste). Le formuleur pouvait la réécrire — l'appel ne se terminait alors
+            # jamais, et la panne était invisible côté serveur : nous sommes en S11, tout
+            # va bien de notre point de vue, et c'est l'appelant qui finit par raccrocher.
+            # R44 avait posé la règle sur la relance post-clôture ; ce chemin y a échappé.
+            verbatim=True)
         self.state = State.S11_CLOTURE
         return texte
 
     def _cloture(self) -> str:
         self.state = State.FIN
-        return self._say("Merci de votre appel, bonne journée !")
+        # VERBATIM par R90, même motif : une phrase de fin n'a rien à reformuler, et c'est
+        # elle que la plateforme reconnaît pour raccrocher.
+        return self._say("Merci de votre appel, bonne journée !", verbatim=True)

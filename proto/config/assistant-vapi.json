@@ -1,0 +1,61 @@
+{
+  "_lecture": "La configuration de l'assistant VOCAL, versionnée. Avant le 09/09 elle ne vivait que dans le tableau de bord Vapi : un réglage qui décide du comportement du produit, ni relisible ni reproductible. Poussée par `configurer_assistant_vapi.py` (blanc par défaut). Ce fichier ne porte QUE ce que nous décidons — l'URL du serveur vient de RELAIS_BASE_URL, et les secrets ne sont jamais ici.",
+
+  "name": "Nelyo",
+
+  "_transcriber": "Ce qui ENTEND. Relevé tel quel le 09/09 : il était déjà bien réglé (français explicite, nova-3, seuil bas pour ne pas jeter de la parole hésitante). On le versionne sans y toucher — le mécanique qu'on entendait venait du TTS, pas du STT.",
+  "transcriber": {
+    "provider": "deepgram",
+    "model": "nova-3",
+    "language": "fr",
+    "confidenceThreshold": 0.4
+  },
+
+  "_voice": "Ce qui PARLE. Trois changements, dont un seul est certain. (1) `language: \"fr\"` était ABSENT : la doc Vapi l'exige explicitement pour le français, et une voix configurée en anglais qui prononce du français est la cause la plus probable du « très robotique » (Geoffrey, 09/09). (2) `sonic` est la première génération ; `sonic-2` est la suivante du même famille, compatible fr et compatible avec le même voiceId. À VALIDER À L'OREILLE : c'est une amélioration plausible, pas mesurée. (3) Le voiceId est CONSERVÉ tel quel : la bibliothèque de voix n'est pas exposée par l'API (404 le 09/09), donc en choisir un autre depuis ici serait un pari. Second candidat si l'oreille n'est pas convaincue, et c'est UNE ligne à changer : {\"provider\": \"11labs\", \"model\": \"eleven_flash_v2_5\", \"language\": \"fr\"} — la ligne rapide d'ElevenLabs. Critère de choix : pas la beauté, mais la lecture correcte d'un NUMÉRO DE TÉLÉPHONE et d'un CRÉNEAU en français (c'est là que les moteurs se cassent, et c'est le tour le plus important de l'appel).",
+  "voice": {
+    "provider": "cartesia",
+    "model": "sonic-2",
+    "voiceId": "8832a0b5-47b2-4751-bb22-6a8e2149303d",
+    "language": "fr",
+    "experimentalControls": {
+      "speed": -0.01
+    }
+  },
+
+  "_model": "Notre moteur. `messages` est VIDE et doit le rester : le tableau de bord portait encore le prompt anglais par défaut de Vapi (« You are Riley, an appointment scheduling voice assistant for Wellness Partners »). Notre adaptateur ignore l'historique entrant (cf. l'en-tête de vapi.py), donc c'était sans effet — mais une configuration qui décrit le produit comme une clinique américaine est un piège pour la prochaine relecture. L'`url` est injectée depuis RELAIS_BASE_URL par le script : la mettre ici figerait un tunnel éphémère.",
+  "model": {
+    "provider": "custom-llm",
+    "model": "Nelyo",
+    "url": "«RELAIS_BASE_URL»/voix/vapi",
+    "messages": []
+  },
+
+  "_premier_message": "RÈGLE N°5 : l'annonce IA sort de NOTRE moteur, pas d'un champ de tableau de bord. `firstMessage` vide + le mode « le modèle génère » donne exactement ça — Vapi nous demande le premier tour au lieu de lire une phrase à lui.",
+  "firstMessage": "",
+  "firstMessageMode": "assistant-speaks-first-with-model-generated-message",
+
+  "_endCallPhrases": "CE QUI FAIT RACCROCHER. Elles étaient en ANGLAIS (« goodbye », « talk to you soon ») alors que toutes nos sorties terminales sont françaises : personne ne raccrochait, et la panne était invisible côté serveur (nous sommes en S11, tout va bien de notre point de vue, et c'est l'appelant qui finit par abandonner). Les deux phrases ci-dessous sont les SEULES par lesquelles un appel se termine, et R90 vérifie qu'elles sont verbatim sur tous les chemins — sans quoi le formuleur les réécrirait et la liste ne reconnaîtrait rien. Sans point d'exclamation : on compare du texte, pas de la ponctuation.",
+  "endCallPhrases": [
+    "Bonne journée",
+    "Bonne continuation"
+  ],
+
+  "_stopSpeakingPlan": "BARGE-IN : pouvoir couper l'agent. Absent de la configuration relevée le 09/09, donc impossible de l'interrompre — c'est la mesure d'oreille n°3 du 26/08, restée ouverte depuis. Valeurs de la doc : `numWords: 0` réagit dès le premier son (le plus réactif), `voiceSeconds` est la durée de voix qui compte comme une vraie interruption, `backoffSeconds` le silence observé avant de reprendre. On part sur les défauts documentés plutôt que sur une intuition ; à régler après un appel.",
+  "stopSpeakingPlan": {
+    "numWords": 0,
+    "voiceSeconds": 0.2,
+    "backoffSeconds": 1
+  },
+
+  "_startSpeakingPlan": "Relevé tel quel : le budget de silence toléré avant que l'agent reprenne la parole. Conservé — c'est ce qui tournait pendant les appels réels réussis.",
+  "startSpeakingPlan": {
+    "waitSeconds": 0.4,
+    "smartEndpointingEnabled": "livekit",
+    "smartEndpointingPlan": {
+      "provider": "vapi"
+    }
+  },
+
+  "_backgroundSound": "Vapi mixait une ambiance de BUREAU (`office`) dans nos appels. Personne ne l'a choisi : c'est un défaut de gabarit. Un artisan n'a pas d'open space, et du bruit ajouté ne peut que dégrader ce que l'appelant comprend.",
+  "backgroundSound": "off"
+}

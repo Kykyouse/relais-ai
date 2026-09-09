@@ -3676,6 +3676,107 @@ def check_pas_de_promesse_sans_numero() -> bool:
     return True
 
 
+def check_toute_sortie_terminale_verbatim() -> bool:
+    """R90 : deux sorties terminales échappaient encore au verbatim — donc au raccrochage.
+
+    Trouvé le 09/09 en lisant la configuration RÉELLE de l'assistant Vapi, qui portait
+    `endCallPhrases: ["goodbye", "talk to you soon"]` — en anglais, alors que nos phrases
+    de fin sont françaises. En préparant la correction, la vraie question est apparue :
+    **`endCallPhrases` compare ce que l'agent DIT à une liste ; il faut donc que la phrase
+    de fin soit littérale.** C'est exactement ce que R44 avait établi le 26/08, avec cette
+    phrase dans son propre docstring : « c'est elle qui fait raccrocher ».
+
+    R44 a figé la relance post-clôture. Deux sorties terminales lui ont échappé :
+
+        engine.py  _hors_perimetre  « … Bonne continuation ! »
+        engine.py  _cloture         « Merci de votre appel, bonne journée ! »
+
+    Le formuleur pouvait les réécrire — et une phrase de fin réécrite n'est plus reconnue
+    par la plateforme, donc l'appel ne se termine jamais. La panne serait silencieuse côté
+    serveur : notre machine à états est en S11, tout va bien de notre point de vue, et
+    c'est l'appelant qui finit par raccrocher.
+
+    **Écrit comme un invariant, pas comme deux correctifs** : TOUTE réplique qui termine
+    l'appel est verbatim. C'est la troisième fois aujourd'hui qu'une règle posée sur un
+    chemin manquait sur les autres (R87 pour la promesse de rappel, R89 pour le
+    transcript) — d'où un test qui balaie les sorties au lieu de nommer les deux fautives.
+
+    Ce que ce test verrouille : sur chacune des sorties terminales, le formuleur n'est PAS
+    appelé au dernier tour, et la phrase de fin attendue est prononcée telle quelle. Test
+    ESPION, comme R76 : on ne vérifie pas le texte produit par le mock (qui rend
+    l'instruction inchangée, donc ne prouverait rien), on vérifie que le modèle n'est pas
+    consulté.
+    """
+    import datetime as dt
+
+    from relais_proto.engine import Conversation, State
+
+    QUAND = dt.datetime(2026, 9, 9, 10, 12, tzinfo=dt.UTC)
+    FUITE = "J'ai une fuite dans la salle de bain"
+
+    class Espion(MockLLM):
+        """Compte les appels au formuleur, sans rien changer au comportement."""
+
+        def __init__(self):
+            super().__init__()
+            self.formulations = 0
+
+        def reply(self, instruction, context):
+            self.formulations += 1
+            return super().reply(instruction, context)
+
+    # (chemin, lignes, fin attendue dans la réplique)
+    SORTIES = [
+        ("hors_perimetre",
+         ["Il faut déboucher la colonne de l'immeuble"], "Bonne continuation !"),
+        ("hors_zone",
+         [FUITE, "Je suis à Champigny-sur-Marne", "Oui"], "Bonne continuation !"),
+        ("sans_numero (escalade)",
+         [FUITE, "Je veux parler à un humain", "Non, je veux un humain"],
+         "Bonne journée !"),
+        ("rdv_reserve",
+         [FUITE, "Nogent-sur-Marne 94130", "Martin, 06 30 30 11 11", "Oui",
+          "Le premier"], "Bonne journée !"),
+    ]
+
+    for nom, lignes, fin in SORTIES:
+        espion = Espion()
+        convo = Conversation(CFG, espion, CalendarStub(CFG, now=QUAND))
+        convo.open()
+        for ligne in lignes[:-1]:
+            convo.process(ligne)
+        avant = espion.formulations
+        dit = convo.process(lignes[-1])
+        if convo.state not in (State.S11_CLOTURE, State.FIN):
+            print(f"   {nom} : la mise en place ne termine pas l'appel "
+                  f"(état {convo.state.value}) — le cas ne prouve rien")
+            return False
+        if espion.formulations - avant:
+            print(f"   {nom} : {espion.formulations - avant} appel(s) au formuleur sur "
+                  f"la réplique de FIN — la plateforme ne pourra pas raccrocher "
+                  f"(« {dit[:70]} »)")
+            return False
+        if fin not in dit:
+            print(f"   {nom} : la phrase de fin attendue « {fin} » est absente "
+                  f"de « {dit[-70:]} »")
+            return False
+
+    # ET LA RELANCE APRÈS CLÔTURE (le cas de R44, gardé ici comme filet) : un tour de plus
+    # après la fin doit redire la même phrase, sans formuleur.
+    espion = Espion()
+    convo = Conversation(CFG, espion, CalendarStub(CFG, now=QUAND))
+    convo.open()
+    convo.process("Il faut déboucher la colonne de l'immeuble")
+    avant = espion.formulations
+    encore = convo.process("Ah bon, et pourquoi ?")
+    if espion.formulations - avant:
+        print(f"   relance après clôture : {espion.formulations - avant} appel(s) au "
+              f"formuleur (« {encore[:70]} »)")
+        return False
+
+    return True
+
+
 def check_transcript_est_ce_qui_est_entendu() -> bool:
     """R89 : le transcript affirmait une consigne de sécurité prononcée deux fois.
 
@@ -10383,6 +10484,14 @@ def run() -> int:
     if check_transcript_est_ce_qui_est_entendu():
         print("   → le transcript ne contient QUE ce que l'appelant a entendu : "
               "la consigne gaz est dite une fois, et comptée une fois : ✅ PASS")
+    else:
+        print("   → ❌ FAIL")
+        echecs += 1
+
+    print(f"\n──── R90_sorties_terminales_verbatim ────")
+    if check_toute_sortie_terminale_verbatim():
+        print("   → toute réplique qui termine l'appel est littérale, donc "
+              "reconnaissable par `endCallPhrases` : ✅ PASS")
     else:
         print("   → ❌ FAIL")
         echecs += 1

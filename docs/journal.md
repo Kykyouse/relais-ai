@@ -27,7 +27,7 @@ voix marche de bout en bout — mais **aucun numéro n'est joignable depuis la F
 
 ```bash
 cd proto
-python run_scenario.py                              # 92 tests, ~3 s, sans clé ni base
+python run_scenario.py                              # 93 tests, ~3 s, sans clé ni base
 python run_extract_eval.py [--mock] [--only …]      # banc d'EXTRACTION : 64/66, p50 1080 ms
 python run_llm_eval.py [--mock] [--n 3]             # éval appelant-simulé (mock 19/19)
 python run_depot_pg.py [--migrer]                   # contrat du port contre Supabase
@@ -230,6 +230,81 @@ datées ; l'en-tête de `vapi.py` porte le format de fil SSE. **Les lire avant d
 chantier voix.**
 
 ---
+
+## 09/09 (suite) — La voix n'est pas imposée, et la config vivait hors du repo (R90)
+
+Geoffrey, sur Vapi : « on est forcément d'utiliser l'un de leur transcripteur comme voix ?
+Elles font très robotique. » Non — Vapi est un orchestrateur : STT, LLM et TTS sont trois
+emplacements indépendants, notre moteur occupe celui du milieu, et la voix est un champ de
+configuration. Cartesia, ElevenLabs, Azure, PlayHT, Rime et une dizaine d'autres côté TTS ;
+Deepgram, Gladia, Google, AssemblyAI côté STT. Changer de voix ne remet donc PAS en cause
+le choix de plateforme — Retell et Pipecat laissent le même choix. Si Vapi doit être
+rouvert, ce sera sur les numéros, le SIP et la latence, pas sur la voix par défaut.
+
+**Mais la question a révélé bien plus que sa réponse.** J'ai lu la configuration RÉELLE de
+l'assistant par l'API, au lieu d'en parler :
+
+| Champ | Relevé | Verdict |
+|---|---|---|
+| `transcriber` | Deepgram nova-3, `language: "fr"`, seuil 0,4 | ✅ **bien réglé** — le mot « transcripteur » visait la mauvaise brique |
+| `voice` | Cartesia **`sonic`** (1ʳᵉ génération), **aucun `language`** | ⚠️ la doc Vapi exige `language: "fr"` : une voix configurée en anglais qui prononce du français |
+| `endCallPhrases` | `["goodbye", "talk to you soon"]` | ❌ **en anglais** — voilà pourquoi personne ne raccroche |
+| `stopSpeakingPlan` | absent | ❌ pas de barge-in (mesure d'oreille n°3 du 26/08) |
+| `backgroundSound` | **`"office"`** | ❌ Vapi mixait une ambiance de bureau dans nos appels |
+| `model.messages` | le prompt anglais par défaut, « You are Riley… Wellness Partners », 9 500 caractères | ⚠️ config morte, mais qui décrit le produit comme une clinique américaine |
+| `firstMessage` | `""` + mode « le modèle génère » | ✅ conforme à la règle n°5 |
+
+Rien de tout cela n'était dans le repo. **Une configuration qui décide du comportement du
+produit vivait uniquement dans le tableau de bord d'un fournisseur** — ni relisible, ni
+reproductible, ni comparable. C'est ainsi que `endCallPhrases` a pu rester en anglais
+pendant deux semaines pendant qu'on notait « personne ne raccroche » comme un mystère.
+D'où `config/assistant-vapi.json` + `configurer_assistant_vapi.py`, blanc par défaut,
+qui montre l'écart champ par champ avant d'écrire.
+
+### R90 — deux sorties terminales échappaient au verbatim
+
+Et en préparant `endCallPhrases`, le prérequis est apparu : **la liste compare ce que
+l'agent DIT à des phrases littérales**, donc la phrase de fin ne doit pas passer par le
+formuleur. C'est ce que R44 avait établi le 26/08 — son propre docstring dit « c'est elle
+qui fait raccrocher » — mais deux sorties lui avaient échappé : `_hors_perimetre` et
+`_cloture`. Le formuleur pouvait les réécrire, et l'appel n'aurait alors jamais pris fin,
+sans rien d'anormal côté serveur : nous sommes en S11, tout va bien de notre point de vue,
+et c'est l'appelant qui finit par abandonner.
+
+**Troisième fois de la journée qu'une règle posée sur un chemin manquait sur les autres**
+(R87 pour la promesse de rappel, R89 pour le transcript, R90 pour le verbatim de clôture).
+D'où un test qui BALAIE les sorties terminales au lieu de nommer les deux fautives, et un
+test-espion : le mock rend l'instruction inchangée, donc vérifier le texte ne prouverait
+rien — on vérifie que le formuleur n'est pas appelé.
+
+Sa fixture m'a repris une fois : « je voudrais faire refaire ma toiture » n'est pas une
+prestation REFUSÉE du catalogue mais une prestation inconnue, donc l'appel restait en S1 et
+le cas ne mesurait rien. Le test l'a dit lui-même (« la mise en place ne termine pas
+l'appel — le cas ne prouve rien »), ce qui est exactement ce qu'on lui demande.
+
+### Deux pièges mesurés, qui coûteront cher à redécouvrir
+
+**`urllib` sans `User-Agent` est bloqué par Cloudflare.** `api.vapi.ai` répond 403 avec
+« error code: 1010 » — un code CLOUDFLARE. J'ai d'abord conclu à une clé publique utilisée
+sur une route serveur, et j'allais envoyer Geoffrey chercher une clé qui est très bien.
+N'importe quel UA explicite passe ; `curl` passe. Consigné dans le script et le
+`.env.example`.
+
+**`RELAIS_BASE_URL` vaut `http://192.168.1.175:8000`** — correct pour son autre usage (les
+liens SMS ouverts depuis le réseau local) et injoignable depuis Vapi. Poussée telle quelle,
+elle aurait cassé la voix en silence. Le script REFUSE désormais une adresse privée ou non
+https, et prend `--url`. Une variable qui sert à deux choses finit par en trahir une.
+
+### Ce qui reste, et qui ne dépend pas de moi
+
+Le fichier n'est PAS poussé : `model.url` doit désigner un tunnel vivant, et la voix ne se
+juge qu'à l'oreille. Trois phrases suffiront pour ce jugement — la relecture d'un numéro,
+un créneau, l'annonce IA — et le critère n'est pas la beauté mais la lecture correcte d'un
+NUMÉRO et d'un CRÉNEAU en français : c'est là que les moteurs TTS se cassent, et c'est le
+tour le plus important de l'appel. Second candidat à une ligne près :
+`{"provider": "11labs", "model": "eleven_flash_v2_5", "language": "fr"}`.
+
+93 tests au vert.
 
 ## 09/09 (suite) — Le filet supposé était ce qui masquait la panne (R89)
 

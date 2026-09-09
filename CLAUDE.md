@@ -16,7 +16,7 @@ Cible V1 : plombiers/chauffagistes FR. Solo dev : Geoffrey (binôme Claude) ; ma
 ```bash
 cd proto
 pip install -r requirements.txt     # anthropic, python-dotenv (inutiles en mock)
-python run_scenario.py              # suite de non-régression (mock, sans clé, ~3 s) — 92 tests
+python run_scenario.py              # suite de non-régression (mock, sans clé, ~3 s) — 93 tests
 python run_llm_eval.py --mock       # plomberie de l'éval appelant-simulé (sans clé)
 python run_extract_eval.py [--mock] [--only plus_tot]
                                     # tests unitaires d'EXTRACTION : (phrase + contexte)
@@ -69,6 +69,19 @@ python worker.py [--a-vide]         # un passage : expiration puis expédition (
                                     # RELAIS_SMS=journal (défaut, rien ne part) | ovh
 python semer_artisans.py [--ecrire] # ecrit config/artisans.json dans la table `artisan`
                                     # (blanc par defaut). La table EST le registre.
+python configurer_assistant_vapi.py [--ecrire] [--url https://…] [--relever]
+                                    # pousse config/assistant-vapi.json sur l'assistant
+                                    # VOCAL (blanc par defaut : montre l'ECART champ par
+                                    # champ). Sa config est VERSIONNEE depuis le 09/09 —
+                                    # avant, elle ne vivait que dans le tableau de bord
+                                    # Vapi, et `endCallPhrases` y est reste EN ANGLAIS
+                                    # deux semaines pendant qu'on cherchait pourquoi
+                                    # personne ne raccrochait.
+                                    # ⚠️ --url exige une URL PUBLIQUE et refuse le reste :
+                                    # RELAIS_BASE_URL sert AUSSI aux liens SMS et vaut
+                                    # souvent une adresse LAN, injoignable depuis Vapi.
+                                    # ⚠️ urllib sans User-Agent = 403 Cloudflare (1010),
+                                    # qui ressemble a une mauvaise cle et n'en est pas.
 python envoyer_un_sms.py <num> [--envoyer]   # premier envoi REEL, a la main
                                     # (blanc par defaut : n'envoie rien)
 python run_depot_pg.py [--migrer] [--autoriser-truncate]   # contrat du port Depot
@@ -178,7 +191,9 @@ démarrage ; « Relais » reste le nom de CODE (repo, modules, tables) ·
 à lire avant de toucher à une échéance) · `nombres.py` nombres PRONONCÉS en toutes
 lettres → chiffres (code postal, téléphone ; déterministe, jamais confié au LLM) ·
 `communes.py` table des communes + normalisation, partagée par le contrôleur ET les
-garde-fous · `config/dupont.json` persona de test de bout en bout.
+garde-fous · `config/dupont.json` persona de test de bout en bout ·
+`config/assistant-vapi.json` la config de l'assistant VOCAL (voix, langue, ce qui fait
+RACCROCHER, barge-in) — versionnée, poussée par `configurer_assistant_vapi.py`.
 
 Pièges connus : les modèles à réflexion adaptative (Sonnet 5) comptent leurs tokens de réflexion
 dans `max_tokens` (mettre large) et renvoient des ThinkingBlocks (ne lire que les blocs `text`,
