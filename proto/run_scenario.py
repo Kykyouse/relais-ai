@@ -3676,6 +3676,117 @@ def check_pas_de_promesse_sans_numero() -> bool:
     return True
 
 
+def check_repondre_nest_pas_demander_un_humain() -> bool:
+    """R91 : donner son numéro n'est pas demander à parler à quelqu'un.
+
+    ÉVAL RÉELLE ×3 du 09/09, 56/57 — le seul échec, et c'est la TROISIÈME variante de la
+    même confusion dans la même journée :
+
+        AGENT  : À quel nom, et sur quel numéro Julien peut vous confirmer le rendez-vous ?
+        CLIENT : … pour me contacter et confirmer, il faut m'appeler MOI, Mme Bernard,
+                 au 06 12 99 88 77. Ma mère ne répond jamais.
+        AGENT  : Je comprends que vous préfériez parler directement à Julien…
+        CLIENT : Ben je viens de vous le dire, la chaudière de ma mère est en panne…
+        AGENT  : Je lui transmets en priorité : il vous rappelle sous 2 heures.
+
+    Un rendez-vous réservable, perdu — et le lead portait POURTANT le bon numéro : la même
+    phrase avait produit `telephone_rappel: "0612998877"` ET `veut_humain: true`.
+
+    **Le contrat ne pouvait pas trancher ça, et c'est ce qui rend ce cas instructif.**
+    R77 a écrit « qu'on ESSAIE DE LE JOINDRE ou DE L'APPELER pour lui » ; « il faut
+    m'appeler moi » y répond mot pour mot. Le correctif du matin (« regarde QUI appelle
+    QUI ») ne suffit pas non plus : ici c'est bien NOUS qui appellerons. Le discriminant
+    est ailleurs — **cette phrase RÉPOND à la question qu'on vient de poser.** Elle
+    désigne un numéro, elle ne réclame pas un interlocuteur.
+
+    D'où un contrôle du CONTRÔLEUR, et pas seulement une consigne de plus au modèle : si
+    le tour livre un numéro que nous ACCEPTONS (donc passé par `_numero_suspect`), il
+    coopère avec la machine, et `veut_humain` ne peut pas s'armer sur ce tour-là. Ce n'est
+    pas de la correspondance de texte (règle n°1) : c'est l'arbitrage de deux FAITS
+    contradictoires extraits de la même phrase, ce qui est exactement le travail du
+    contrôleur. La leçon de R75 s'applique telle quelle : le prompt ne garantit rien,
+    le contrôle protège.
+
+    Ce que ce test verrouille :
+
+    1. le tour qui livre le numéro n'escalade pas, et le rendez-vous se prend ;
+    2. l'escalade reste INTACTE quand le tour ne livre aucun numéro — sans quoi on
+       échangerait un défaut contre la perte du chemin d'escalade (T07, le client furieux,
+       en dépend) ;
+    3. et elle n'est que DIFFÉRÉE, pas supprimée : quelqu'un qui donne son numéro puis
+       redemande un humain est bien transféré. Le coût est d'un tour, dans un cas rare.
+    """
+    import datetime as dt
+
+    from relais_proto.engine import Conversation, State
+
+    QUAND = dt.datetime(2026, 9, 9, 10, 12, tzinfo=dt.UTC)
+    FUITE = "La chaudière de ma mère est en panne, elle a 82 ans"
+
+    class LLMQuiVoitDeuxChoses(MockLLM):
+        """Le modèle tel qu'il s'est comporté : le numéro ET la demande d'humain, sur la
+        phrase qui répond à la question du numéro. On n'imite pas une tournure précise —
+        on impose la CONTRADICTION, qui est ce que le contrôleur doit savoir arbitrer."""
+
+        def extract(self, utterance: str, context: dict) -> dict:
+            out = super().extract(utterance, context)
+            if out.get("telephone_rappel"):
+                out["veut_humain"] = True
+            return out
+
+    def conversation(llm):
+        convo = Conversation(CFG, llm, CalendarStub(CFG, now=QUAND))
+        convo.open()
+        return convo
+
+    # (1) LE CAS DU 09/09 : le tour du numéro ne doit pas escalader
+    convo = conversation(LLMQuiVoitDeuxChoses())
+    convo.process(FUITE)
+    convo.process("C'est à Nogent-sur-Marne, 94130")
+    dit = convo.process("Bernard, et il faut m'appeler moi au 06 12 99 88 77")
+    if "préfériez parler directement" in dit or convo.state == State.S7_TRANSFERT:
+        print(f"   le tour qui DONNE le numéro escalade encore : « {dit[:80]} »")
+        return False
+    if convo.slots.get("telephone_rappel") != "0612998877":
+        print(f"   le numéro n'a pas été retenu : "
+              f"{convo.slots.get('telephone_rappel')!r} — le cas ne prouve rien")
+        return False
+    # et l'appel va jusqu'au rendez-vous
+    convo.process("Oui")
+    convo.process("Le premier")
+    if convo.flags["categorie"] != "rdv_reserve":
+        print(f"   pas de rendez-vous au bout : catégorie "
+              f"{convo.flags['categorie']!r}")
+        return False
+
+    # (2) L'ESCALADE RESTE INTACTE sans numéro : c'est T07 qui en dépend
+    convo = conversation(MockLLM())
+    convo.process(FUITE)
+    convo.process("Je veux parler à un humain")
+    convo.process("Non, je veux un humain, pas une machine")
+    if convo.flags["categorie"] != "injoignable":
+        print(f"   l'escalade sans numéro est cassée : catégorie "
+              f"{convo.flags['categorie']!r} (R87 attend injoignable)")
+        return False
+
+    # (3) DIFFÉRÉE, PAS SUPPRIMÉE : il donne son numéro, puis redemande. Il est transféré.
+    convo = conversation(LLMQuiVoitDeuxChoses())
+    convo.process(FUITE)
+    convo.process("C'est à Nogent-sur-Marne, 94130")
+    convo.process("Bernard, et il faut m'appeler moi au 06 12 99 88 77")
+    convo.process("Je veux parler à un humain")
+    convo.process("Non, un humain, tout de suite")
+    if convo.state not in (State.S7_TRANSFERT, State.S11_CLOTURE):
+        print(f"   l'escalade n'arrive jamais : état {convo.state.value}")
+        return False
+    if convo.flags["categorie"] != "prioritaire":
+        print(f"   transféré AVEC un numéro : catégorie "
+              f"{convo.flags['categorie']!r} (attendu prioritaire)")
+        return False
+
+    return True
+
+
 def check_toute_sortie_terminale_verbatim() -> bool:
     """R90 : deux sorties terminales échappaient encore au verbatim — donc au raccrochage.
 
@@ -10492,6 +10603,14 @@ def run() -> int:
     if check_toute_sortie_terminale_verbatim():
         print("   → toute réplique qui termine l'appel est littérale, donc "
               "reconnaissable par `endCallPhrases` : ✅ PASS")
+    else:
+        print("   → ❌ FAIL")
+        echecs += 1
+
+    print(f"\n──── R91_repondre_nest_pas_demander_un_humain ────")
+    if check_repondre_nest_pas_demander_un_humain():
+        print("   → donner son numéro n'escalade plus, l'escalade reste "
+              "intacte sans numéro, et elle n'est que différée : ✅ PASS")
     else:
         print("   → ❌ FAIL")
         echecs += 1

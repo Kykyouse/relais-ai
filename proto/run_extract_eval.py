@@ -213,6 +213,14 @@ CAS_FAITS: list[tuple[str, dict, str, object, str]] = [
      CTX_S4, "veut_humain", ABSENT, "humain/frontiere-qui-rappelle"),
     ("Non, je préfère pas donner mon numéro, je rappellerai.", CTX_S4, "veut_humain",
      ABSENT, "humain/frontiere-je-rappellerai"),
+    # ÉVAL ×3 du 09/09, seul échec sur 57 : la phrase RÉPOND à la question du numéro.
+    # `CTX_S4` porte justement cette question dans `dernier_agent` — le contexte fait
+    # partie du cas, et sans lui ce cas ne mesurerait rien. Le contrôleur protège aussi
+    # (R91), parce qu'aucune consigne ne rend ce jugement sûr : le tour livre en même
+    # temps le numéro, ce qui est une contradiction que le code doit savoir arbitrer.
+    ("Pour me contacter et confirmer, il faut m'appeler moi, Mme Bernard, au "
+     "06 12 99 88 77. Ma mère ne répond jamais.", CTX_S4, "veut_humain", ABSENT,
+     "humain/frontiere-repond-a-la-question"),
 
     # ---- CE QUI A COÛTÉ L'APPEL DU 02/09 : le numéro FABRIQUÉ ----
     # Huit chiffres dictés, dix rendus. Le prompt l'interdit en toutes lettres ; le

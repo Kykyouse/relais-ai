@@ -27,7 +27,7 @@ voix marche de bout en bout — mais **aucun numéro n'est joignable depuis la F
 
 ```bash
 cd proto
-python run_scenario.py                              # 93 tests, ~3 s, sans clé ni base
+python run_scenario.py                              # 94 tests, ~3 s, sans clé ni base
 python run_extract_eval.py [--mock] [--only …]      # banc d'EXTRACTION : 64/66, p50 1080 ms
 python run_llm_eval.py [--mock] [--n 3]             # éval appelant-simulé (mock 19/19)
 python run_depot_pg.py [--migrer]                   # contrat du port contre Supabase
@@ -46,7 +46,7 @@ d'affichage ressemble à un échec de test.
 | Brique | État | Vérifié contre |
 |---|---|---|
 | Agent conversationnel S0–S11, garde-fous, dégradation | ✅ | 89 tests mock + 32 convs LLM réelles + 13 appels vocaux |
-| **Compréhension confiée au LLM sous menu fermé** (`actions.py`) | ✅ | **banc d'extraction 64/66**, p50 1080 ms, agent **Haiku 4.5** |
+| **Compréhension confiée au LLM sous menu fermé** (`actions.py`) | ✅ | **banc d'extraction 68/70**, p50 1131 ms, agent **Haiku 4.5** |
 | **Contraintes de disponibilité structurées** (R83) | ✅ | banc, dont les 3 cas de portée de la négation — 4 passages verts |
 | Cycle de vie du RDV, expiration, sérialisation de l'état | ✅ | mock + usage réel (4 RDV expirés le 09/09) |
 | Port `Depot` + adaptateur Postgres | ✅ | **Supabase réel**, contrat identique aux deux implémentations |
@@ -63,7 +63,7 @@ d'affichage ressemble à un échec de test.
 | Sondes de diagnostic (étape 0, tournures de temps) | ✅ | hors produit, éteintes par défaut |
 | **Entrée téléphonique depuis la France** | ❌ | **numéro Vapi gratuit = appels nationaux US** (R81) |
 | **Cron / supervision du worker** | ❌ | jamais branché — troisième constat en usage réel |
-| Éval LLM réelle, 19 personas | ✅ **19/19 le 09/09** | rejouée sur l'arbre actuel : 17/19 d'abord, puis 19/19 après R87 et le contrat de `veut_humain` |
+| Éval LLM réelle, 19 personas | ⚠️ **56/57 en ×3 le 09/09** | 17/19 → 19/19 (R87, contrat) → **×3 : 56/57**, seul échec corrigé par R91 et T12 rejoué 3/3. Le ×3 complet reste à rejouer après R91 |
 
 ## Le fait structurant de la période (01–02/09) : le curseur a bougé
 
@@ -198,11 +198,11 @@ après l'appel.
    mettre le numéro dans le registre `artisan`. Le compte Twilio portera aussi le dossier
    ARCEP plus tard — pas un détour, la première pierre. Le premier appel devient une
    CONFIRMATION de `call.customer.number`, déjà codé et déjà capturé (R80, R81).
-3. ~~Rejouer l'éval LLM réelle~~ — **fait le 09/09 : 19/19**, après R87 et le contrat de
-   `veut_humain`. Reste à la jouer en **×3** (57 conversations) pour retrouver la
-   comparabilité avec le 57/57 du 26/08 : un passage simple ne dit rien de la variabilité.
-   (La consigne gaz comptée deux fois au transcript est réglée le même jour par R89 : le
-   filet supposé était ce qui aurait masqué la panne.)
+3. **Rejouer l'éval ×3 après R91.** Le 09/09 : 19/19 en passage simple, puis **56/57
+   en ×3** — et c'est le ×3 qui a trouvé ce que le passage simple ne pouvait pas trouver
+   (la troisième variante du sur-déclenchement de `veut_humain`). Son unique échec est
+   corrigé et T12 rejoué 3/3, mais **les 57 n'ont pas été rejouées depuis**. Leçon à
+   garder : ne pas annoncer un défaut réglé sur la foi d'un passage simple.
 4. **Finir le chantier voix** : `endCallPhrases` sur la phrase de fin (désormais
    déterministe), barge-in (`stopSpeakingPlan`), et la latence mesurée sur un appel complet.
 5. Puis, par valeur décroissante : les petites dettes de conversation (dette n°3), un vrai
@@ -230,6 +230,51 @@ datées ; l'en-tête de `vapi.py` porte le format de fil SSE. **Les lire avant d
 chantier voix.**
 
 ---
+
+## 09/09 (suite) — Répondre à la question n'est pas demander un humain (R91)
+
+L'éval réelle ×3 (57 conversations) rend **56/57**, et le seul échec est la TROISIÈME
+variante de la même confusion dans la même journée :
+
+    AGENT  : À quel nom, et sur quel numéro Julien peut vous confirmer le rendez-vous ?
+    CLIENT : … pour me contacter et confirmer, il faut m'appeler MOI, Mme Bernard,
+             au 06 12 99 88 77. Ma mère ne répond jamais.
+    AGENT  : Je comprends que vous préfériez parler directement à Julien…
+    AGENT  : Je lui transmets en priorité : il vous rappelle sous 2 heures.
+
+Un rendez-vous réservable perdu — et le lead portait POURTANT le bon numéro : la même
+phrase avait produit `telephone_rappel: "0612998877"` ET `veut_humain: true`.
+
+**Ma correction du matin était donc partielle, et il faut le dire comme ça.** J'avais
+réécrit le contrat en deux frontières (intervention ≠ conversation ; qui appelle qui) et
+annoncé le défaut réglé sur la foi d'un passage simple à 19/19. Le ×3 a trouvé ce qu'un
+passage simple ne pouvait pas trouver — c'est exactement pourquoi il était à faire.
+
+**Et le contrat ne peut pas trancher ce cas-là.** R77 dit « qu'on essaie de LE JOINDRE ou
+de L'APPELER pour lui » : « il faut m'appeler moi » y répond mot pour mot. La frontière
+« qui appelle qui » ne sert pas davantage, puisque c'est bien NOUS qui appellerons. Le
+discriminant est ailleurs : **cette phrase RÉPOND à la question qu'on vient de poser.**
+Elle désigne un numéro, elle ne réclame pas un interlocuteur.
+
+D'où un contrôle du CONTRÔLEUR et pas seulement une consigne de plus : si le tour livre un
+numéro que nous ACCEPTONS (donc passé par `_numero_suspect`), `veut_humain` ne s'arme pas
+sur ce tour. Ce n'est pas de la correspondance de texte — c'est l'arbitrage de deux FAITS
+contradictoires tirés d'une même phrase, ce qui est le travail du contrôleur. La leçon de
+R75, telle quelle : le prompt ne garantit rien, le contrôle protège.
+
+L'escalade n'est pas perdue, seulement **différée d'un tour** : qui donne son numéro puis
+redemande un humain est transféré. Le test le vérifie, parce que le risque de ce correctif
+était d'échanger un défaut contre la perte du chemin d'escalade — celui dont T07, le client
+furieux, dépend entièrement.
+
+Le contrat gagne quand même la troisième frontière (« regarde ce que l'agent vient de
+dire ») et le banc un cas de plus. Les deux, pas l'un ou l'autre : le contrôle rattrape ce
+que le modèle rate, le banc dit si le modèle progresse.
+
+**Mesures** : 94 tests au vert ; banc d'extraction **68/70**, les dix cas de frontière
+`humain/*` au vert dont le nouveau, et les deux seuls échecs restent les violations
+déterministes du modèle sur le numéro (R55/R75) ; **T12 rejoué 3/3 en réel** là où il
+échouait. ⚠️ Le ×3 COMPLET n'a pas été rejoué après R91 — c'est la mesure qui reste.
 
 ## 09/09 (suite) — La voix n'est pas imposée, et la config vivait hors du repo (R90)
 

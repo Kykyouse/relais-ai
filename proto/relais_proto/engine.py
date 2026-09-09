@@ -689,7 +689,34 @@ class Conversation:
 
         # demande d'humain : 1 reprise DÉDIÉE (le contrôleur décide quoi dire —
         # sinon le formuleur improvise des promesses de rappel), puis transfert (invariant 7)
-        if extracted.get("veut_humain"):
+        #
+        # RÉPONDRE À LA QUESTION POSÉE N'EST PAS DEMANDER UN HUMAIN (R91). Éval réelle ×3
+        # du 09/09, seul échec sur 57 :
+        #
+        #   AGENT  : À quel nom, et sur quel numéro Julien peut vous confirmer… ?
+        #   CLIENT : … il faut m'appeler MOI, Mme Bernard, au 06 12 99 88 77.
+        #   AGENT  : Je comprends que vous préfériez parler directement à Julien…
+        #
+        # Un rendez-vous réservable perdu, alors que la MÊME phrase avait livré le bon
+        # numéro : l'extraction a rendu `telephone_rappel` ET `veut_humain`.
+        #
+        # Le contrat ne peut pas trancher ce cas. R77 dit « qu'on essaie de LE JOINDRE ou
+        # de L'APPELER pour lui », et « il faut m'appeler moi » y répond mot pour mot ;
+        # la frontière « qui appelle qui » ne sert pas non plus, puisque c'est bien nous
+        # qui appellerons. Le discriminant est que cette phrase RÉPOND à la question qu'on
+        # vient de poser : elle désigne un numéro, elle ne réclame pas un interlocuteur.
+        #
+        # Donc un contrôle ici, et non une consigne de plus au modèle — c'est la leçon de
+        # R75, mesurée : le prompt ne garantit rien, le contrôle protège. Et ce n'est pas
+        # de la correspondance de texte (règle n°1) : c'est l'arbitrage de deux FAITS
+        # contradictoires extraits d'une même phrase, ce qui est le travail du contrôleur.
+        # `extracted["telephone_rappel"]` a déjà passé `_numero_suspect` à ce stade : un
+        # numéro ACCEPTÉ, donc quelqu'un qui coopère avec la machine.
+        #
+        # L'escalade n'est pas perdue, seulement DIFFÉRÉE d'un tour : celui qui donne son
+        # numéro puis redemande un humain est transféré (vérifié par R91). T07, le client
+        # furieux, insiste au moins deux fois — c'est son rôle même.
+        if extracted.get("veut_humain") and not extracted.get("telephone_rappel"):
             self.flags["demandes_humain"] += 1
             if self.flags["demandes_humain"] >= 2:
                 return self._goto_transfert()

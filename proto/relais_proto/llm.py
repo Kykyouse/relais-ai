@@ -51,6 +51,10 @@ Réponds UNIQUEMENT un objet JSON avec les clés présentes dans la phrase (omet
      plus tard », « je vous redonne un coup de fil » : c'est l'APPELANT qui reprendra
      contact, il ne demande rien à personne. Le mot « rappeler » ne suffit jamais à
      décider — seule la direction de l'appel décide.
+  3. RÉPONDRE à la question qu'on vient de poser n'est jamais une demande d'humain.
+     « Il faut m'appeler MOI au 06 12 99 88 77, pas ma mère » répond à « sur quel numéro
+     Julien peut vous confirmer ? » : ça DÉSIGNE un numéro. Regarde ce que l'agent vient
+     de dire avant de conclure.
 Pour les FAITS ci-dessus, ne déduis rien qui ne soit pas dans la phrase.
 
 Contexte de la conversation :

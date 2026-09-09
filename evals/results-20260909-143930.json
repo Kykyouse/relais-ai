@@ -1,0 +1,293 @@
+{
+  "horodatage": "20260909-143930",
+  "mode": "llm",
+  "modele_agent": "claude-haiku-4-5",
+  "modele_appelant": "claude-sonnet-5",
+  "total": 3,
+  "echecs": 0,
+  "runs": [
+    {
+      "persona": "T12_pour_un_tiers",
+      "pass": true,
+      "problemes": [],
+      "warns": [],
+      "tours": 5,
+      "lead": {
+        "horodatage": "2026-09-09T12:38:54+00:00",
+        "source": "appel_telephonique",
+        "base_legale": "demande_entrante",
+        "categorie": "rdv_reserve",
+        "zone": "en_zone",
+        "score": 5,
+        "raisons": [
+          "URGENCE réelle",
+          "chaudière en panne, plus de chauffage",
+          "Nogent-sur-marne",
+          "autre",
+          "dispo : Demain matin entre 8 et 10 heures"
+        ],
+        "slots": {
+          "intent": "urgence",
+          "prestation": "chaudiere_panne",
+          "probleme": "chaudière en panne, plus de chauffage",
+          "commune": "Nogent-sur-marne",
+          "code_postal": "94130",
+          "urgence_reelle": true,
+          "statut_occupant": "autre",
+          "nom": "Bernard",
+          "telephone_rappel": "0612998877",
+          "tel_confirme": true,
+          "disponibilites": "Demain matin entre 8 et 10 heures",
+          "contrainte": {
+            "jours": [],
+            "exclut_jours": [],
+            "moment": null,
+            "exclut_moment": null,
+            "pas_avant": null
+          }
+        },
+        "rdv": {
+          "date": "2026-09-10",
+          "de": "08:00",
+          "a": "10:00",
+          "urgence": false,
+          "label": "demain entre 08h et 10h",
+          "label_parle": "demain entre 8 heures et 10 heures",
+          "duree_min": 90,
+          "statut": "en_attente_validation"
+        },
+        "violations_gardes_fous": [],
+        "degradations_llm": [],
+        "transcript": [
+          [
+            "agent",
+            "Bonjour, vous êtes bien chez Dupont Chauffage. Je suis son assistant vocal — Julien est en intervention, mais je peux tout organiser avec vous. Que se passe-t-il ?"
+          ],
+          [
+            "client",
+            "Bonjour, oui, voilà, c'est pour la chaudière de ma mère qui est en panne. Elle n'a plus de chauffage depuis ce matin, il faudrait quelqu'un rapidement."
+          ],
+          [
+            "agent",
+            "Vous êtes sur quelle commune ?"
+          ],
+          [
+            "client",
+            "C'est à Nogent-sur-Marne, dans le 94130."
+          ],
+          [
+            "agent",
+            "C'est noté pour Nogent-sur-marne. À quel nom, et sur quel numéro Julien peut vous confirmer le rendez-vous ?"
+          ],
+          [
+            "client",
+            "C'est au nom de Bernard, et le numéro pour me joindre c'est le 06 12 99 88 77 — c'est mon numéro à moi, pas celui de ma mère, elle ne répond jamais au téléphone. C'est moi qui m'occupe de tout pour elle."
+          ],
+          [
+            "agent",
+            "Je répète votre numéro : 06 12 99 88 77, c'est bien ça ? Répondez simplement oui ou non."
+          ],
+          [
+            "client",
+            "Oui, c'est ça."
+          ],
+          [
+            "agent",
+            "Je peux vous proposer aujourd'hui entre 17 heures et 19 heures, ou demain entre 8 heures et 10 heures. Lequel vous arrange ?"
+          ],
+          [
+            "client",
+            "Demain matin entre 8 et 10 heures, ce serait mieux, ça me laisse le temps de la prévenir."
+          ],
+          [
+            "agent",
+            "Parfait, je vous réserve demain entre 8 heures et 10 heures. Vous recevrez un SMS de confirmation de Julien d'ici 2 heures. Si quoi que ce soit coince, on vous rappelle. Bonne journée !"
+          ]
+        ]
+      }
+    },
+    {
+      "persona": "T12_pour_un_tiers",
+      "pass": true,
+      "problemes": [],
+      "warns": [],
+      "tours": 4,
+      "lead": {
+        "horodatage": "2026-09-09T12:39:10+00:00",
+        "source": "appel_telephonique",
+        "base_legale": "demande_entrante",
+        "categorie": "rdv_reserve",
+        "zone": "en_zone",
+        "score": 5,
+        "raisons": [
+          "URGENCE réelle",
+          "chaudière en panne",
+          "Nogent-sur-marne",
+          "autre"
+        ],
+        "slots": {
+          "intent": "urgence",
+          "prestation": "chaudiere_panne",
+          "probleme": "chaudière en panne",
+          "commune": "Nogent-sur-marne",
+          "code_postal": "94130",
+          "urgence_reelle": true,
+          "statut_occupant": "autre",
+          "nom": "Bernard",
+          "telephone_rappel": "0612998877",
+          "tel_confirme": true,
+          "contrainte": {
+            "jours": [
+              "demain"
+            ],
+            "exclut_jours": [],
+            "moment": "matin",
+            "exclut_moment": null,
+            "pas_avant": null
+          }
+        },
+        "rdv": {
+          "date": "2026-09-10",
+          "de": "08:00",
+          "a": "10:00",
+          "urgence": false,
+          "label": "demain entre 08h et 10h",
+          "label_parle": "demain entre 8 heures et 10 heures",
+          "duree_min": 90,
+          "statut": "en_attente_validation"
+        },
+        "violations_gardes_fous": [],
+        "degradations_llm": [],
+        "transcript": [
+          [
+            "agent",
+            "Bonjour, vous êtes bien chez Dupont Chauffage. Je suis son assistant vocal — Julien est en intervention, mais je peux tout organiser avec vous. Que se passe-t-il ?"
+          ],
+          [
+            "client",
+            "Bonjour, oui, voilà, c'est pour la chaudière de ma mère qui est en panne. Elle a 82 ans, elle habite à Nogent-sur-Marne, et il faudrait qu'un technicien passe chez elle assez rapidement."
+          ],
+          [
+            "agent",
+            "C'est noté pour Nogent-sur-marne. À quel nom, et sur quel numéro Julien peut vous confirmer le rendez-vous ?"
+          ],
+          [
+            "client",
+            "Alors la panne c'est chez ma mère, elle s'appelle Mme Simon. Mais c'est moi qu'il faut appeler pour confirmer, moi c'est Mme Bernard, et mon numéro c'est le 06 12 99 88 77. Ma mère n'entend pas bien le téléphone, elle ne répond jamais."
+          ],
+          [
+            "agent",
+            "Je répète votre numéro : 06 12 99 88 77, c'est bien ça ? Répondez simplement oui ou non."
+          ],
+          [
+            "client",
+            "Oui, c'est ça."
+          ],
+          [
+            "agent",
+            "Je peux vous proposer aujourd'hui entre 17 heures et 19 heures, ou demain entre 8 heures et 10 heures. Lequel vous arrange ?"
+          ],
+          [
+            "client",
+            "Demain matin, entre 8 heures et 10 heures, ce serait mieux."
+          ],
+          [
+            "agent",
+            "Parfait, je vous réserve demain entre 8 heures et 10 heures. Vous recevrez un SMS de confirmation de Julien d'ici 2 heures. Si quoi que ce soit coince, on vous rappelle. Bonne journée !"
+          ]
+        ]
+      }
+    },
+    {
+      "persona": "T12_pour_un_tiers",
+      "pass": true,
+      "problemes": [],
+      "warns": [],
+      "tours": 5,
+      "lead": {
+        "horodatage": "2026-09-09T12:39:30+00:00",
+        "source": "appel_telephonique",
+        "base_legale": "demande_entrante",
+        "categorie": "rdv_reserve",
+        "zone": "en_zone",
+        "score": 5,
+        "raisons": [
+          "URGENCE réelle",
+          "chaudière en panne, pas de chauffage",
+          "Nogent-sur-marne",
+          "autre"
+        ],
+        "slots": {
+          "intent": "urgence",
+          "prestation": "chaudiere_panne",
+          "probleme": "chaudière en panne, pas de chauffage",
+          "commune": "Nogent-sur-marne",
+          "code_postal": "94130",
+          "urgence_reelle": true,
+          "statut_occupant": "autre",
+          "nom": "Bernard",
+          "telephone_rappel": "0612998877",
+          "tel_confirme": true
+        },
+        "rdv": {
+          "date": "2026-09-10",
+          "de": "08:00",
+          "a": "10:00",
+          "urgence": false,
+          "label": "demain entre 08h et 10h",
+          "label_parle": "demain entre 8 heures et 10 heures",
+          "duree_min": 90,
+          "statut": "en_attente_validation"
+        },
+        "violations_gardes_fous": [],
+        "degradations_llm": [],
+        "transcript": [
+          [
+            "agent",
+            "Bonjour, vous êtes bien chez Dupont Chauffage. Je suis son assistant vocal — Julien est en intervention, mais je peux tout organiser avec vous. Que se passe-t-il ?"
+          ],
+          [
+            "client",
+            "Bonjour, oui, c'est pour la chaudière de ma mère qui est en panne, elle n'a plus de chauffage du tout. Il faudrait quelqu'un assez rapidement s'il vous plaît."
+          ],
+          [
+            "agent",
+            "Vous êtes sur quelle commune ?"
+          ],
+          [
+            "client",
+            "C'est à Nogent-sur-Marne, 94130."
+          ],
+          [
+            "agent",
+            "C'est noté pour Nogent-sur-marne. À quel nom, et sur quel numéro Julien peut vous confirmer le rendez-vous ?"
+          ],
+          [
+            "client",
+            "Alors le rendez-vous c'est au nom de Mme Simon, c'est ma mère, mais c'est moi qu'il faut appeler pour confirmer parce qu'elle ne répond jamais au téléphone. Moi c'est Mme Bernard, et mon numéro c'est le 06 12 99 88 77."
+          ],
+          [
+            "agent",
+            "Je répète votre numéro : 06 12 99 88 77, c'est bien ça ? Répondez simplement oui ou non."
+          ],
+          [
+            "client",
+            "Oui, c'est bien ça."
+          ],
+          [
+            "agent",
+            "Je peux vous proposer aujourd'hui entre 17 heures et 19 heures, ou demain entre 8 heures et 10 heures. Lequel vous arrange ?"
+          ],
+          [
+            "client",
+            "Demain entre 8 heures et 10 heures, ce serait mieux, merci."
+          ],
+          [
+            "agent",
+            "Parfait, je vous réserve demain entre 8 heures et 10 heures. Vous recevrez un SMS de confirmation de Julien d'ici 2 heures. Si quoi que ce soit coince, on vous rappelle. Bonne journée !"
+          ]
+        ]
+      }
+    }
+  ]
+}

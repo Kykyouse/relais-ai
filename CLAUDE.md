@@ -16,7 +16,7 @@ Cible V1 : plombiers/chauffagistes FR. Solo dev : Geoffrey (binôme Claude) ; ma
 ```bash
 cd proto
 pip install -r requirements.txt     # anthropic, python-dotenv (inutiles en mock)
-python run_scenario.py              # suite de non-régression (mock, sans clé, ~3 s) — 93 tests
+python run_scenario.py              # suite de non-régression (mock, sans clé, ~3 s) — 94 tests
 python run_llm_eval.py --mock       # plomberie de l'éval appelant-simulé (sans clé)
 python run_extract_eval.py [--mock] [--only plus_tot]
                                     # tests unitaires d'EXTRACTION : (phrase + contexte)
@@ -29,7 +29,7 @@ python run_extract_eval.py [--mock] [--only plus_tot]
                                     # (veut_humain, telephone_rappel) sur trois contextes
                                     # (S1 accueil, S4 identité, S5 créneaux — le
                                     # contexte fait partie du cas).
-                                    # 09/09 : 66/69 avec Haiku. Les 2 échecs sont des
+                                    # 09/09 : 68/70 avec Haiku. Les 2 échecs sont des
                                     # violations MESURÉES du modèle sur le numéro
                                     # (8 chiffres rendus en 10, 12 rendus en 10) —
                                     # renforcer le prompt n'y change rien, seul le
