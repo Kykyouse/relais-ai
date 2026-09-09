@@ -3899,6 +3899,80 @@ def _contrainte_de_phrase(phrase: str) -> dict:
     return actions.valider_contrainte(MockLLM()._contrainte_mock(phrase.lower()))
 
 
+def check_boite_naffirme_pas_un_sms_non_parti() -> bool:
+    """R85 : la boîte ne dit pas « le client est prévenu » quand il ne l'est pas.
+
+    Trouvé le 09/09, au retour d'une semaine de pause. Quatre RDV traînaient avec une
+    échéance dépassée de plusieurs jours, et la boîte affichait :
+
+        « Délai dépassé — LE CLIENT EST PRÉVENU et le créneau libéré.
+          Rappelez-le si vous voulez le récupérer. »
+
+    Or le client n'avait rien reçu. Le SMS d'expiration est mis en file par le WORKER, et
+    le worker n'avait pas tourné : ces RDV n'étaient même pas passés en `expire`. La page
+    affirmait un acte qui n'avait pas eu lieu.
+
+    C'est exactement la classe de défaut que R79 a corrigée dans `_sans_rdv` : le
+    contrôleur promettait un rappel sans vérifier qu'il avait un numéro. Ici la page
+    annonce un SMS sans vérifier qu'il est parti. Dans les deux cas, du code affirme au
+    lieu de constater — et avec l'autorité que donne une interface.
+
+    ⚠️ CE QUI EST DÉJÀ CORRECT et ne doit pas régresser : la boîte n'offre AUCUNE action
+    sur un RDV échu (constaté en usage réel le 24/08, « 409 sur un tap »). Le calcul se
+    fait sur l'ÉCHÉANCE et non sur le statut, donc il reste juste même quand le cron a du
+    retard. J'ai d'abord cru ce point cassé en revoyant les quatre RDV en attente : il ne
+    l'était pas. Ce test le verrouille au passage, pour que la prochaine relecture n'ait
+    pas à refaire l'enquête.
+    """
+    import datetime as dt
+
+    from relais_proto import pages
+
+    def carte(echu, urgence=False):
+        return {"id": "rdv-1", "creneau": "demain entre 08h et 10h", "urgence": urgence,
+                "score": 4, "raisons": ["fuite", "Nogent"], "echu": echu,
+                "expire_a": LUNDI_9H + dt.timedelta(hours=-2 if echu else 4)}
+
+    # (a) UN RDV ÉCHU : aucune action, et aucune affirmation invérifiable
+    html = pages.boite_validation("Nelyo", "Julien", [carte(echu=True)])
+    if "<form" in html or "Valider" in html:
+        print("   la boîte offre une action sur un RDV échu (409 garanti au tap)")
+        return False
+    if "prévenu" in html or "previenu" in html or "prévenue" in html:
+        print(f"   la boîte affirme que le client est prévenu — le SMS part du WORKER, "
+              f"qui n'a peut-être pas tourné")
+        return False
+    # …mais elle dit quand même ce qui est SÛR : le délai est passé, le créneau libéré
+    if "délai" not in html.lower() and "dépassé" not in html.lower():
+        print("   la boîte ne signale plus que le délai est dépassé")
+        return False
+    if "rappel" not in html.lower():
+        print("   la boîte ne suggère plus de rappeler le client")
+        return False
+
+    # (b) UN RDV ENCORE DÉCIDABLE : les trois actions sont là
+    html = pages.boite_validation("Nelyo", "Julien", [carte(echu=False)])
+    for action in ("Valider", "Refuser", "roposer"):
+        if action not in html:
+            print(f"   « {action} » a disparu d'un RDV encore décidable")
+            return False
+
+    # (c) LES DEUX ENSEMBLE : le décidable d'abord, l'échu ensuite, et un seul jeu
+    # d'actions. C'est l'ordre qui fait qu'un artisan pressé tape le bon bouton.
+    html = pages.boite_validation("Nelyo", "Julien",
+                                  [carte(echu=True), carte(echu=False)])
+    if html.count("<form") != 3:
+        print(f"   {html.count('<form')} formulaires pour un seul RDV décidable "
+              f"(attendu 3 : valider, refuser, reproposer)")
+        return False
+    corps = html.split("</style>")[-1]
+    if corps.index("Valider") > corps.index("Délai dépassé"):
+        print("   l'échu est affiché AVANT le décidable")
+        return False
+
+    return True
+
+
 def check_journal_journalise() -> bool:
     """R84 : un envoyeur qui s'appelle « journal » doit journaliser quelque chose.
 
@@ -9840,6 +9914,14 @@ def run() -> int:
     if check_journal_journalise():
         print("   → l'envoyeur « journal » écrit ce qu'il aurait envoyé : en mode dév, "
               "un artisan peut enfin lire son code et se connecter : ✅ PASS")
+    else:
+        print("   → ❌ FAIL")
+        echecs += 1
+
+    print(f"\n──── R85_boite_sms_non_parti ────")
+    if check_boite_naffirme_pas_un_sms_non_parti():
+        print("   → la boîte n'affirme plus un SMS que le worker n'a peut-être pas "
+              "envoyé, et n'offre toujours aucune action sur un RDV échu : ✅ PASS")
     else:
         print("   → ❌ FAIL")
         echecs += 1

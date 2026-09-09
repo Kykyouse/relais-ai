@@ -300,6 +300,50 @@ Le spike vocal ne s'ouvre **qu'en session dédiée**. Le Sender ID et l'OAuth Go
 le nom commercial — c'est-à-dire le cousin, pas nous.
 ---
 
+## 09/09 — Une semaine de pause, et ce qu'elle a révélé (R85)
+
+Geoffrey revient après une semaine : « tous les RDV sont expirés ». En base, non — QUATRE
+étaient encore `en_attente_validation`, avec une échéance dépassée de quatre à six jours.
+Ils n'étaient pas passés en `expire` parce que **le worker n'avait pas tourné**. Le cron
+reste à brancher, et c'est la deuxième fois que ce même constat sort d'un usage réel.
+
+**Mon premier diagnostic était faux, et il faut le dire.** J'ai cru que la boîte de
+validation proposait de valider des RDV morts — `GET /rdv` en rend bien quatre, et
+`POST /rdv/…/valider` répond 409. J'ai écrit un test complet là-dessus avant de rendre la
+page pour vérifier : **elle est correcte**. Zéro formulaire, zéro bouton, et une mention
+du délai dépassé. Le calcul se fait sur l'ÉCHÉANCE (`est_echu`) et non sur le statut, donc
+il reste juste même quand le cron a du retard. Le commentaire du code le disait déjà —
+« constaté en usage réel le 24/08 : 409 sur un tap ». J'avais rediagnostiqué un défaut
+corrigé deux semaines plus tôt. Test jeté, réécrit sur le vrai défaut.
+
+**LE VRAI DÉFAUT, lui, était dans ce que la page AFFIRME :**
+
+    « Délai dépassé — LE CLIENT EST PRÉVENU et le créneau libéré. »
+
+Le client n'avait rien reçu. Le SMS d'expiration est mis en file par le WORKER, et la page
+ne sait pas s'il a tourné : ces quatre RDV n'étaient même pas passés en `expire`. La page
+affirmait un acte qui n'avait pas eu lieu, avec l'autorité que donne une interface.
+
+C'est exactement la classe de R79, où `_sans_rdv` promettait un rappel sans vérifier
+qu'on avait un numéro. Même remède : ne dire que ce qui est SÛR. « Délai dépassé — le
+créneau est libéré. Rappelez le client si vous voulez le récupérer. » L'artisan n'a pas
+besoin de savoir si le SMS est parti pour décider de rappeler.
+
+Le test verrouille aussi, au passage, ce que j'avais cru cassé : aucune action sur un RDV
+échu, et l'ordre décidable-puis-échu. Pour que la prochaine relecture n'ait pas à refaire
+l'enquête.
+
+**Nettoyage** : le worker a expiré les quatre et mis 8 messages en file — 4 pushes à
+l'artisan (partis) et 4 SMS clients DIFFÉRÉS, parce qu'il est 4 h du matin et que la plage
+de silence tient (21 h – 8 h).
+
+**Instance moindre, non corrigée** : le push à l'artisan dit lui aussi « client prévenu ».
+C'est défendable — le SMS est en file au même instant et partira — mais au moment où
+Julien lit le push, ce n'est pas encore vrai. Consigné plutôt que corrigé : la file, elle,
+garantit l'envoi.
+
+88 tests au vert.
+
 ## 02/09 (soir) — La chaîne après l'appel, et une moitié de produit injoignable (R84)
 
 Chantier n°3 : jouer la chaîne que le travail voix avait laissée de côté depuis une

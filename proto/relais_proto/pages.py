@@ -184,8 +184,18 @@ def boite_validation(produit: str, prenom: str, rdvs: list[dict]) -> str:
             # Pas de boutons : le délai est passé, le domaine refuserait toute décision.
             # Afficher des actions qui ne peuvent qu'échouer serait mentir à l'artisan —
             # mais le masquer serait pire : il doit savoir qu'il a laissé filer un lead.
-            actions = ('<p class="perdu">Délai dépassé — le client est prévenu et le '
-                       "créneau libéré. Rappelez-le si vous voulez le récupérer.</p>")
+            # ON NE DIT PAS « le client est prévenu » (R85). Le SMS d'expiration est
+            # mis en file par le WORKER, et cette page ne sait pas s'il a tourné : le
+            # 09/09, quatre RDV traînaient depuis des jours avec cette phrase à l'écran
+            # alors qu'aucun client n'avait rien reçu. Même faute que R79 dans
+            # `_sans_rdv` — affirmer un acte au lieu de le constater, avec l'autorité
+            # que donne une interface.
+            #
+            # Ce qui est SÛR se dit quand même : le délai est passé, le créneau est
+            # rendu, et rappeler reste possible. C'est tout ce dont l'artisan a besoin
+            # pour décider quoi faire.
+            actions = ('<p class="perdu">Délai dépassé — le créneau est libéré. '
+                       "Rappelez le client si vous voulez le récupérer.</p>")
         else:
             actions = (
                 '<div class="actions">'
