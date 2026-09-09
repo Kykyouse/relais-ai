@@ -5,299 +5,224 @@
 
 ---
 
-# ÉTAT AU 25/08/2026 (soir) — à lire en premier
+# ÉTAT AU 09/09/2026 — à lire en premier
 
 > **Ce bloc se REMPLACE, il ne s'empile pas.** Les entrées datées plus bas sont le journal
 > chronologique (le pourquoi des décisions) ; ce bloc-ci est le où-on-en-est.
+>
+> Réécrit le 09/09 après deux semaines de retard (il annonçait encore 71 tests). Le détail
+> par R n'y figure plus : il vivait en double avec les entrées datées et les commentaires
+> des tests, et c'est cette moitié-là qui pourrissait. Ici : l'état, les décisions, les
+> dettes.
 
 ## En une phrase
 
-Le produit s'appelle **NELYO**. Le backend de la phase 1 est fonctionnel, vérifié contre
-un vrai Postgres, et l'agent conversationnel passe **57/57** en éval LLM réelle sur
-**19 personas**, dont cinq tirés d'appels VOCAUX réels. L'artisan se connecte par code SMS et valide en
-1 tap ; le client est prévenu sur toutes les issues. **Il ne manque que la voix** — le
-point d'entrée du produit. Plus rien d'autre n'est bloqué côté code.
+Le produit s'appelle **NELYO**. Le backend de la phase 1 est fonctionnel et vérifié contre
+un vrai Postgres ; **la compréhension est passée au LLM sous contrat fermé** (menu
+d'actions + contraintes structurées), mesurée à **64/66** sur le banc d'extraction ; la
+voix marche de bout en bout — mais **aucun numéro n'est joignable depuis la France**, et
+**le cron du worker n'est toujours pas branché**. Ces deux-là sont les seuls vrais murs.
 
-## Ce qui tourne
+## Ce qui tourne (rejoué le 09/09)
 
 ```bash
 cd proto
-python run_scenario.py                              # 71 tests, ~3 s, sans clé ni base
-python semer_artisans.py [--ecrire]                 # amorce la table `artisan`
+python run_scenario.py                              # 89 tests, ~3 s, sans clé ni base
+python run_extract_eval.py [--mock] [--only …]      # banc d'EXTRACTION : 64/66, p50 1080 ms
+python run_llm_eval.py [--mock] [--n 3]             # éval appelant-simulé (mock 19/19)
 python run_depot_pg.py [--migrer]                   # contrat du port contre Supabase
-uvicorn serveur:app --port 8000                     # API HTTP
-python worker.py [--a-vide]                         # expiration + expédition (cron)
-python run_llm_eval.py [--mock] [--n 3]             # éval appelant-simulé
+python semer_artisans.py [--ecrire]                 # amorce la table `artisan`
+uvicorn serveur:app --port 8000                     # API HTTP (JAMAIS --reload)
+curl localhost:8000/sante                           # révision déployée + dernier passage du worker
+python worker.py [--a-vide]                         # expiration + expédition (un passage)
 ```
+
+⚠️ Sous un shell dont la console est en cp1252 (Git Bash sous Windows), préfixer
+`PYTHONIOENCODING=utf-8` : sinon l'affichage plante sur les cadres Unicode, et un plantage
+d'affichage ressemble à un échec de test.
+
+## Où en est chaque brique
 
 | Brique | État | Vérifié contre |
 |---|---|---|
-| Agent conversationnel S0–S11, garde-fous, dégradation | ✅ | mock (25 tests) + 32 convs LLM réelles |
-| Sérialisation de l'état d'appel (R14) | ✅ | mock, mutation 10/10 |
-| Cycle de vie du RDV, expiration (R15, R16) | ✅ | mock, mutations 11/11 et 9/9 |
-| Port `Depot` + adaptateur Postgres (R17, R18) | ✅ | **Supabase réel**, contrat identique |
-| API HTTP, 2 portes d'auth, 1 tour = 1 requête (R19) | ✅ | mock + câblage réel sur Supabase |
-| Plage de silence, réessais, multi-artisans (R20) | ✅ | mock, mutations 8/8 |
-| Validation client par lien à un tap (R21) | ✅ | mock, mutations 7/7 |
-| Adaptateur OVH : E.164, corps, échecs (R22) | ✅ | **SMS réellement reçu, 24/08** |
-| Page de confirmation client (HTML, sans JS) | ✅ | mock — le lien SMS mène à une vraie page |
-| Boîte de validation artisan + session (R24) | ✅ | mock — utilisable dans un navigateur |
-| Instants UTC vs heures de pendule (R25) | ✅ | mock + **migration 007 sur Supabase** |
-| Extraction du nom de l'appelant (R26) | ✅ | mock, mutations 6/6 |
-| Nom de produit et expéditeur en config (R29) | ✅ | mock, mutations 7/7 |
-| Homonymes de communes, commune confirmée (R30) | ✅ | mock, mutations 6/6 |
-| Question de prix ≠ refus de créneau (R31) | ✅ | mock, mutations 4/4 |
-| Homonymes, corrections, boucles bornées (R32) | ✅ | mock, mutations 6/6 |
-| Prestation refusée déclinée (R33) | ✅ | mock, mutations 6/6 |
-| **Éval LLM réelle, 14 personas × 3** | ✅ **42/42** | agent **Haiku 4.5**, appelant Sonnet 5 — 7ᵉ passage, 0 incident de harnais |
-| **19 personas** (5 tirés d'appels vocaux réels) | ✅ **57/57** | agent Haiku 4.5 — 50/57 → 55/57 → **57/57** le 26/08, 0 incident de harnais |
-| SMS de confirmation au client, chemin nominal (R27) | ✅ | mock, mutations 5/5 |
-| Table `artisan` + FK sur 5 tables (migration 008) | ✅ | **Supabase réel**, contrat du port |
-| Connexion artisan par code SMS (R28) | ✅ | mock, mutations 7/8 (1 défense en profondeur) |
-| Nom du produit et expéditeur SMS en config (R29) | ✅ | mock, mutations 7/7 |
-| Sortie prononçable : emoji et markdown (R37) | ✅ | mock, mutations 5/5 |
-| Créneaux prononcés verbatim (R38) | ✅ | mock, mutations 2/2 |
-| Contrainte nouvelle > « rien de plus tôt » (R39) | ✅ | mock, mutations 2/2 |
-| **Sonde de l'étape 0, chantier voix (R40)** | ✅ | mock, mutations 13/13 + 7/7 + 8/8 — **appel réel : la sonde PARLE** |
-| **Adaptateur de la plateforme vocale (R41)** | ✅ | mock, mutations 14/14 — **deux appels vocaux réels, scénarios complets** |
-| Numéro jamais tronqué (R42) | ✅ | mock, mutations 10/10 |
-| Code postal dicté avec séparateur (R43) | ✅ | mock, mutations 6/6 |
-| Clôture verbatim et stable (R44) | ✅ | mock, mutations 5/5 |
-| Commune canonique prononcée (R45) | ✅ | mock, *idem* |
-| Une seule salutation par appel (R46) | ✅ | mock, mutations 7/7 |
-| Nombres prononcés en toutes lettres (R47) | ✅ | mock, mutations 10/11 (1 défense en profondeur) |
-| Question de la commune bornée (R48) | ✅ | mock, *idem* |
-| Code postal avec barre, commune vérifiée (R49) | ✅ | mock, mutations 6/6 |
-| Code postal validé par le contrôleur (R50) | ✅ | mock, mutations 7/8 (1 défense en profondeur, vérifiée) |
-| Vouvoiement, jamais de tutoiement (R51) | ✅ | mock, *idem* |
-| Aucune salutation en conversation (R52) | ✅ | mock, mutations 7/7 |
-| Une seule question par réplique (R53) | ✅ | mock, *idem* — **contrôle AST de toutes les instructions** |
-| Relecture du secteur avant refus (R54) | ✅ | mock, mutations 8/8 |
-| Numéro confronté à ce qui a été dit (R55) | ✅ | mock, mutations 7/7 |
-| Question du secteur verbatim, relance par les chiffres (R56) | ✅ | mock, *idem* |
-| Paire commune/CP cohérente, refus verbatim (R57) | ✅ | mock, mutations 5/5 |
-| Code postal relu en DEUX groupes (R58) | ✅ | mock, mutations 5/5 |
-| Transcription qui se précise ≠ rejeu (R59) | ✅ | mock, mutations 5/5 — **un lead en zone perdu le 26/08** |
-| Rattrapage des tours manqués (R60) | ✅ | mock, mutations 5/5 |
-| « demain » / « aujourd'hui » comme contrainte (R61) | ✅ | mock, mutations 6/6 |
-| Relance du numéro qui varie (R62) | ✅ | mock, mutations 5/5 — **premières phrases-tampons** |
-| **Les faits hors verbatim (R63)** | ✅ | mock, mutations 10/10 — **renversement : 8 questions rendues au formuleur** |
-| Numéro dicté chiffre par chiffre (R64) | ✅ | mock, mutations 3/4 (1 défense en profondeur, vérifiée) |
-| Révision déployée exposée par `/sante` (R65) | ✅ | mock, mutations 5/5 |
-| Créneau PRONONCÉ vs écrit (R66) | ✅ | mock, mutations 8/8 |
-| Un jour nommé est une contrainte (R67) | ✅ | mock, *idem* |
-| Identifiant d'appel imposé au dépôt (port) | ✅ | **contrat rejoué sur Supabase** |
+| Agent conversationnel S0–S11, garde-fous, dégradation | ✅ | 89 tests mock + 32 convs LLM réelles + 13 appels vocaux |
+| **Compréhension confiée au LLM sous menu fermé** (`actions.py`) | ✅ | **banc d'extraction 64/66**, p50 1080 ms, agent **Haiku 4.5** |
+| **Contraintes de disponibilité structurées** (R83) | ✅ | banc, dont les 3 cas de portée de la négation — 4 passages verts |
+| Cycle de vie du RDV, expiration, sérialisation de l'état | ✅ | mock + usage réel (4 RDV expirés le 09/09) |
+| Port `Depot` + adaptateur Postgres | ✅ | **Supabase réel**, contrat identique aux deux implémentations |
+| API HTTP, 2 portes d'auth, 1 tour = 1 requête | ✅ | mock + câblage réel sur Supabase |
+| File sortante, plage de silence (21 h–8 h), réessais | ✅ | mock + usage réel |
+| Adaptateur OVH | ✅ | **SMS réellement reçu le 24/08** (`ovh:802084252`) |
+| Connexion artisan par code SMS, boîte de validation, session | ✅ | mock + **parcours réel bout en bout le 02/09** (R84) |
+| Validation client par lien à un tap + page HTML sans JS | ✅ | mock — le lien SMS mène à une vraie page |
+| Instants UTC vs heures de pendule (règle n°7) | ✅ | mock + migration 007 |
+| Table `artisan` + FK sur 5 tables | ✅ | Supabase réel |
+| Observabilité : révision déployée + dernier passage du worker | ✅ | `/sante`, migration 010, contrat du port (R65, R86) |
+| **Adaptateur de la plateforme vocale (Vapi)** | ✅ | mock + **appels vocaux réels, RDV créés en base** |
+| Sondes de diagnostic (étape 0, tournures de temps) | ✅ | hors produit, éteintes par défaut |
+| **Entrée téléphonique depuis la France** | ❌ | **numéro Vapi gratuit = appels nationaux US** (R81) |
+| **Cron / supervision du worker** | ❌ | jamais branché — troisième constat en usage réel |
+| Éval LLM réelle, 19 personas × 3 | ⚠️ **57/57 le 26/08** | **antérieure au menu d'actions — à rejouer** |
+
+## Le fait structurant de la période (01–02/09) : le curseur a bougé
+
+R68, R70, R71 : trois défauts nés d'une liste de mots-clés dans `engine.py` qui tenait lieu
+de compréhension. Geoffrey a tranché — on arrête d'allonger la liste. Depuis :
+
+- chaque état expose un **menu d'ACTIONS fermé** (`actions.py`), l'extracteur rend UNE
+  action ou `pas_clair`, le contrôleur valide contre le menu et les invariants ;
+- le **contenu** d'une contrainte suit la même règle (R83) : le modèle remplit une structure
+  au vocabulaire de NOMS (« jeudi », « matin »), le code convertit en jours et dates ;
+- `engine.py` ne fait plus **aucune** correspondance de texte. Les mots-clés vivent dans
+  `MockLLM` (harnais de test), les mille formulations dans `run_extract_eval.py` ;
+- **une tournure ratée en appel réel devient une ligne d'éval, jamais une ligne de moteur.**
+
+Corollaire mesuré : « Haiku est trop bête » était faux. Sur les tournures qui avaient cassé
+le produit, Haiku fait le plein ; le défaut était à 100 % dans le contrat. Et Sonnet, à
+justesse égale, coûte 1,5 à 5 s de plus par tour — l'extracteur reste **Haiku**.
 
 ## Ce qui est encore un double (et non un manque caché)
 
-- **Pas de voix** : aucune plateforme vocale branchée, aucun numéro. L'API expose déjà les
-  webhooks qu'elle appellera. **Le spike vocal ne s'ouvre pas seul** : session dédiée avec
-  Claude (Cowork) avant tout engagement.
-- **Envoi SMS** : la chaîne sort réellement (premier SMS réel le 24/08, réf.
-  `ovh:802084252`), en mode **numéro court**. `EnvoyeurJournal` reste le défaut
-  (`RELAIS_SMS=journal`), donc un cron mal configuré n'écrit à personne.
-- **Réception SMS** : n'existe pas. C'est le pendant entrant du worker sortant, rendu
-  nécessaire par la révision OUI/NON du 25/08. Trois questions à poser à OVH avant d'écrire
-  la moindre ligne (coût des entrants, traitement du STOP, polling ou callback).
-- **`CalendarStub`** : applique les vraies règles d'agenda sans être relié à un calendrier.
-  Ce n'est **pas un cas dégradé** — c'est le cas de l'artisan sans agenda numérique, sans
-  doute le cas courant. Le calendrier externe sera un anti-double-réservation, pas une
-  condition d'existence du produit. Google/Outlook : **volontairement non lancé** (cf.
-  dette n°4).
+- **Voix, entrée téléphonique** : l'adaptateur est écrit et éprouvé, des appels réels ont
+  produit de vrais RDV. Mais le numéro provisionné est un gratuit Vapi « US national use » :
+  un mobile français reçoit une tonalité occupée. Il faut un numéro **Twilio** (entrant
+  international) importé dans Vapi, et le registre `artisan` mis à jour — sans ça,
+  `artisan_de_l_appel` ne trouve pas le numéro composé et **l'appel meurt en silence**.
+- **Cron du worker** : `worker.py` reste UN PASSAGE, testable et idempotent — c'est voulu.
+  Ce qui manque est la couche au-dessus : **supervision** (quelqu'un le relance) et
+  **observabilité** (on voit qu'il tourne, désormais lisible dans `/sante`). Pas une tâche
+  planifiée Windows : un pansement de dev là où la question est d'hébergement.
+- **Réception SMS** : n'existe pas. Pendant entrant du worker sortant, rendu nécessaire par
+  la révision OUI/NON. Trois questions à poser à OVH avant d'écrire une ligne (coût des
+  entrants, traitement du STOP, polling ou callback).
+- **`CalendarStub`** : applique les vraies règles d'agenda sans calendrier branché. Ce n'est
+  **pas** un cas dégradé — c'est le cas de l'artisan sans agenda numérique, probablement le
+  cas courant. Le calendrier externe sera un anti-double-réservation, pas une condition
+  d'existence.
 - **Pas de push** : la relance artisan est mise en file, jamais délivrée.
-- **Onboarding d'un artisan** : la table `artisan` existe, mais le seul chemin
-  d'écriture est `semer_artisans.py` depuis `config/artisans.json`. Il faudra un vrai
-  parcours d'inscription, pas un script.
+- **Onboarding** : le seul chemin d'écriture dans `artisan` est `semer_artisans.py`.
+- **`EnvoyeurJournal` est le défaut** (`RELAIS_SMS=journal`) : rien ne part, mais depuis R84
+  tout ce qui partirait est IMPRIMÉ en entier, avec la mention « rien n'est parti » sur la
+  même ligne.
 
 ## Décisions verrouillées
 
-- **Le LLM ne décide jamais**, l'artisan valide toujours (pas d'auto-validation en V1),
-  annonce IA en ouverture et téléphone confirmé avant tout RDV.
-- **Une décision terminale ne se prend jamais sur une donnée non relue** (R54, 26/08). Le
-  secteur est relu à l'appelant avant tout refus hors zone — une fois, et une seule. La
-  règle valait pour la commune glanée au passage et exemptait la donnée DEMANDÉE ; six
-  appels vocaux ont montré que demander ne fiabilise rien quand la transcription se trompe.
+- **Le LLM ne décide jamais ce qui ENGAGE** (transitions, prix, créneaux, promesses) —
+  **mais c'est lui qui COMPREND**, dans un vocabulaire que nous possédons. La règle n°1
+  n'est pas assouplie, elle est précisée.
+- **L'artisan valide toujours** (pas d'auto-validation en V1), annonce IA en ouverture,
+  téléphone confirmé avant tout RDV.
+- **Un numéro que la plateforme nous donne est une PROPOSITION, pas une confirmation**
+  (R81) : `tel_confirme` reste faux jusqu'au « oui », et le numéro passe la même relecture
+  qu'un numéro dicté.
+- **Demander un CHAMP est verbatim ; RÉPONDRE à quelqu'un reste au formuleur** (R76). Les
+  garde-fous vérifient un contenu INTERDIT, jamais la FIDÉLITÉ à l'instruction — c'est
+  pourquoi cette frontière est une décision et pas un garde-fou.
+- **Jamais de repli « on vous rappelle » tant que l'appelant coopère.** Une contrainte
+  RESSERRE le calendrier au lieu de le faire défiler : elle ne consomme pas le quota de
+  l'invariant n°6, qui borne la NÉGOCIATION (R72).
+- **Une décision terminale ne se prend jamais sur une donnée non relue** (R54).
+- **Dater ce qui tourne est une DONNÉE, pas un raisonnement** (R65 pour la révision
+  déployée, R86 pour le worker). Et un jalon se note APRÈS le travail : la trace dit « un
+  passage complet a eu lieu », pas « un processus a démarré ».
+- **Ne dire que ce qui est SÛR** (R79, R85) : une interface qui affirme un acte non
+  accompli le fait avec l'autorité d'une interface.
+- **Pas de streaming des sorties gardées** : la latence se traite par des phrases-tampons
+  pré-approuvées, jamais en contournant `guards.check_output`.
 - **Délais de validation : 24 h / 2 h en heures réelles**, réglables par artisan.
-- **L'échéance fait foi, pas le passage du worker.**
-- **Un horodatage est un INSTANT en UTC ; une heure de config est une heure de PENDULE**
-  (`temps.py`, règle n°7).
-- **SMS strictement sortant — CIRCONSCRIT le 25/08, pas annulé.** Le dialogue libre par
-  SMS et le parsing de texte libre restent interdits. Mais la confirmation client passe
-  désormais par une **réponse à vocabulaire fermé** (OUI/NON, liste blanche, une seule
-  proposition active par numéro), qui n'est pas un dialogue. Le lien à un tap reste dans le
-  code et redeviendra le chemin de confort quand un Sender ID existera : le canal devient un
-  point de config (`sms_oui_non | lien`, défaut `sms_oui_non`).
-- **Conséquence : le Sender ID ne bloque plus AUCUNE fonctionnalité.** Il ne reste que du
-  confort de marque. ⚠ Mais le Kbis qu'il demandait **reparaît côté VOIX** : un numéro
-  français exige un bundle réglementaire ARCEP (Kbis + pièce d'identité du dirigeant).
-  Reporter l'administratif déplace le mur, il ne le supprime pas.
-- **Deux portes d'authentification distinctes** (secret webhook / jeton porteur).
-- **L'API ne décide jamais** : corollaire backend de la règle n°1.
-- **Expéditeur SMS UNIQUE, déclaré sous NOTRE société** — pas sous celle de chaque artisan
-  (décision du 25/08). Motifs : un seul Kbis à fournir, une réputation cumulée chez les
-  opérateurs, des gabarits clients qui nomment déjà l'artisan dans le texte, et l'honnêteté
-  vis-à-vis de l'opérateur — c'est nous qui émettons. Reste ouvert avec le cousin : le
-  positionnement (produit visible vs marque blanche), pas la faisabilité.
-- **⚠️ Affirmation PÉRIMÉE, produite le 24/08 et corrigée le 25/08** : « le Sender ID attend
-  un artisan réel, qui attend la voix ». **Faux.** Il n'attend que le nom commercial, la
-  structure juridique et le domaine. Ne pas la redécouvrir comme si elle était vraie.
+  **L'échéance fait foi, pas le passage du worker.**
+- **Un horodatage est un INSTANT en UTC ; une heure de config est une heure de PENDULE.**
+- **SMS strictement sortant — CIRCONSCRIT le 25/08, pas annulé** : pas de dialogue libre ni
+  de parsing de texte libre, mais la confirmation client peut passer par une réponse à
+  vocabulaire fermé (OUI/NON, une seule proposition active par numéro). Canal en config
+  (`sms_oui_non | lien`).
+- **Conséquence : le Sender ID ne bloque plus aucune fonctionnalité.** ⚠️ Mais le Kbis qu'il
+  demandait **reparaît côté VOIX** : un numéro français exige un bundle ARCEP. Reporter
+  l'administratif déplace le mur, il ne le supprime pas.
+- **Expéditeur SMS UNIQUE, déclaré sous NOTRE société**, pas sous celle de chaque artisan.
+- **Deux portes d'authentification distinctes** (secret webhook / jeton porteur), et
+  **l'API ne décide jamais** — corollaire backend de la règle n°1.
+- **Un banc qui compte une bonne réponse comme une faute est pire qu'un banc absent** : il
+  donne du travail faux avec l'autorité d'un chiffre. D'où le garde qui sort en 2 quand les
+  appels ont échoué, et les attentes qui acceptent un tuple quand plusieurs lectures mènent
+  à un comportement correct. Ce mécanisme a déjà servi trois fois.
 
 ## Dettes et décisions ouvertes
 
-0. ~~**LE COÛT CUMULÉ DES VERBATIM**~~ — **traité le 26/08 par R63**, le jour même.
-   Conservé ci-dessous parce que le raisonnement vaut plus que le correctif. Chaque `verbatim=True` a
-   été ajouté après un défaut réel — R38, R44, R45, R56, R57 — et l'effet d'ensemble est que
-   l'agent sonne préenregistré là où il devrait s'adapter. Geoffrey : *« on vend de l'IA avec
-   notre produit, pas du message préenregistré »*. R62 apporte la réponse actuelle : donner
-   au CONTRÔLEUR plusieurs phrases au lieu d'une (les « phrases-tampons » de l'arbitrage
-   voix). **La piste à évaluer ensuite** : au lieu de figer des PHRASES, interdire les
-   FAITS dans un tour formulé — un garde-fou qui refuse chiffres, dates, prix et noms de
-   lieux hors verbatim. Le formuleur retrouverait sa liberté de formulation sans pouvoir
-   inventer une donnée. Ce n'est PAS un changement de modèle : les phrases fautives sont
-   verbatim, donc aucun modèle n'est consulté (mesuré).
-
-1. ~~Le chemin nominal est muet~~ — **traité le 25/08** (`confirmation_client`, refus
-   couvert aussi, R27). La classe de test qui manquait — confronter la promesse ORALE aux
-   messages réellement mis en file — existe désormais.
-2. ~~Nom commercial~~ — **tranché le 25/08 : NELYO.** Affiché « Nelyo », expéditeur
-   déclaré « nelyo » (minuscules), 5 caractères sur les 11 autorisés, distinctif et
-   prononçable à l'oral par le futur agent vocal. « Relais » reste le nom de CODE interne :
-   repo, modules et tables ne sont pas renommés.
-   Homonymes notés, non bloquants : une SAS NELYO (2020, coaching) et une SARL NELYO
-   (2008, portails, apparemment dormante) — c'est la marque qui compte.
-   **Séquence externe restante, aucune ne bloque le code** :
-   INPI/marque → domaine (candidat `nelyo-ia.*`, **pas encore acheté**) → structure &
-   Kbis → dépôt du Sender ID chez OVH (~72 h).
-3. ~~Conséquences code du nom~~ — **traitées le 25/08** (`config/produit.json`, R29).
-   Le nom et l'expéditeur sont des réglages, les contraintes AF2M sont vérifiées au
-   démarrage, et R23 éprouve déjà 11 caractères. Le jour où le nom arrive : une ligne.
-4. **Premier calendrier à brancher** (Google / Outlook / aucun) — tranché par les
-   **interviews terrain** du cousin, question ajoutée à sa liste. L'OAuth Google n'est
-   **volontairement pas lancé** : sa vérification exige nom d'app, domaine vérifié et
-   politique de confidentialité hébergée, donc la même décision de nom que le Sender ID.
-5. **Plateforme vocale** — décision structurante, à prendre en session dédiée. Les
-   plateformes managées (Vapi, Retell) fournissent leurs numéros ou s'intègrent en trunk
-   SIP ; prendre des numéros avant de choisir créerait une double tuyauterie.
-6. **Fournisseur SMS** — choix réversible (tout passe par le port `Envoyeur`). Critère :
-   qualité du processus de déclaration du Sender ID, DPA, hébergement UE. Candidats
-   équivalents : OVHcloud (en place), LinkMobility, Octopush, SMSFactor, Brevo.
-7. ~~Table `artisan`~~ et ~~écran de connexion provisoire~~ — **traités le 25/08**
-   (migrations 008 et 009, R28). Le jeton porteur survit pour l'API et la future app
-   mobile : c'est aussi le filet si le SMS ne part pas (crédits épuisés, fournisseur en
-   panne) — sans lui, une panne SMS nous enfermerait dehors.
-8. **`FOR UPDATE SKIP LOCKED`** quand plusieurs workers tourneront (optimisation, pas
+1. **Instabilité résiduelle de l'extraction, mesurée** : ~1 cas sur 17 par passage rend
+   `contrainte: {}`, jamais le même, non reproductible. Mode de panne SÛR (le garde de R82
+   empêche l'agent de prétendre avoir compris → reproposition normale) : sourd un tour, pas
+   faux. À surveiller si le taux monte.
+2. **Les deux échecs permanents du banc (64/66)** sont des violations DÉTERMINISTES du
+   modèle sur le numéro (8 chiffres rendus en 10, 12 rendus en 10). Renforcer le prompt n'y
+   change rien — mesuré. Seul `_numero_suspect` protège : c'est la ceinture, il n'y a pas de
+   bretelles.
+3. **Petites dettes de conversation**, toutes vues en appel réel : dire quelque chose quand
+   une contrainte ne change rien (« demain n'est pas un vendredi ») ; la phrase de
+   clarification mal formée (« saisi. demain entre… ») ; la commune jamais prononcée quand
+   seul le code postal a validé la zone ; « d'ici 24 heures » un peu mécanique à l'oral.
+4. **Consignés, non corrigés** : le push artisan dit « client prévenu » alors que le SMS
+   n'est qu'en file à cet instant ; `rdv.creneau` ne porte pas `label_parle` alors que le
+   hold l'a (sans conséquence tant que le RDV n'est pas prononcé).
+5. **Premier calendrier à brancher** (Google / Outlook / aucun) — tranché par les interviews
+   terrain du cousin. L'OAuth Google est **volontairement non lancé** : sa vérification exige
+   nom d'app, domaine vérifié et politique de confidentialité hébergée.
+6. **Fournisseur SMS** — choix réversible (port `Envoyeur`). Critère : processus de
+   déclaration du Sender ID, DPA, hébergement UE. OVHcloud en place.
+7. **`FOR UPDATE SKIP LOCKED`** quand plusieurs workers tourneront (optimisation, pas
    justesse).
-9. Formulation « d'ici 24 heures » à l'oral, un peu mécanique — à retoucher sciemment.
-10. **Document « décisions côté cousin »** (5 blocs : nom, structure juridique,
-    positionnement expéditeur, questions terrain, bêta/prix/confidentialité) : produit et
-    transmis, **pas encore versionné dans `docs/`**.
+8. **Worker de rattrapage** pour les RDV décidés dont le SMS n'a pas été mis en file :
+   l'écriture et la mise en file ne sont pas atomiques.
+9. **Couvrir `appel_muet` (S9)** — la dernière des six issues que personne n'emprunte. Le
+   harnais lit une réplique vide comme une fin d'appel : un persona silencieux est
+   indistinguable d'un persona qui raccroche.
+10. **Séquence externe, côté cousin, rien ne bloque le code** : INPI/marque → domaine
+    (candidat `nelyo-ia.*`, **pas acheté**) → structure & Kbis → Sender ID OVH (~72 h). Le
+    document « décisions côté cousin » (5 blocs) est produit et transmis, **pas versionné
+    dans `docs/`**.
 
 ## Prochaine étape
 
-**SPIKE VOIX en cours.** Arbitrage rendu le 25/08 sur `docs/etat-des-lieux-voix.md` :
-plateforme **managée (Vapi)**, numéro **non français**, agent en **Haiku**, et — décision
-d'invariant définitive pour cette phase — **pas de streaming des sorties gardées** : la
-latence se traite par des phrases-tampons pré-approuvées, jamais en contournant
-`guards.check_output`.
+Les deux premières sont des MURS : sans elles le produit n'a ni porte d'entrée, ni suite
+après l'appel.
 
-Prérequis Haiku **RENDU le 25/08 : 42/42**, à parité avec Sonnet, après correction de trois
-défauts produit que Sonnet masquait. Latence du tour ramenée de 3,42 s à 1,93 s de médiane.
-**Confirmé au 7ᵉ passage** (`evals/results-20260825-213151.json`) sur l'arbre corrigé, sans
-un seul incident de harnais : le 41/42 du 6ᵉ passage venait bien du défaut que R39 corrige.
+1. **Héberger le worker** (cron ou service — le débat est mal posé : ce qui compte est
+   supervision + observabilité). `/sante` répond désormais « il tourne ? » en dix secondes ;
+   il reste à ce que quelqu'un le lance et le relance. Troisième fois que ce constat sort
+   d'un usage réel.
+2. **Un numéro joignable depuis la France** : acheter chez Twilio, importer dans Vapi, et
+   mettre le numéro dans le registre `artisan`. Le compte Twilio portera aussi le dossier
+   ARCEP plus tard — pas un détour, la première pierre. Le premier appel devient une
+   CONFIRMATION de `call.customer.number`, déjà codé et déjà capturé (R80, R81).
+3. **Rejouer l'éval LLM réelle (19 personas × 3)** : le 57/57 date du 26/08, soit AVANT le
+   menu d'actions, R83 et neuf correctifs. On ne sait pas ce qu'elle rend aujourd'hui —
+   c'est le seul chiffre du projet qui soit périmé plutôt que faux.
+4. **Finir le chantier voix** : `endCallPhrases` sur la phrase de fin (désormais
+   déterministe), barge-in (`stopSpeakingPlan`), et la latence mesurée sur un appel complet.
+5. Puis, par valeur décroissante : les petites dettes de conversation (dette n°3), un vrai
+   parcours d'onboarding à la place de `semer_artisans.py`, `appel_muet`, le worker de
+   rattrapage.
 
-Les garde-fous de prononçabilité (R37) travaillent en continu — une quinzaine
-d'interceptions sur ce passage, dont **le numéro d'urgence sécurité gaz mis en gras** sur
-T04. Elles ne font pas échouer les scénarios (le repli sur l'instruction du contrôleur
-fonctionne), mais elles disent que le formuleur produirait sans cesse de l'imprononçable si
-on le laissait faire. C'est un argument de plus pour le verbatim là où le fond compte.
+En parallèle, à préparer sans coder : la **réception SMS** (révision OUI/NON), une fois les
+trois questions OVH tranchées.
 
-Le garde-fou emoji est fait (R37). La **sonde de l'étape 0 est écrite** (R40) : il ne reste
-qu'à la jouer. Reste aussi la ligne `RELAIS_MODEL` du `.env` de Geoffrey.
+### Le contrat Vapi, tel que mesuré (à ne pas re-supposer)
 
-**LA VOIX MARCHE DE BOUT EN BOUT.** Deux appels vocaux réels le 26/08, scénarios
-complets : une sortie hors zone correcte, et **une réservation qui a produit un vrai RDV
-en base**, `en_attente_validation` chez art-dupont. La boucle voix → validation artisan
-est démontrable aujourd'hui.
-
-Six défauts en sont sortis, tous corrigés (R42–R46) — voir l'entrée datée. Le plus grave,
-R42, produisait un RDV d'apparence normale sur un numéro de téléphone faux.
-
-**Reste ouvert côté voix** : personne ne raccroche (la phrase de fin est désormais
-déterministe, il reste à brancher `endCallPhrases` côté Vapi), le barge-in à activer
-(`stopSpeakingPlan`), et la latence à mesurer sur un appel complet.
-
-Ce qui reste du branchement initial :
-
-```bash
-# 1. l'assistant Vapi, créé proprement par l'API : STT/TTS français, custom LLM
-#    pointant sur <tunnel>/voix/vapi, et SURTOUT aucun `firstMessage` — l'annonce IA
-#    doit sortir de NOTRE moteur (règle n°5), pas d'un champ de tableau de bord.
-# 2. champ « API Key » de Vapi = RELAIS_WEBHOOK_SECRET (il part en Authorization: Bearer)
-# 3. activer stopSpeakingPlan (barge-in) — cf. mesure d'oreille n°3
-RELAIS_VOIX_ARTISAN=art-dupont uvicorn serveur:app --port 8000
-```
-
-Scénario cible du premier appel : « j'ai une fuite » → commune → première question de
-qualification (S0→S2). C'est exactement ce que R41 joue en mock.
-
-**Mode d'emploi de la sonde** (elle reste utile pour toute nouvelle plateforme) :
-
-```bash
-RELAIS_SONDE_VOIX=1 uvicorn serveur:app --port 8000   # le serveur l'annonce au démarrage
-# un tunnel public (ngrok/cloudflared) vers le port 8000
-# Vapi : custom LLM → URL = https://<tunnel>/voix/sonde
-#        en-tête personnalisé X-Relais-Secret = RELAIS_WEBHOOK_SECRET
-# puis on appelle le numéro et on lit proto/sonde-vapi.jsonl
-```
-
-On y cherche `identifiants_candidats` : si un champ stable y figure, l'adaptateur se réduit
-à une traduction de formats vers `/webhooks/appel/{id}/tour`. Sinon il faut fabriquer la clé
-(dérivée du couple appelant/appelé, ou table de correspondance) — un montage plus lourd, avec
-ses propres modes de panne. **Ne pas écrire l'adaptateur avant d'avoir lu ce fichier.**
-
-### ÉTAPE 0 TERMINÉE — récolte du 25/08 (`sonde-vapi.jsonl`, requête de 21:02)
-
-| Fait | Conséquence pour l'adaptateur |
+| Fait | Conséquence |
 |---|---|
-| **`call.id`** : UUID à la racine de l'objet `call`, stable sur tout l'appel | ✅ **La clé existe.** L'adaptateur est une traduction de formats vers `/webhooks/appel/{id}/tour`. Rien à fabriquer. |
-| `"stream": true` — **une réponse d'un bloc reçoit 200 et n'est JAMAIS prononcée** | SSE obligatoire. Gardes sur le texte **entier**, puis un seul morceau + `[DONE]`. |
-| `Authorization: Bearer` (confirmé en réel), aucun en-tête personnalisé | Mettre `RELAIS_WEBHOOK_SECRET` dans le champ « API Key » de Vapi. |
+| **`call.id`** : UUID à la racine, stable sur tout l'appel | La clé existe : l'adaptateur est une traduction de formats vers `/webhooks/appel/{id}/tour`. |
+| `"stream": true` — **une réponse d'un bloc reçoit 200 et n'est JAMAIS prononcée** | SSE obligatoire. Gardes sur le texte ENTIER, puis un seul morceau + `[DONE]`. |
+| `Authorization: Bearer`, aucun en-tête personnalisé | `RELAIS_WEBHOOK_SECRET` va dans le champ « API Key » de Vapi. |
 | Vapi appelle `POST <url>/chat/completions` | Déclarer le suffixe, pas l'URL nue. |
-| **Tout l'historique est renvoyé à chaque tour**, message système compris (celui de l'assistant par défaut de Vapi) | **L'ignorer entièrement.** Notre état vit dans le dépôt, indexé par `call.id` ; le prompt vient de notre moteur. |
-| `metadata.assistantTurnInterrupted` | Détection du barge-in disponible — matière pour les phrases-tampons. |
-| `startSpeakingPlan.waitSeconds = 0.4` | Le budget de silence toléré avant que l'agent reprenne la parole. |
+| Tout l'historique est renvoyé à chaque tour, message système compris | **L'ignorer entièrement** : notre état vit dans le dépôt, le prompt vient de notre moteur. |
+| **Aucun `firstMessage`** côté tableau de bord | L'annonce IA doit sortir de NOTRE moteur (règle n°5). |
+| Un appel WEB ne porte aucun numéro appelant — mesuré | La proposition du numéro (R81) ne vaut que sur un appel téléphonique réel. |
+| `metadata.assistantTurnInterrupted`, `startSpeakingPlan.waitSeconds = 0.4` | Barge-in détectable ; 0,4 s de silence toléré. |
 
-**Ce que le silence a coûté et rapporté.** Le 200 muet est le meilleur argument de toute la
-session pour la sonde : côté serveur, tout était vert. Aucun test d'intégration, aucun
-contrat, aucune relecture n'aurait signalé quoi que ce soit. Il fallait un vrai appel et
-une vraie oreille.
+Le mode d'emploi des sondes et le détail de la récolte du 25/08 sont dans les entrées
+datées ; l'en-tête de `vapi.py` porte le format de fil SSE. **Les lire avant de toucher au
+chantier voix.**
 
-Ce qu'il faut retenir pour l'arbitrage : la latence d'un tour du contrôleur est **mesurée**
-à 3,4 s (Sonnet 5) / 1,9 s (Haiku) hors STT et TTS, contre un budget conversationnel de 0,5
-à 1 s ; le premier spike proposé se fait sur un **numéro non français**, qui n'exige pas de
-Kbis.
-
-En parallèle, à préparer sans coder : la brique de **réception SMS** (révision OUI/NON), une
-fois les trois questions OVH tranchées.
-
-Candidats sans dépendance externe, par valeur décroissante :
-
-1. **Couvrir `appel_muet` (S9)** — la dernière des six issues du moteur que personne
-   n'emprunte. Le harnais lit une réplique vide comme une fin d'appel : un persona
-   silencieux est aujourd'hui indistinguable d'un persona qui raccroche. Il faut que
-   l'appelant simulé puisse rendre un silence EXPLICITE.
-   Et continuer d'élargir : 42/42 ne veut pas dire que l'agent est bon, mais que ces
-   quatorze-là ne trouvent plus rien. Cinq des six bugs du 25/08 sont venus de tournures
-   auxquelles personne n'avait pensé. Restent à écrire : les accents régionaux, l'appelant
-   qui coupe l'agent, celui qui répond à côté, le bruit de chantier.
-2. **Un vrai parcours d'onboarding** pour remplacer `semer_artisans.py`.
-3. **Un worker de rattrapage** pour les RDV décidés dont le SMS n'a pas été mis en file
-   (l'écriture et la mise en file ne sont pas atomiques — point laissé ouvert le 25/08).
-
-Le spike vocal ne s'ouvre **qu'en session dédiée**.
-
-Le spike vocal ne s'ouvre **qu'en session dédiée**. Le Sender ID et l'OAuth Google attendent
-le nom commercial — c'est-à-dire le cousin, pas nous.
 ---
 
 ## 09/09 (suite) — La règle de portée, mesurée (et la fixture, cinq fois)
