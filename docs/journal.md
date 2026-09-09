@@ -27,7 +27,7 @@ voix marche de bout en bout — mais **aucun numéro n'est joignable depuis la F
 
 ```bash
 cd proto
-python run_scenario.py                              # 89 tests, ~3 s, sans clé ni base
+python run_scenario.py                              # 91 tests, ~3 s, sans clé ni base
 python run_extract_eval.py [--mock] [--only …]      # banc d'EXTRACTION : 64/66, p50 1080 ms
 python run_llm_eval.py [--mock] [--n 3]             # éval appelant-simulé (mock 19/19)
 python run_depot_pg.py [--migrer]                   # contrat du port contre Supabase
@@ -58,11 +58,12 @@ d'affichage ressemble à un échec de test.
 | Instants UTC vs heures de pendule (règle n°7) | ✅ | mock + migration 007 |
 | Table `artisan` + FK sur 5 tables | ✅ | Supabase réel |
 | Observabilité : révision déployée + dernier passage du worker | ✅ | `/sante`, migration 010, contrat du port (R65, R86) |
+| **Ce qu'on promet, on peut le tenir** (R79 + R87) | ✅ | mock + **invariant du verdict de l'éval**, sur les 19 personas |
 | **Adaptateur de la plateforme vocale (Vapi)** | ✅ | mock + **appels vocaux réels, RDV créés en base** |
 | Sondes de diagnostic (étape 0, tournures de temps) | ✅ | hors produit, éteintes par défaut |
 | **Entrée téléphonique depuis la France** | ❌ | **numéro Vapi gratuit = appels nationaux US** (R81) |
 | **Cron / supervision du worker** | ❌ | jamais branché — troisième constat en usage réel |
-| Éval LLM réelle, 19 personas × 3 | ⚠️ **57/57 le 26/08** | **antérieure au menu d'actions — à rejouer** |
+| Éval LLM réelle, 19 personas | ✅ **19/19 le 09/09** | rejouée sur l'arbre actuel : 17/19 d'abord, puis 19/19 après R87 et le contrat de `veut_humain` |
 
 ## Le fait structurant de la période (01–02/09) : le curseur a bougé
 
@@ -149,10 +150,13 @@ justesse égale, coûte 1,5 à 5 s de plus par tour — l'extracteur reste **Hai
 
 ## Dettes et décisions ouvertes
 
-1. **Instabilité résiduelle de l'extraction, mesurée** : ~1 cas sur 17 par passage rend
-   `contrainte: {}`, jamais le même, non reproductible. Mode de panne SÛR (le garde de R82
-   empêche l'agent de prétendre avoir compris → reproposition normale) : sourd un tour, pas
-   faux. À surveiller si le taux monte.
+1. ~~**Instabilité résiduelle de l'extraction**~~ — **traitée le 09/09 par R88, et le
+   diagnostic ci-dessus était FAUX.** Il disait « ~1 cas sur 17, jamais le même, non
+   reproductible » ; la cause était enregistrée dans le `brut` du banc depuis le matin —
+   le modèle écrit parfois `constrainte`, et le code jetait la clé en silence. Cinq
+   occurrences retrouvées sur la seule journée. Conservé ici parce que la leçon vaut plus
+   que le correctif : **une panne dont on n'ouvre pas la trace n'est pas une panne
+   mystérieuse**, et « non reproductible » est une conclusion, pas une observation.
 2. **Les deux échecs permanents du banc (64/66)** sont des violations DÉTERMINISTES du
    modèle sur le numéro (8 chiffres rendus en 10, 12 rendus en 10). Renforcer le prompt n'y
    change rien — mesuré. Seul `_numero_suspect` protège : c'est la ceinture, il n'y a pas de
@@ -194,9 +198,12 @@ après l'appel.
    mettre le numéro dans le registre `artisan`. Le compte Twilio portera aussi le dossier
    ARCEP plus tard — pas un détour, la première pierre. Le premier appel devient une
    CONFIRMATION de `call.customer.number`, déjà codé et déjà capturé (R80, R81).
-3. **Rejouer l'éval LLM réelle (19 personas × 3)** : le 57/57 date du 26/08, soit AVANT le
-   menu d'actions, R83 et neuf correctifs. On ne sait pas ce qu'elle rend aujourd'hui —
-   c'est le seul chiffre du projet qui soit périmé plutôt que faux.
+3. ~~Rejouer l'éval LLM réelle~~ — **fait le 09/09 : 19/19**, après R87 et le contrat de
+   `veut_humain`. Reste à la jouer en **×3** (57 conversations) pour retrouver la
+   comparabilité avec le 57/57 du 26/08 : un passage simple ne dit rien de la variabilité.
+   Et à trancher un défaut constaté non corrigé — sur le chemin du danger gaz, la consigne
+   de sécurité est comptée DEUX FOIS dans notre transcript (l'appelant ne l'entend qu'une
+   fois) : à documenter comme délibéré, ou à enlever.
 4. **Finir le chantier voix** : `endCallPhrases` sur la phrase de fin (désormais
    déterministe), barge-in (`stopSpeakingPlan`), et la latence mesurée sur un appel complet.
 5. Puis, par valeur décroissante : les petites dettes de conversation (dette n°3), un vrai
@@ -224,6 +231,122 @@ datées ; l'en-tête de `vapi.py` porte le format de fil SSE. **Les lire avant d
 chantier voix.**
 
 ---
+
+## 09/09 (suite) — Deux personas perdus, cinq qui promettaient l'impossible (R87, R88)
+
+L'éval LLM réelle a été rejouée parce que le bloc d'état, réécrit le matin, a rendu visible
+que le 57/57 datait du 26/08 — avant le menu d'actions, avant R83, avant neuf correctifs.
+**17/19.** Deux personas perdus : `T11_refus_numero` (catégorie `prioritaire` au lieu
+d'`injoignable`) et `T12_pour_un_tiers` (aucun RDV, ni commune, ni numéro, en deux tours).
+
+**La recherche de la cause a rapporté bien plus que les deux échecs.**
+
+### R87 — le chemin d'escalade promettait un rappel sans avoir de numéro
+
+Cinq personas sur dix-neuf finissaient sur « il vous rappelle sous 2 heures » avec
+`telephone_rappel` vide. **Trois d'entre eux PASSAIENT** (T04, T07, T08), parce que seul
+T11 avait un `attendu` qui regardait la catégorie.
+
+C'est mot pour mot la faute de R79, sur l'autre chemin. Le 02/09, `_sans_rdv` a reçu la
+règle « sans numéro, pas de promesse de rappel » ; `_goto_transfert`, soixante lignes plus
+bas, a continué de promettre sans rien vérifier. **R77 n'a pas créé ce défaut** : en
+élargissant `veut_humain`, il a seulement poussé deux personas de plus dedans. Il était là
+depuis le début, et l'attribuer à R77 aurait été une erreur de diagnostic de plus.
+
+Et le chemin le plus fréquent est le pire : un danger gaz transfère au PREMIER tour
+(`transfert_si_danger`), donc avant que la question du numéro ait pu être posée. Sur ce
+chemin, la promesse était intenable **à chaque appel**, jamais par malchance.
+
+La phrase de l'aveu est désormais une constante partagée (`SANS_NUMERO`) : deux variantes
+du même aveu auraient dérivé, et c'est le piège qui a produit R70.
+
+**Trois attentes retournées, avec le motif écrit dans chacune** (R07 dans `run_scenario`,
+T04 et T07 dans l'éval) : `prioritaire` → `injoignable` quand il n'y a pas de numéro.
+Aucune ne portait sur la catégorie — elles enregistraient ce que le code faisait. Ce qu'une
+catégorie doit dire à Julien, c'est ce qu'il peut **faire** ; « prioritaire » sans numéro
+l'envoie chercher un téléphone qui n'existe pas. La priorité n'est pas perdue : elle reste
+dans `urgence_reelle` et dans les raisons du lead. Aucune catégorie n'a été inventée —
+`injoignable` existe depuis R79.
+
+Y compris pour le **danger gaz**, alors que c'est le cas où « prioritaire » a le plus de
+sens. Ce qui protège la personne est la consigne (Urgence Sécurité Gaz), toujours prononcée
+et verrouillée par le test ; le rappel de Julien n'y changeait rien, et il était impossible.
+
+**Et l'éval a gagné un INVARIANT DE VERDICT**, valable pour tous les personas au lieu d'un
+`attendu` par persona : ce qu'on promet, on doit pouvoir le tenir. C'est l'absence de cette
+ligne qui a laissé passer le défaut — une faute que dix-neuf personas traversent et que
+deux seulement révèlent n'est pas une faute rare, c'est une faute que le verdict ne sait
+pas voir. Un `attendu` par persona aurait exigé de le répéter sur chaque nouveau persona :
+exactement l'oubli qu'on venait de payer.
+
+### Le défaut d'extraction : `veut_humain` sur-déclenche
+
+Deux tournures, deux personas :
+
+    « il faudrait quelqu'un rapidement s'il vous plaît »   → une INTERVENTION      (T12)
+    « je préfère vous rappeler moi-même »                  → c'est LUI qui rappelle (T11)
+
+La frontière existait dans le contrat depuis R77 — « ne pas confondre avec *il faudrait que
+quelqu'un vienne* » — mais **écrite comme un exemple, pas comme un principe** : sans verbe
+de venue, la phrase n'y ressemblait plus assez. Et pour T11, R77 avait justement ajouté
+« être rappelé par une personne » : le modèle a reconnu *rappeler* sans regarder **qui
+rappelle qui**. L'ironie est que le commentaire du persona T11 le disait déjà — « ce
+persona dit "je rappellerai" : c'est bien lui qui reprendra contact, pas nous. »
+
+Corrigé **dans le contrat**, réécrit en deux frontières explicites, et mesuré par trois cas
+neufs de `run_extract_eval.py` — dont un avec un contexte S1 ajouté pour l'occasion, parce
+que la phrase de T12 est tombée au premier tour et qu'au tour du numéro elle ne mesurerait
+rien (la leçon de la fixture du matin, appliquée du premier coup cette fois). Pas une ligne
+de mots-clés dans le contrôleur.
+
+### R88 — une contrainte parfaitement comprise, jetée pour une faute d'orthographe
+
+Le troisième échec du banc n'était pas ce que je croyais :
+
+    attendu : {'exclut_jours': ['jeudi']}
+    obtenu  : contrainte={}
+    brut    : {"constrainte": {"exclut_jours": ["jeudi"]}}
+                    ^^^^^^^^^^
+
+`engine.py` teste `if "contrainte" in extracted` : la contrainte n'entrait jamais, sans
+erreur et sans trace.
+
+**Et ça corrige un DIAGNOSTIC que j'avais écrit le matin même.** La dette n°1 disait :
+« environ un cas sur dix-sept rend `contrainte: {}`, jamais le même, non reproductible ».
+Le mode de panne était bien décrit ; la CAUSE était déclarée inconnaissable alors qu'elle
+était enregistrée dans les résultats du banc. En rouvrant les JSON de la journée :
+**cinq occurrences de `constrainte`, sur quatre passages et trois cas différents**, la
+compréhension parfaite dans chacune. Une panne dont on n'ouvre pas la trace n'est pas une
+panne mystérieuse.
+
+Le remède est celui du 02/09 sur `"exclut_moment": ["matin"]`, un cran plus haut : on
+tolère une FORME dont le sens ne fait aucun doute, jamais un sens deviné. D'où une liste
+FERMÉE (`ALIAS_DE_CLE`) et non une correction approchante — « contrainnnte » reste dehors,
+parce qu'accepter ce qui RESSEMBLE à une clé connue serait interpréter. `normaliser_cles`
+est PURE, comme `json_de` depuis R74.
+
+Le test m'a reproché une première version qui court-circuitait la lecture : mon faux LLM
+rendait un dictionnaire déjà normalisé, donc ne prouvait que le bon fonctionnement de mon
+faux LLM. Le sous-cas de bout en bout passe maintenant par `json_de` puis
+`normaliser_cles`, les deux fonctions que la production utilise vraiment.
+
+### Résultats
+
+- `run_scenario.py` : **91 tests au vert** (R87, R88 ajoutés) ;
+- éval LLM réelle : **19/19**, et vérifié dans les transcripts plutôt que sur le PASS —
+  T12 réserve pour de bon avec le numéro de L'APPELANTE et non celui de sa mère (le piège
+  du persona), T11 se ferme sans fausse promesse après une dernière tentative pour obtenir
+  le numéro, T04 prononce la consigne gaz et ne promet plus rien ;
+- banc d'extraction : **66/69**, les trois cas de frontière neufs au vert. Les deux échecs
+  permanents restent les violations déterministes du modèle sur le numéro (R55/R75). Le
+  troisième était l'orthographe, mesuré AVANT R88 : il est désormais absorbé, mais je ne
+  l'ai pas re-mesuré — la faute est stochastique, un passage vert ne prouverait rien.
+
+**Constaté, non corrigé** : sur le chemin du danger gaz, la consigne est ajoutée au
+transcript PUIS repassée en `prefix` à `_goto_transfert`. L'appelant ne l'entend qu'une
+fois, mais notre transcript affirme qu'on l'a dite deux fois — visible dans T04. C'est
+peut-être délibéré (garantir la consigne au dossier même si un garde-fou remplaçait la
+réplique). À trancher : documenter ou enlever.
 
 ## 09/09 (suite) — La règle de portée, mesurée (et la fixture, cinq fois)
 

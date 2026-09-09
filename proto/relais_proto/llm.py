@@ -36,13 +36,21 @@ Réponds UNIQUEMENT un objet JSON avec les clés présentes dans la phrase (omet
 - danger_gaz: true si odeur/fuite de gaz évoquée
 - confirme: true/false si la phrase est une confirmation/refus de ce que l'agent vient de proposer
 - question_prix: true si l'appelant demande un prix, un tarif ou une fourchette
-- veut_humain: true si l'appelant veut un CONTACT HUMAIN, sous quelque forme que ce
-  soit — parler à quelqu'un, au patron, à l'artisan lui-même, être rappelé par une
-  personne, ou qu'on ESSAIE DE LE JOINDRE ou DE L'APPELER pour lui. Pas seulement
+- veut_humain: true si l'appelant veut une CONVERSATION avec une personne, sous quelque
+  forme que ce soit — parler à quelqu'un, au patron, à l'artisan lui-même, être rappelé
+  par une personne, ou qu'on ESSAIE DE LE JOINDRE ou DE L'APPELER pour lui. Pas seulement
   « je veux parler à un humain » : « il faut trouver une solution, essayez de
   l'appeler », « vous ne pouvez pas le prévenir ? », « je préfère lui parler
-  directement » comptent tous. Ne pas confondre avec « il faudrait que quelqu'un
-  vienne », qui demande une INTERVENTION, pas une conversation.
+  directement » comptent tous.
+  DEUX FRONTIÈRES, et c'est le SENS qui tranche, pas les mots employés :
+  1. demander une INTERVENTION n'est pas demander une conversation. « Il faudrait
+     quelqu'un rapidement », « envoyez quelqu'un », « il faudrait que quelqu'un vienne »
+     réclament un plombier chez soi, pas un interlocuteur — c'est la demande la plus
+     banale de ce métier, et la marquer transférerait presque chaque appel.
+  2. regarde QUI APPELLE QUI. « Je préfère vous rappeler moi-même », « je rappellerai
+     plus tard », « je vous redonne un coup de fil » : c'est l'APPELANT qui reprendra
+     contact, il ne demande rien à personne. Le mot « rappeler » ne suffit jamais à
+     décider — seule la direction de l'appel décide.
 Pour les FAITS ci-dessus, ne déduis rien qui ne soit pas dans la phrase.
 
 Contexte de la conversation :
@@ -339,6 +347,47 @@ class MockLLM:
         return instruction  # les instructions du contrôleur sont déjà des phrases prononçables
 
 
+# LES ORTHOGRAPHES FAUTIVES ACCEPTÉES POUR UN NOM DE CLÉ. Liste FERMÉE, et elle vit ici,
+# collée au nom canonique, pour qu'on ne puisse pas l'allonger sans le voir.
+ALIAS_DE_CLE = {"constrainte": "contrainte"}
+
+
+def normaliser_cles(brut: dict) -> dict:
+    """Les fautes d'orthographe MESURÉES du modèle sur un nom de clé, et rien d'autre.
+
+    Mesuré le 09/09 dans le `brut` du banc d'extraction, cinq fois sur quatre passages et
+    trois cas différents :
+
+        {"constrainte": {"exclut_jours": ["jeudi"]}}     « Ni le jeudi. »
+        {"constrainte": {"moment": "matin"}}             « Plutôt avant midi. »
+
+    À chaque fois la compréhension était PARFAITE ; seul le nom de la clé était faux. Et
+    `engine.py` teste `if "contrainte" in extracted` : la contrainte n'entrait jamais,
+    sans erreur et sans trace. Vu de l'extérieur, ça ressemblait à un modèle instable —
+    le journal l'a d'ailleurs consigné comme tel le matin du 09/09, avant de rouvrir le
+    `brut` du banc l'après-midi.
+
+    C'est le remède du 02/09 sur `"exclut_moment": ["matin"]`, appliqué un cran plus haut :
+    **on tolère une FORME dont le sens ne fait aucun doute, jamais un sens deviné.** D'où
+    une liste fermée et non une correction approchante — « contrainnnte » reste dehors,
+    parce qu'accepter ce qui RESSEMBLE à une clé connue serait interpréter.
+
+    Fonction PURE, comme `json_de` depuis R74 : lire une réponse ne doit jamais exiger le
+    réseau pour être testé. Une NOUVELLE orthographe fautive se verra de la même façon que
+    celle-ci — un échec du banc, avec le `brut` à côté.
+    """
+    if not isinstance(brut, dict):
+        return brut
+    out = dict(brut)
+    for faute, canonique in ALIAS_DE_CLE.items():
+        if faute in out:
+            valeur = out.pop(faute)
+            # la clé canonique GAGNE toujours : si le modèle a rangé au bon endroit, une
+            # variante fautive présente en plus ne doit pas écraser ce qui est juste.
+            out.setdefault(canonique, valeur)
+    return out
+
+
 def json_de(texte: str) -> dict:
     """Le JSON d'une réponse d'extraction, ou {} — jamais une exception.
 
@@ -456,7 +505,7 @@ class AnthropicLLM:
                 menu_contrainte=actions.bloc_prompt_contrainte()),
             messages=[{"role": "user", "content": utterance}],
         )
-        return json_de(_texte_de(msg))
+        return normaliser_cles(json_de(_texte_de(msg)))
 
     def reply(self, instruction: str, context: dict) -> str:
         dernier = context.get("dernier_tour") or "(l'appelant reste silencieux)"

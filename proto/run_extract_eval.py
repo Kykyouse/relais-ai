@@ -163,6 +163,14 @@ CTX_S4 = {
     "dernier_tour": "",
 }
 
+CTX_S1 = {
+    **CTX_S4,
+    "etat": "S1_COMPRENDRE",
+    "dernier_agent": ("Bonjour, vous êtes bien chez Dupont Chauffage. Je suis son "
+                      "assistant vocal — Julien est en intervention, mais je peux tout "
+                      "organiser avec vous. Que se passe-t-il ?"),
+}
+
 # Sentinelle : la clé ne doit PAS être renvoyée. « Absent » est une réponse à part entière
 # et souvent la BONNE — un numéro à peu près juste est pire qu'un numéro absent.
 ABSENT = "«absent»"
@@ -186,6 +194,25 @@ CAS_FAITS: list[tuple[str, dict, str, object, str]] = [
      "humain/frontiere-intervention"),
     ("J'aimerais qu'on envoie quelqu'un demain.", CTX_S4, "veut_humain", ABSENT,
      "humain/frontiere-envoyer"),
+
+    # ---- CE QU'A COÛTÉ L'ÉVAL LLM DU 09/09 : `veut_humain` SUR-DÉCLENCHE (R87) ----
+    # Deux personas perdus sur dix-neuf, tous deux par sur-déclenchement. La frontière
+    # existait dans le contrat depuis R77, mais écrite comme UN exemple (« il faudrait
+    # que quelqu'un VIENNE ») : sans verbe de venue, la phrase n'y ressemblait plus assez.
+    # Réécrite en PRINCIPE, ces deux cas la mesurent.
+    #
+    # T12 : dit au PREMIER tour, en réponse à « que se passe-t-il ? ». Une chaudière en
+    # panne chez une dame de 82 ans, réservable, perdue en deux tours.
+    ("C'est pour la chaudière de ma mère qui est en panne, il faudrait quelqu'un "
+     "rapidement s'il vous plaît.", CTX_S1, "veut_humain", ABSENT,
+     "humain/frontiere-sans-verbe"),
+    # T11 : la DIRECTION de l'appel. Le modèle a reconnu « rappeler » sans regarder qui
+    # rappelle qui — or R77 avait justement ajouté « être rappelé par une personne » au
+    # contrat. C'est l'inverse : ici, c'est l'appelant qui reprendra contact.
+    ("Pour le numéro, écoutez, je préfère vous rappeler moi-même pour caler l'horaire.",
+     CTX_S4, "veut_humain", ABSENT, "humain/frontiere-qui-rappelle"),
+    ("Non, je préfère pas donner mon numéro, je rappellerai.", CTX_S4, "veut_humain",
+     ABSENT, "humain/frontiere-je-rappellerai"),
 
     # ---- CE QUI A COÛTÉ L'APPEL DU 02/09 : le numéro FABRIQUÉ ----
     # Huit chiffres dictés, dix rendus. Le prompt l'interdit en toutes lettres ; le

@@ -99,7 +99,11 @@ PERSONAS = {
         # pas) et le lead est passé à 2 — un MEILLEUR lead, compté comme un échec. Épingler
         # le score ici pénalisait un bon résultat. Le refus de numéro est déjà couvert,
         # lui, par T11.
-        "attendu": {"categorie": "prioritaire", "rdv": False},
+        # ⚠️ CATÉGORIE RETOURNÉE le 09/09 par R87 : `prioritaire` → `injoignable`.
+        # Ce client-là est le plus frustrant à perdre : furieux, légitime, et transféré
+        # sans qu'on ait son numéro. « Prioritaire » disait à Julien de le rappeler en
+        # premier sans lui donner de quoi le faire. Il PASSAIT en promettant le rappel.
+        "attendu": {"categorie": "injoignable", "rdv": False},
         "script": ["Je veux parler à Julien, votre intervention refuit déjà !",
                    "Non, un humain, pas une machine !"],
     },
@@ -141,7 +145,13 @@ PERSONAS = {
         "cache": "Tu n'as ni ouvert les fenêtres ni coupé quoi que ce soit.",
         # LE chemin où une erreur peut blesser : la consigne doit être prononcée, et le
         # numéro d'Urgence Sécurité Gaz avec elle. Le reste est secondaire.
-        "attendu": {"categorie": "prioritaire", "rdv": False,
+        # ⚠️ CATÉGORIE RETOURNÉE le 09/09 par R87 : `prioritaire` → `injoignable`.
+        # Le danger gaz transfère au PREMIER tour, donc avant que le numéro ait pu être
+        # demandé : promettre un rappel y était intenable à chaque appel. Ce persona
+        # PASSAIT en le promettant — sa catégorie enregistrait le défaut. La sécurité ne
+        # dépend pas de ce rappel : la consigne envoie l'appelant vers Urgence Sécurité
+        # Gaz, et c'est elle que les `texte_agent` ci-dessous continuent d'exiger.
+        "attendu": {"categorie": "injoignable", "rdv": False,
                     "texte_agent": ["0 800 47 33 33", "aérez"]},
         "script": ["Ça sent le gaz dans ma cuisine", "Nogent 94130",
                    "Rossi, 06 33 44 55 66"],
@@ -405,6 +415,25 @@ def verdict(lead: dict, attendu: dict) -> tuple[bool, list[str], list[str]]:
     if "tel" in attendu and lead["slots"].get("telephone_rappel") != attendu["tel"]:
         problemes.append(f"tel={lead['slots'].get('telephone_rappel')} "
                          f"(attendu {attendu['tel']})")
+    # INVARIANT DU VERDICT — vrai pour TOUS les personas, écrit ici et non dans les
+    # `attendu` : ce qu'on PROMET, on doit pouvoir le tenir (R79, R87).
+    #
+    # Ajouté le 09/09, et c'est le manque de cette ligne qui a laissé passer le défaut.
+    # Le passage de 17/19 a montré CINQ personas finissant sur « il vous rappelle sous
+    # 2 heures » sans le moindre numéro — trois d'entre eux PASSAIENT (T04, T07, T08),
+    # parce que seul T11 avait un `attendu` regardant la catégorie. Une faute que
+    # dix-neuf personas traversent et que deux seulement révèlent n'est pas une faute
+    # rare : c'est une faute que le verdict ne sait pas voir.
+    #
+    # Un `attendu` par persona n'aurait pas suffi : il faudrait le répéter sur chaque
+    # nouveau persona, et c'est exactement l'oubli qu'on vient de payer.
+    if not lead["slots"].get("telephone_rappel"):
+        for promesse in ("rappelle", "rappeler sous", "transmets"):
+            if promesse in dit:
+                problemes.append(f"promesse de rappel (« {promesse} ») SANS numéro — "
+                                 f"intenable pour le client, lead mort pour l'artisan")
+                break
+
     # une violation INTERCEPTÉE (le client a entendu le repli correct) = le garde-fou
     # a fait son travail → WARN (à surveiller : c'est le formuleur qui dérape), pas FAIL
     if lead["violations_gardes_fous"]:

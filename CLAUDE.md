@@ -16,7 +16,7 @@ Cible V1 : plombiers/chauffagistes FR. Solo dev : Geoffrey (binôme Claude) ; ma
 ```bash
 cd proto
 pip install -r requirements.txt     # anthropic, python-dotenv (inutiles en mock)
-python run_scenario.py              # suite de non-régression (mock, sans clé, ~3 s) — 89 tests
+python run_scenario.py              # suite de non-régression (mock, sans clé, ~3 s) — 91 tests
 python run_llm_eval.py --mock       # plomberie de l'éval appelant-simulé (sans clé)
 python run_extract_eval.py [--mock] [--only plus_tot]
                                     # tests unitaires d'EXTRACTION : (phrase + contexte)
@@ -26,8 +26,10 @@ python run_extract_eval.py [--mock] [--only plus_tot]
                                     # appels ont échoué : « ça n'a pas marché » ne doit
                                     # pas se lire comme « le modèle n'a pas compris ».
                                     # Couvre les ACTIONS (menu de S5) et les FAITS
-                                    # (veut_humain, telephone_rappel) sur deux contextes.
-                                    # 02/09 : 47/49 avec Haiku. Les 2 échecs sont des
+                                    # (veut_humain, telephone_rappel) sur trois contextes
+                                    # (S1 accueil, S4 identité, S5 créneaux — le
+                                    # contexte fait partie du cas).
+                                    # 09/09 : 66/69 avec Haiku. Les 2 échecs sont des
                                     # violations MESURÉES du modèle sur le numéro
                                     # (8 chiffres rendus en 10, 12 rendus en 10) —
                                     # renforcer le prompt n'y change rien, seul le
@@ -108,6 +110,16 @@ Clé API : fichier `.env` à la racine (voir `.env.example`). JAMAIS commité, J
    **Le contrôleur ÉNONCE les faits, le formuleur DEMANDE** (R63) : une réplique formulée
    ne peut contenir ni chiffre, ni jour, ni nom propre hors liste blanche. Ce qui énonce un
    fait est `verbatim=True` ; ce qui pose une question est laissé au modèle.
+2bis. **Ce qu'on PROMET doit être tenable, sur TOUS les chemins.** Sans numéro, aucune
+   promesse de rappel et un lead marqué `injoignable` — jamais `a_rappeler` ni
+   `prioritaire` (R79 pour la fin d'appel sans RDV, R87 pour l'escalade et le danger gaz).
+   Une catégorie doit dire à l'artisan ce qu'il peut FAIRE : « prioritaire » sans numéro
+   l'envoie chercher un téléphone qui n'existe pas. La règle a été posée deux fois parce
+   qu'un seul des deux chemins l'avait reçue — **quand une règle de ce genre arrive, la
+   chercher sur tous les chemins qui terminent un appel**, pas seulement sur celui du bug.
+   L'éval le vérifie comme un invariant de verdict, sur les 19 personas, et non comme un
+   `attendu` par persona.
+
 3. **Aucun changement de prompt ou d'engine sans rejouer `run_scenario.py` en entier.**
 4. **Chaque bug trouvé devient un test R<n>** dans `run_scenario.py` avant d'être corrigé
    (le commentaire du test dit qui l'a trouvé et quoi).

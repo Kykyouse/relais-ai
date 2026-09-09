@@ -137,7 +137,13 @@ SCENARIOS = {
             "Je veux parler à Julien s'il vous plaît",
             "Non je veux un humain, pas une machine",
         ],
-        "attendu": {"score": 1, "categorie": "prioritaire", "rdv": False,
+        # ⚠️ CATÉGORIE RETOURNÉE le 09/09 par R87 : `prioritaire` → `injoignable`.
+        # Ce scénario n'a jamais eu pour objet la catégorie — il vérifie la REPRISE
+        # DÉDIÉE, et son `prioritaire` enregistrait ce que le code faisait alors. Or cet
+        # appelant ne donne aucun numéro : le marquer prioritaire envoie Julien chercher
+        # un téléphone qui n'existe pas (le dommage de R79, à l'identique). Retourné
+        # plutôt que supprimé, pour que la décision reste lisible ici même.
+        "attendu": {"score": 1, "categorie": "injoignable", "rdv": False,
                      "texte_agent": "je peux tout organiser pour vous"},
     },
     "R09_commune_sans_cp": {
@@ -3665,6 +3671,225 @@ def check_pas_de_promesse_sans_numero() -> bool:
         return False
     if lead["slots"].get("telephone_rappel") != "0630301111":
         print(f"   le numéro n'est pas dans le lead : {lead['slots'].get('telephone_rappel')!r}")
+        return False
+
+    return True
+
+
+def check_cle_mal_orthographiee() -> bool:
+    """R88 : une contrainte parfaitement comprise, jetée pour une faute d'orthographe.
+
+    MESURÉ le 09/09, dans le `brut` du banc d'extraction — cinq fois, sur quatre passages
+    et trois cas différents :
+
+        {"constrainte": {"exclut_jours": ["jeudi"]}}      « Ni le jeudi. »
+        {"constrainte": {"moment": "matin"}}              « Plutôt avant midi. »
+        {"constrainte": {"jours": ["apres_demain"]}}      « Après-demain plutôt. »
+                ^^^^^^^^^^^
+
+    La compréhension est PARFAITE à chaque fois. C'est le nom de la clé que le modèle
+    écrit de travers, et `engine.py` teste `if "contrainte" in extracted` : la contrainte
+    n'entre jamais, sans une trace, sans une erreur.
+
+    **Ce test corrige aussi un DIAGNOSTIC.** Le matin même, le journal a inscrit en dette
+    n°1 : « environ un cas sur dix-sept rend `contrainte: {}`, jamais le même, non
+    reproductible ». Le mode de panne était bien décrit (le garde de R82 empêche l'agent
+    de prétendre avoir compris, on retombe sur la reproposition) mais la CAUSE était
+    déclarée inconnaissable alors qu'elle était enregistrée dans les résultats du banc.
+    Une panne dont on n'ouvre pas la trace n'est pas une panne mystérieuse.
+
+    Le remède est celui du 02/09 sur `"exclut_moment": ["matin"]` : **on tolère une FORME
+    dont le sens ne fait aucun doute, jamais un sens deviné.** La liste des orthographes
+    acceptées est FERMÉE et vit dans le code, à côté du nom canonique.
+
+    Ce que ce test verrouille :
+
+    1. la forme fautive mesurée est lue comme la bonne clé ;
+    2. si les DEUX sont présentes, la clé canonique gagne — un alias ne doit jamais
+       écraser ce que le modèle a rangé au bon endroit ;
+    3. une clé inconnue qui n'est PAS dans la liste reste ignorée : on ne devine pas ;
+    4. et de bout en bout, une contrainte arrivée sous la forme fautive RESSERRE bien le
+       calendrier — c'est-à-dire qu'elle traverse le contrôleur, pas seulement le lecteur.
+    """
+    import datetime as dt
+    import json
+
+    from relais_proto.engine import Conversation
+    from relais_proto.llm import json_de, normaliser_cles
+
+    # (1) la forme fautive est reconnue
+    lu = normaliser_cles({"constrainte": {"exclut_jours": ["jeudi"]}})
+    if lu.get("contrainte") != {"exclut_jours": ["jeudi"]}:
+        print(f"   la clé mal orthographiée reste ignorée : {lu}")
+        return False
+
+    # (2) la clé canonique gagne toujours sur l'alias
+    lu = normaliser_cles({"contrainte": {"jours": ["jeudi"]},
+                          "constrainte": {"jours": ["samedi"]}})
+    if lu["contrainte"] != {"jours": ["jeudi"]}:
+        print(f"   l'alias a écrasé la clé canonique : {lu['contrainte']}")
+        return False
+
+    # (3) on ne devine pas : une clé inconnue hors liste reste dehors
+    lu = normaliser_cles({"contrainnnte": {"jours": ["jeudi"]}})
+    if "contrainte" in lu:
+        print(f"   une clé inconnue a été devinée : {lu}")
+        return False
+
+    # (4) DE BOUT EN BOUT : la contrainte doit atteindre le contrôleur et resserrer le
+    # calendrier. Un test qui s'arrête au lecteur ne prouve pas que le tour est sauvé.
+    class LLMQuiSeTrompeDeCle(MockLLM):
+        """Le modèle tel qu'il s'est comporté — et LU COMME EN PRODUCTION.
+
+        Le faux LLM ne rend pas un dictionnaire tout fait : il rend le TEXTE du modèle,
+        avec la clé fautive, puis le fait passer par les deux fonctions que
+        `AnthropicLLM.extract` utilise vraiment (`json_de` puis `normaliser_cles`).
+        Un stub qui court-circuiterait la lecture prouverait seulement que mon stub
+        fonctionne — c'est la faute que ce test a d'abord commise.
+        """
+
+        def extract(self, utterance: str, context: dict) -> dict:
+            out = super().extract(utterance, context)
+            if "contrainte" in out:
+                texte = json.dumps({"constrainte": out.pop("contrainte")},
+                                   ensure_ascii=False)
+                out.update(normaliser_cles(json_de(texte)))
+            return out
+
+    QUAND = dt.datetime(2026, 9, 9, 10, 12, tzinfo=dt.UTC)   # un mercredi
+    convo = Conversation(CFG, LLMQuiSeTrompeDeCle(),
+                         CalendarStub(CFG, now=QUAND))
+    convo.open()
+    convo.process("J'ai une fuite sous l'évier, à Nogent-sur-Marne 94130")
+    convo.process("Dupont, 06 30 30 11 11")
+    convo.process("Oui")
+    dit = convo.process("Uniquement le samedi matin")
+    if "samedi" not in dit.lower():
+        print(f"   la contrainte n'a pas resserré le calendrier : « {dit} »")
+        return False
+    # et la trace du lead doit la porter : c'est ce que Julien lit
+    if not convo.slots.get("contrainte", {}).get("jours"):
+        print(f"   la contrainte n'est pas dans les slots : "
+              f"{convo.slots.get('contrainte')}")
+        return False
+
+    return True
+
+
+def check_transfert_sans_numero() -> bool:
+    """R87 : le chemin d'ESCALADE promettait un rappel sans avoir de numéro.
+
+    Trouvé par l'éval LLM réelle du 09/09 (17/19), en cherchant la cause de DEUX échecs —
+    et la mesure a rendu bien plus que les deux : **cinq personas sur dix-neuf** finissent
+    sur « il vous rappelle sous 2 heures » avec `telephone_rappel` vide. Trois d'entre eux
+    PASSAIENT (T04, T07, T08), parce que seul T11 a un `attendu` qui regarde la catégorie.
+
+    C'est mot pour mot la faute de R79, sur l'autre chemin. Le 02/09, `_sans_rdv` a reçu la
+    règle « sans numéro, pas de promesse de rappel » ; `_goto_transfert`, soixante lignes
+    plus bas, a continué de promettre sans rien vérifier. R77 (02/09) n'a pas créé ce
+    défaut : en élargissant `veut_humain`, il a seulement poussé deux personas de plus
+    dedans, ce qui l'a rendu visible. Il était là depuis le début.
+
+    **Le chemin le plus fréquent est le pire.** Un danger gaz transfère au PREMIER tour
+    (`transfert_si_danger`), donc avant que la question du numéro ait été posée : la
+    promesse y est structurellement intenable, à chaque appel, sans exception.
+
+    Ce que ce test verrouille :
+
+    1. escalade (deux demandes d'humain) SANS numéro : aucune promesse de rappel, et
+       l'appelant apprend pourquoi ça s'arrête ;
+    2. le lead est `injoignable` et non `prioritaire`. La priorité n'est pas perdue pour
+       autant — elle reste dans `urgence_reelle` et dans les raisons. Ce que la catégorie
+       doit dire à Julien, c'est ce qu'il peut FAIRE : un lead « prioritaire » sans numéro
+       l'envoie chercher un téléphone qui n'existe pas (le dommage de R79, à l'identique) ;
+    3. DANGER GAZ sans numéro : la consigne de sécurité est toujours prononcée. C'est le
+       piège de ce correctif — supprimer la promesse en emportant la consigne aurait
+       échangé un lead mort contre un risque pour une personne ;
+    4. AVEC un numéro, le transfert garde sa promesse et sa catégorie `prioritaire` : le
+       chemin nominal de l'escalade est celui qui sert le plus, il ne doit rien perdre.
+    """
+    import datetime as dt
+
+    from relais_proto.engine import Conversation, State
+    from relais_proto.scoring import build_lead
+
+    QUAND = dt.datetime(2026, 9, 9, 10, 12, tzinfo=dt.UTC)
+
+    def neuve():
+        convo = Conversation(CFG, MockLLM(), CalendarStub(CFG, now=QUAND))
+        convo.open()
+        return convo
+
+    def promet(texte: str) -> str | None:
+        # les deux formes de l'engagement : la promesse elle-même, et le « je transmets »
+        # qui l'introduit. R79 vérifie les mêmes mots — même faute, mêmes témoins.
+        for mot in ("rappelle", "rappeler sous", "transmets"):
+            if mot in texte.lower():
+                return mot
+        return None
+
+    # (1)(2) ESCALADE SANS NUMÉRO. Deux demandes d'humain : la première a droit à une
+    # reprise dédiée, la seconde transfère (invariant n°7).
+    convo = neuve()
+    convo.process("J'ai une fuite sous l'évier")
+    convo.process("Je veux parler à un humain")
+    dit = convo.process("Non, je veux un humain, pas une machine")
+    if convo.state != State.S11_CLOTURE:
+        print(f"   l'escalade ne termine plus l'appel (état {convo.state.value})")
+        return False
+    if convo.slots.get("telephone_rappel"):
+        print(f"   la mise en place a quand même un numéro : "
+              f"{convo.slots['telephone_rappel']}")
+        return False
+    if (mot := promet(dit)):
+        print(f"   promesse de rappel SANS numéro (« {mot} ») : « {dit} »")
+        return False
+    if "numéro" not in dit.lower():
+        print(f"   l'appelant n'apprend pas pourquoi ça s'arrête : « {dit} »")
+        return False
+    lead = build_lead(convo)
+    if lead["categorie"] != "injoignable":
+        print(f"   lead catégorisé {lead['categorie']!r} sans numéro — Julien ne peut "
+              f"pas le traiter et ne le saura qu'en l'ouvrant")
+        return False
+
+    # (3) DANGER GAZ SANS NUMÉRO : transfert dès le premier tour, et la consigne de
+    # sécurité doit survivre au correctif. C'est le cas de T04, qui PASSAIT en promettant.
+    convo = neuve()
+    dit = convo.process("Ça sent le gaz dans la cuisine, près de la chaudière")
+    consigne = CFG["securite"]["consignes_autorisees"]["gaz_aerer_et_grdf"]
+    if consigne not in dit:
+        print(f"   la consigne de sécurité gaz n'est plus prononcée : « {dit} »")
+        return False
+    if not convo.slots.get("danger_gaz"):
+        print("   le danger gaz n'est pas retenu — la mise en place ne prouve rien")
+        return False
+    if (mot := promet(dit)):
+        print(f"   danger gaz : promesse de rappel SANS numéro (« {mot} ») : « {dit} »")
+        return False
+    if build_lead(convo)["categorie"] != "injoignable":
+        print(f"   danger gaz sans numéro catégorisé "
+              f"{build_lead(convo)['categorie']!r}")
+        return False
+
+    # (4) AVEC UN NUMÉRO : la promesse et la priorité sont intactes. Ce chemin-ci est le
+    # normal — un client en colère qui a donné son numéro DOIT être rappelé en priorité.
+    convo = neuve()
+    convo.process("J'ai une fuite sous l'évier, à Nogent-sur-Marne 94130")
+    convo.process("Dupont, 06 30 30 11 11")
+    convo.process("Oui")
+    convo.process("Je veux parler à un humain")
+    dit = convo.process("Non, je veux un humain, tout de suite")
+    if not promet(dit):
+        print(f"   la promesse de rappel a disparu alors qu'on a un numéro : « {dit} »")
+        return False
+    lead = build_lead(convo)
+    if lead["categorie"] != "prioritaire":
+        print(f"   lead catégorisé {lead['categorie']!r} alors qu'il est rappelable")
+        return False
+    if lead["slots"].get("telephone_rappel") != "0630301111":
+        print(f"   le numéro n'est pas dans le lead : "
+              f"{lead['slots'].get('telephone_rappel')!r}")
         return False
 
     return True
@@ -10050,6 +10275,23 @@ def run() -> int:
         print("   → sans numéro, aucune promesse de rappel et un lead marqué "
               "injoignable : ni fausse promesse au client, ni lead mort chez "
               "l'artisan : ✅ PASS")
+    else:
+        print("   → ❌ FAIL")
+        echecs += 1
+
+    print(f"\n──── R87_transfert_sans_numero ────")
+    if check_transfert_sans_numero():
+        print("   → l'escalade ne promet plus un rappel qu'on ne peut pas tenir, "
+              "la consigne gaz survit, et le lead dit à Julien ce qu'il peut "
+              "faire : ✅ PASS")
+    else:
+        print("   → ❌ FAIL")
+        echecs += 1
+
+    print(f"\n──── R88_cle_mal_orthographiee ────")
+    if check_cle_mal_orthographiee():
+        print("   → une contrainte comprise n'est plus jetée pour une faute "
+              "d'orthographe du modèle, et on ne devine pas pour autant : ✅ PASS")
     else:
         print("   → ❌ FAIL")
         echecs += 1

@@ -42,6 +42,20 @@ from .guards import check_output, safe_fallback
 from .states import EMPTY_SLOTS, State, URGENT_PRESTATIONS
 
 
+# UNE SEULE FORMULATION POUR UNE SEULE SITUATION : « je n'ai pas de numéro, donc je ne
+# promets pas de rappel ». Elle sert la fin d'appel sans RDV (R79) et l'escalade (R87).
+# Deux variantes du même aveu auraient dérivé — c'est exactement le piège qui a produit
+# R70 : deux définitions de la même chose, dont une seule se corrige le jour du défaut.
+#
+# Formulation NEUTRE, vraie dans les trois cas qui y mènent : celui dont on n'a pas
+# réussi à noter le numéro, celui qui a REFUSÉ de le donner, et celui qu'on transfère
+# avant même d'avoir eu l'occasion de le lui demander (danger gaz, premier tour).
+# « Je n'arrive pas à noter votre numéro » accusait le deuxième à tort.
+SANS_NUMERO = ("Sans numéro, je ne peux pas faire rappeler. N'hésitez pas à rappeler "
+               "ce numéro quand vous voulez — on reprendra tranquillement. "
+               "Bonne journée !")
+
+
 class Conversation:
     def __init__(self, config: dict, llm, calendar: CalendarStub | None = None,
                  numero_appelant: str | None = None):
@@ -1558,13 +1572,7 @@ class Conversation:
         if not self.slots.get("telephone_rappel"):
             self.flags["categorie"] = "injoignable"
             texte = self._say(
-                # Formulation NEUTRE, vraie dans les deux cas qui mènent ici : celui
-                # dont on n'a pas réussi à noter le numéro, et celui qui a refusé de le
-                # donner. « Je n'arrive pas à noter votre numéro » accusait le second à
-                # tort — il l'avait très bien dit, il ne voulait pas le donner.
-                "Sans numéro, je ne peux pas faire rappeler. N'hésitez pas à rappeler "
-                "ce numéro quand vous voulez — on reprendra tranquillement. "
-                "Bonne journée !",
+                SANS_NUMERO,
                 verbatim=True)  # ce qu'on s'engage à faire, ou pas : jamais réécrit
             self.state = State.S11_CLOTURE
             return texte
@@ -1579,11 +1587,34 @@ class Conversation:
 
     def _goto_transfert(self, prefix: str = "") -> str:
         self.state = State.S7_TRANSFERT
-        self.flags["categorie"] = "prioritaire"
         # Prototype : le transfert échoue toujours -> S6 avec marquage prioritaire
+        debut = ((prefix + " " if prefix else "") +
+                 f"Je regarde si je peux vous passer {self._prenom}… "
+                 f"il est en intervention. ")
+        # SANS NUMÉRO, PAS DE PROMESSE DE RAPPEL — la règle de R79, appliquée ici par R87.
+        # Le 02/09, R79 l'a posée dans `_sans_rdv` et ce chemin-ci, soixante lignes plus
+        # bas, a continué de promettre sans rien vérifier. L'éval du 09/09 l'a mesuré :
+        # CINQ personas sur dix-neuf finissaient sur « il vous rappelle sous 2 heures »
+        # sans le moindre numéro, dont trois qui PASSAIENT.
+        #
+        # Et c'est ici que la faute est structurelle, pas accidentelle : un danger gaz
+        # transfère au PREMIER tour (`transfert_si_danger`), donc avant que la question du
+        # numéro ait pu être posée. Sur ce chemin, la promesse était intenable à CHAQUE
+        # appel — jamais par malchance.
+        #
+        # La catégorie suit le même raisonnement que R79 : `injoignable` et non
+        # `prioritaire`. Ce qu'une catégorie doit dire à Julien, c'est ce qu'il peut
+        # FAIRE ; « prioritaire » sans numéro l'envoie chercher un téléphone qui n'existe
+        # pas. La priorité n'est pas perdue pour autant — elle reste dans `urgence_reelle`
+        # et dans les raisons du lead.
+        if not self.slots.get("telephone_rappel"):
+            self.flags["categorie"] = "injoignable"
+            texte = self._say(debut + SANS_NUMERO, verbatim=True)
+            self.state = State.S11_CLOTURE
+            return texte
+        self.flags["categorie"] = "prioritaire"
         texte = self._say(
-            (prefix + " " if prefix else "") +
-            f"Je regarde si je peux vous passer {self._prenom}… il est en intervention. "
+            debut +
             f"Je lui transmets en priorité : il vous rappelle "
             f"{self.cfg['accueil']['promesse_rappel']['ouvree']}.",
             # VERBATIM : c'est une PROMESSE DE RAPPEL, avec un delai chiffre. `_sans_rdv`
