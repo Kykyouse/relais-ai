@@ -19,7 +19,8 @@
 
 Le produit s'appelle **NELYO**. Le backend de la phase 1 est fonctionnel et vérifié contre
 un vrai Postgres ; **la compréhension est passée au LLM sous contrat fermé** (menu
-d'actions + contraintes structurées), mesurée à **64/66** sur le banc d'extraction ; la
+d'actions + contraintes structurées), mesurée à **68/70** sur le banc d'extraction et
+**57/57** en éval réelle ×3 ; la
 voix marche de bout en bout — mais **aucun numéro n'est joignable depuis la France**, et
 **le cron du worker n'est toujours pas branché**. Ces deux-là sont les seuls vrais murs.
 
@@ -63,7 +64,7 @@ d'affichage ressemble à un échec de test.
 | Sondes de diagnostic (étape 0, tournures de temps) | ✅ | hors produit, éteintes par défaut |
 | **Entrée téléphonique depuis la France** | ❌ | **numéro Vapi gratuit = appels nationaux US** (R81) |
 | **Cron / supervision du worker** | ❌ | jamais branché — troisième constat en usage réel |
-| Éval LLM réelle, 19 personas | ⚠️ **56/57 en ×3 le 09/09** | 17/19 → 19/19 (R87, contrat) → **×3 : 56/57**, seul échec corrigé par R91 et T12 rejoué 3/3. Le ×3 complet reste à rejouer après R91 |
+| Éval LLM réelle, 19 personas × 3 | ✅ **57/57 le 09/09** | 17/19 → 19/19 (R87, contrat) → 56/57 en ×3 → **57/57 après R91**. Comparable au 57/57 du 26/08, sur un arbre qui a reçu depuis le menu d'actions, R83 et cinq correctifs |
 
 ## Le fait structurant de la période (01–02/09) : le curseur a bougé
 
@@ -198,11 +199,10 @@ après l'appel.
    mettre le numéro dans le registre `artisan`. Le compte Twilio portera aussi le dossier
    ARCEP plus tard — pas un détour, la première pierre. Le premier appel devient une
    CONFIRMATION de `call.customer.number`, déjà codé et déjà capturé (R80, R81).
-3. **Rejouer l'éval ×3 après R91.** Le 09/09 : 19/19 en passage simple, puis **56/57
-   en ×3** — et c'est le ×3 qui a trouvé ce que le passage simple ne pouvait pas trouver
-   (la troisième variante du sur-déclenchement de `veut_humain`). Son unique échec est
-   corrigé et T12 rejoué 3/3, mais **les 57 n'ont pas été rejouées depuis**. Leçon à
-   garder : ne pas annoncer un défaut réglé sur la foi d'un passage simple.
+3. ~~Rejouer l'éval ×3~~ — **fait le 09/09 : 57/57**, après R91. La leçon reste, elle :
+   19/19 en passage simple avait laissé passer un défaut que le ×3 a trouvé (la troisième
+   variante du sur-déclenchement de `veut_humain`). **Ne pas annoncer un défaut réglé sur
+   la foi d'un passage simple** — un passage simple ne dit rien de la variabilité.
 4. **Finir le chantier voix** : `endCallPhrases` sur la phrase de fin (désormais
    déterministe), barge-in (`stopSpeakingPlan`), et la latence mesurée sur un appel complet.
 5. Puis, par valeur décroissante : les petites dettes de conversation (dette n°3), un vrai
@@ -273,8 +273,13 @@ que le modèle rate, le banc dit si le modèle progresse.
 
 **Mesures** : 94 tests au vert ; banc d'extraction **68/70**, les dix cas de frontière
 `humain/*` au vert dont le nouveau, et les deux seuls échecs restent les violations
-déterministes du modèle sur le numéro (R55/R75) ; **T12 rejoué 3/3 en réel** là où il
-échouait. ⚠️ Le ×3 COMPLET n'a pas été rejoué après R91 — c'est la mesure qui reste.
+déterministes du modèle sur le numéro (R55/R75) ; T12 rejoué 3/3 en réel là où il échouait.
+
+**Et le ×3 COMPLET rejoué après R91 : 57/57.** La comparabilité avec le 26/08 est
+retrouvée — même mesure, même forme, sur un arbre qui a entre-temps reçu le menu
+d'actions, R83 et les cinq correctifs du jour. Les garde-fous, eux, travaillent en
+continu : `questions_multiples`, `tutoiement`, `resalutation`, un emoji — tous
+interceptés, aucun échec de scénario.
 
 ## 09/09 (suite) — La voix n'est pas imposée, et la config vivait hors du repo (R90)
 
