@@ -16,7 +16,7 @@ Cible V1 : plombiers/chauffagistes FR. Solo dev : Geoffrey (binôme Claude) ; ma
 ```bash
 cd proto
 pip install -r requirements.txt     # anthropic, python-dotenv (inutiles en mock)
-python run_scenario.py              # suite de non-régression (mock, sans clé, ~3 s) — 91 tests
+python run_scenario.py              # suite de non-régression (mock, sans clé, ~3 s) — 92 tests
 python run_llm_eval.py --mock       # plomberie de l'éval appelant-simulé (sans clé)
 python run_extract_eval.py [--mock] [--only plus_tot]
                                     # tests unitaires d'EXTRACTION : (phrase + contexte)
@@ -110,6 +110,10 @@ Clé API : fichier `.env` à la racine (voir `.env.example`). JAMAIS commité, J
    **Le contrôleur ÉNONCE les faits, le formuleur DEMANDE** (R63) : une réplique formulée
    ne peut contenir ni chiffre, ni jour, ni nom propre hors liste blanche. Ce qui énonce un
    fait est `verbatim=True` ; ce qui pose une question est laissé au modèle.
+   **Et le transcript est ce que l'appelant a ENTENDU** (R89) : `_say` est le seul
+   écrivain côté agent. Un ajout manuel « pour être sûr que ça figure au dossier »
+   ne protège personne — il ferait affirmer au dossier ce qu'un garde-fou vient de
+   remplacer, c'est-à-dire mentir précisément là où la panne compte.
 2bis. **Ce qu'on PROMET doit être tenable, sur TOUS les chemins.** Sans numéro, aucune
    promesse de rappel et un lead marqué `injoignable` — jamais `a_rappeler` ni
    `prioritaire` (R79 pour la fin d'appel sans RDV, R87 pour l'escalade et le danger gaz).

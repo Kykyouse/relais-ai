@@ -27,7 +27,7 @@ voix marche de bout en bout — mais **aucun numéro n'est joignable depuis la F
 
 ```bash
 cd proto
-python run_scenario.py                              # 91 tests, ~3 s, sans clé ni base
+python run_scenario.py                              # 92 tests, ~3 s, sans clé ni base
 python run_extract_eval.py [--mock] [--only …]      # banc d'EXTRACTION : 64/66, p50 1080 ms
 python run_llm_eval.py [--mock] [--n 3]             # éval appelant-simulé (mock 19/19)
 python run_depot_pg.py [--migrer]                   # contrat du port contre Supabase
@@ -201,9 +201,8 @@ après l'appel.
 3. ~~Rejouer l'éval LLM réelle~~ — **fait le 09/09 : 19/19**, après R87 et le contrat de
    `veut_humain`. Reste à la jouer en **×3** (57 conversations) pour retrouver la
    comparabilité avec le 57/57 du 26/08 : un passage simple ne dit rien de la variabilité.
-   Et à trancher un défaut constaté non corrigé — sur le chemin du danger gaz, la consigne
-   de sécurité est comptée DEUX FOIS dans notre transcript (l'appelant ne l'entend qu'une
-   fois) : à documenter comme délibéré, ou à enlever.
+   (La consigne gaz comptée deux fois au transcript est réglée le même jour par R89 : le
+   filet supposé était ce qui aurait masqué la panne.)
 4. **Finir le chantier voix** : `endCallPhrases` sur la phrase de fin (désormais
    déterministe), barge-in (`stopSpeakingPlan`), et la latence mesurée sur un appel complet.
 5. Puis, par valeur décroissante : les petites dettes de conversation (dette n°3), un vrai
@@ -231,6 +230,45 @@ datées ; l'en-tête de `vapi.py` porte le format de fil SSE. **Les lire avant d
 chantier voix.**
 
 ---
+
+## 09/09 (suite) — Le filet supposé était ce qui masquait la panne (R89)
+
+Geoffrey, sur le défaut que j'avais consigné sans corriger : « et ça j'ai pas compris
+pourquoi deux… tu peux vérifier si y'a un intérêt réel de garde-fou sinon faisons les
+choses proprement. » La bonne question : je l'avais laissé au motif que l'intention était
+peut-être délibérée, ce qui est une raison de MESURER, pas une raison de laisser.
+
+Le chemin du danger gaz ajoutait la consigne au transcript, puis la repassait en `prefix`
+à `_goto_transfert` — qui la fait passer par `_say`, lequel l'ajoute une seconde fois.
+L'appelant l'entend une fois, le dossier en comptait deux. Les deux lignes datent du
+PREMIER commit d'`engine.py`, écrites ensemble : ni reste d'évolution, ni décision.
+
+**L'hypothèse du garde-fou se retourne, et c'est tout l'intérêt de l'avoir mesurée.** On
+pouvait défendre l'ajout comme un filet : garantir la consigne au dossier même si un
+garde-fou remplaçait la réplique. Ce que `check_output` répond :
+
+    consigne, formule=False (le chemin réel, verbatim)  → []
+    consigne, formule=True  (si elle passait au modèle) → chiffre_hors_verbatim:0,
+                                                          nom_propre_hors_verbatim:Urgence
+
+Sur le chemin réel il ne se déclenche jamais : l'ajout ne protégeait rien. Et le jour où il
+se déclencherait, l'appelant PERDRAIT la consigne (repli « je préfère laisser Julien vous
+répondre ») pendant que le transcript continuerait d'affirmer qu'elle a été dite. **Le
+filet supposé était ce qui masquerait la panne, dans le seul cas où elle peut blesser
+quelqu'un.** C'est la faute de R85 — une interface qui affirme un acte non accompli —
+transposée au dossier que lit l'artisan.
+
+R89 en fait un invariant plutôt qu'un cas : **le transcript est ce que l'appelant a
+ENTENDU**, pas ce qu'on voulait dire. Une réplique renvoyée = une ligne d'agent. Vérifié
+sur le tour du gaz ET sur un tour ordinaire, pour que la règle ne se relise pas comme une
+particularité du gaz — sinon le prochain chemin la contournera de la même façon.
+
+Et la règle est vraie partout, vérifié après coup : `transcript.append` n'apparaît plus
+qu'à trois endroits, `_say` pour l'agent et deux répliques client. `_say` est le SEUL
+écrivain côté agent, ce qui est exactement ce que cet ajout contournait.
+
+92 tests au vert, éval mock 19/19, T04 rejoué en réel : une seule ligne, la consigne une
+fois, aucune promesse de rappel, lead `injoignable`.
 
 ## 09/09 (suite) — Deux personas perdus, cinq qui promettaient l'impossible (R87, R88)
 

@@ -703,7 +703,20 @@ class Conversation:
             self.flags["consignes_donnees"].append("gaz")
             consigne = self.cfg["securite"]["consignes_autorisees"]["gaz_aerer_et_grdf"]
             if self.cfg["securite"]["transfert_si_danger"]:
-                self.transcript.append(("agent", consigne))
+                # `prefix` SUFFIT, et l'ajout manuel au transcript qui vivait ici depuis
+                # le premier commit a été retiré par R89 : la consigne passait par `_say`
+                # juste après, donc le dossier la comptait DEUX fois quand l'appelant ne
+                # l'entendait qu'une.
+                #
+                # On pouvait le défendre comme un filet — garantir la consigne au dossier
+                # même si un garde-fou remplaçait la réplique. Mesuré : sur ce chemin
+                # (verbatim), `check_output` ne trouve rien, donc il ne protégeait rien ;
+                # et s'il se déclenchait un jour, l'appelant PERDRAIT la consigne pendant
+                # que le transcript continuerait de l'affirmer. Le filet supposé était ce
+                # qui masquerait la panne, dans le seul cas où elle peut blesser.
+                #
+                # `_say` reste donc le SEUL écrivain du transcript côté agent : c'est ce
+                # qui rend vérifiable « le transcript est ce que l'appelant a entendu ».
                 return self._goto_transfert(prefix=consigne)
 
         handler = {

@@ -3676,6 +3676,89 @@ def check_pas_de_promesse_sans_numero() -> bool:
     return True
 
 
+def check_transcript_est_ce_qui_est_entendu() -> bool:
+    """R89 : le transcript affirmait une consigne de sécurité prononcée deux fois.
+
+    Vu par Geoffrey le 09/09 dans le transcript de T04 : « et ça j'ai pas compris pourquoi
+    deux… tu peux vérifier si y'a un intérêt réel de garde-fou sinon faisons les choses
+    proprement ». Le chemin du danger gaz ajoutait la consigne au transcript, PUIS la
+    repassait en `prefix` à `_goto_transfert` — qui la fait passer par `_say`, lequel
+    l'ajoute une seconde fois. L'appelant l'entend une fois ; le dossier en comptait deux.
+
+    **L'HYPOTHÈSE DU GARDE-FOU A ÉTÉ MESURÉE, ET ELLE SE RETOURNE.** On pouvait défendre
+    l'ajout comme un filet : garantir la consigne au dossier même si un garde-fou
+    remplaçait la réplique. Mesuré sur `check_output` :
+
+        consigne, formule=False (le chemin réel, verbatim)  → []
+        consigne, formule=True  (si elle passait au modèle) → ['chiffre_hors_verbatim:0',
+                                                              'nom_propre_hors_verbatim:Urgence']
+
+    Sur le chemin réel, le garde-fou ne se déclenche jamais : l'ajout ne protège rien. Et
+    dans le cas où il se déclencherait, l'appelant PERDRAIT la consigne (repli « je préfère
+    laisser Julien vous répondre ») tandis que le transcript continuerait d'affirmer
+    qu'elle a été dite. Ce n'est pas un filet : c'est ce qui masquerait la panne, dans le
+    seul cas où elle peut blesser quelqu'un. Un dossier qui mentirait précisément là est
+    pire qu'un dossier muet — c'est la leçon de R85, sur une page qui affirmait un SMS
+    jamais parti.
+
+    Ce que ce test verrouille — et c'est un invariant, pas un cas :
+
+    1. **le transcript est ce que l'appelant a ENTENDU**, pas ce qu'on voulait dire : une
+       réplique renvoyée = une ligne d'agent, jamais deux ;
+    2. la consigne de sécurité est prononcée, et une seule fois ;
+    3. sur un tour ordinaire aussi, pour que la règle ne soit pas lue comme une
+       particularité du gaz.
+
+    `_say` reste le SEUL écrivain du transcript côté agent. C'est ce que cet ajout
+    contournait, et c'est ce qui rend la règle vérifiable.
+    """
+    import datetime as dt
+
+    from relais_proto.engine import Conversation
+
+    QUAND = dt.datetime(2026, 9, 9, 10, 12, tzinfo=dt.UTC)
+    consigne = CFG["securite"]["consignes_autorisees"]["gaz_aerer_et_grdf"]
+
+    def lignes_agent(convo):
+        return [t for qui, t in convo.transcript if qui == "agent"]
+
+    # (1)(2) DANGER GAZ : le tour qui portait le défaut.
+    convo = Conversation(CFG, MockLLM(), CalendarStub(CFG, now=QUAND))
+    accueil = convo.open()
+    dit = convo.process("Ça sent le gaz dans la cuisine, près de la chaudière")
+
+    if consigne not in dit:
+        print(f"   la consigne de sécurité n'est pas prononcée : « {dit} »")
+        return False
+    agent = lignes_agent(convo)
+    if len(agent) != 2:
+        print(f"   {len(agent)} répliques d'agent au transcript pour 2 tours "
+              f"(accueil + réponse) : le dossier affirme ce que personne n'a entendu")
+        for i, t in enumerate(agent):
+            print(f"     [{i}] {t[:90]}")
+        return False
+    if agent != [accueil, dit]:
+        print("   le transcript ne contient pas exactement ce qui a été renvoyé")
+        return False
+    total = sum(t.count(consigne) for t in agent)
+    if total != 1:
+        print(f"   la consigne apparaît {total} fois au transcript, prononcée une fois")
+        return False
+
+    # (3) UN TOUR ORDINAIRE : la règle vaut partout, sinon elle sera relue comme une
+    # exception du gaz et le prochain chemin la contournera de la même façon.
+    convo = Conversation(CFG, MockLLM(), CalendarStub(CFG, now=QUAND))
+    accueil = convo.open()
+    r1 = convo.process("J'ai une fuite sous l'évier")
+    r2 = convo.process("Je suis à Nogent-sur-Marne 94130")
+    if lignes_agent(convo) != [accueil, r1, r2]:
+        print(f"   tour ordinaire : {len(lignes_agent(convo))} lignes d'agent pour "
+              f"3 répliques renvoyées")
+        return False
+
+    return True
+
+
 def check_cle_mal_orthographiee() -> bool:
     """R88 : une contrainte parfaitement comprise, jetée pour une faute d'orthographe.
 
@@ -10292,6 +10375,14 @@ def run() -> int:
     if check_cle_mal_orthographiee():
         print("   → une contrainte comprise n'est plus jetée pour une faute "
               "d'orthographe du modèle, et on ne devine pas pour autant : ✅ PASS")
+    else:
+        print("   → ❌ FAIL")
+        echecs += 1
+
+    print(f"\n──── R89_transcript_est_ce_qui_est_entendu ────")
+    if check_transcript_est_ce_qui_est_entendu():
+        print("   → le transcript ne contient QUE ce que l'appelant a entendu : "
+              "la consigne gaz est dite une fois, et comptée une fois : ✅ PASS")
     else:
         print("   → ❌ FAIL")
         echecs += 1
