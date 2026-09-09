@@ -300,6 +300,52 @@ Le spike vocal ne s'ouvre **qu'en session dédiée**. Le Sender ID et l'OAuth Go
 le nom commercial — c'est-à-dire le cousin, pas nous.
 ---
 
+## 09/09 (suite) — Dater le worker, pas le déduire (R86)
+
+Suite de la pause. Geoffrey, après que j'ai qualifié l'absence d'expiration de défaut :
+« après, l'ordi de dev n'était pas allumé depuis 6 jours… c'est normal quelque part. » Il
+a raison, et ma formulation était fautive — j'ai présenté une machine débranchée comme un
+dysfonctionnement du système. Le constat utile est plus étroit : **rien ne dit si le
+worker est passé.** Pour l'établir, j'ai dû lire l'état des RDV, comparer des échéances et
+raisonner.
+
+C'est la leçon de R65, mot pour mot, appliquée à l'autre moitié du système : *dater ce qui
+tourne doit être une donnée, pas un raisonnement.*
+
+**Sa seconde question était meilleure que ma réponse.** Je lui proposais une tâche
+planifiée Windows ; il a répondu que ça ne lui semblait pas adapté et qu'à terme ce
+devrait être un service sur un serveur. Sur le fond, le débat cron-contre-service est mal
+posé : ce qui compte est **supervision** (quelqu'un le relance) et **observabilité** (on
+voit qu'il tourne). Un service permanent bloqué sur une exception avalée ressemble
+exactement à un service en bonne santé ; un cron muet ressemble à un cron qui n'a rien à
+faire. Les deux formes appellent le même code, et `worker.py` reste UN PASSAGE — c'est ce
+qui le rend testable et idempotent. La couche au-dessus décide, on ne transforme pas le
+worker en démon.
+
+Et la tâche Windows n'avait effectivement pas lieu d'être : un pansement de développement
+là où la question était d'architecture.
+
+**Ce qui a été fait, indépendant de l'hébergement.** Migration 010 : une table `jalon`
+(`cle`, `instant`), une seule ligne par clé, `on conflict do update`. Pas d'historique —
+on veut savoir s'il tourne ENCORE, et un journal de passages grossirait sans fin. Table
+volontairement générique : un second jalon s'y rangera sans migration.
+
+Le port gagne `noter_passage_worker` / `dernier_passage_worker`, vérifiés par la suite de
+contrat contre les DEUX implémentations. `/sante` publie :
+
+    "worker": {"dernier_passage": "2026-09-09T03:13:24Z", "il_y_a_min": 0}
+
+C'est `il_y_a_min` qu'on lit : « il y a 3 minutes » se comprend d'un coup d'œil, un
+horodatage ISO demande une soustraction et un fuseau. Et `None` signifie JAMAIS, dit
+explicitement — une base fraîche et un cron mort se ressemblent trop.
+
+**Un détail qui n'en est pas un** : le passage est noté EN DERNIER dans le worker, après
+l'expédition. La trace dit « un passage complet a eu lieu », pas « un processus a
+démarré ». Un worker qui planterait au milieu ne doit pas laisser croire que la file a été
+vidée — sinon la donnée qu'on ajoute serait pire qu'une absence de donnée.
+
+89 tests au vert, contrat du port vert sur Postgres réel, banque 5/6.
+
 ## 09/09 — Une semaine de pause, et ce qu'elle a révélé (R85)
 
 Geoffrey revient après une semaine : « tous les RDV sont expirés ». En base, non — QUATRE

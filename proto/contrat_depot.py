@@ -409,4 +409,19 @@ def verifier(fabrique, cfg: dict) -> list[str]:
     exiger(depot.consommer_essai_code("art-dupont") == 0,
            "consommer_essai_code sur un code absent devrait rendre 0, pas lever")
 
+    # ---- le dernier passage du worker (R86) -------------------------------------------
+    # Un jalon, pas un historique : le dernier écrase. Et « jamais » doit se distinguer
+    # d'une date par défaut — c'est toute la différence entre une base fraîche et un cron
+    # mort, et c'est précisément ce qu'on cherchait à savoir le 09/09.
+    depot.noter_passage_worker(LUNDI_9H)
+    exiger(depot.dernier_passage_worker() == LUNDI_9H,
+           "noter_passage_worker : le passage relu diffère de celui noté")
+    relu_passage = depot.dernier_passage_worker()
+    exiger(relu_passage is not None and relu_passage.tzinfo is not None,
+           "dernier_passage_worker rend un instant NAÏF (règle n°7 : toujours en UTC)")
+    plus_tard = LUNDI_9H + dt.timedelta(minutes=17)
+    depot.noter_passage_worker(plus_tard)
+    exiger(depot.dernier_passage_worker() == plus_tard,
+           "noter_passage_worker : le passage suivant n'écrase pas le précédent")
+
     return ecarts

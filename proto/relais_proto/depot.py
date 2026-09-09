@@ -151,10 +151,28 @@ class Depot(Protocol):
     def differer_message(self, message_id: str,
                          envoyer_apres: dt.datetime) -> None: ...
 
+    def noter_passage_worker(self, maintenant: dt.datetime) -> None:
+        """Enregistre qu'un passage du worker vient d'avoir lieu (R86).
+
+        Écrase le précédent : on veut savoir S'IL TOURNE ENCORE, pas tenir un
+        historique. Un journal de passages serait un autre objet, et il vieillirait mal.
+        """
+        ...
+
+    def dernier_passage_worker(self) -> dt.datetime | None:
+        """Le dernier passage, ou None si le worker n'a JAMAIS tourné.
+
+        `None` est une réponse à part entière, et la plus importante : une base fraîche
+        et un cron mort se ressemblent, et c'est exactement ce qu'on veut distinguer.
+        """
+        ...
+
 
 class DepotMemoire:
     """Implémentation de test. Identifiants séquentiels : les tests restent lisibles,
     et l'adaptateur Postgres mettra des UUID sans que le domaine s'en aperçoive."""
+
+    _passage_worker: dt.datetime | None = None
 
     def __init__(self) -> None:
         self._appels: dict[str, dict] = {}
@@ -346,6 +364,12 @@ class DepotMemoire:
         brut["derniere_erreur"] = erreur
         if definitif:
             brut["statut"] = StatutMessage.ECHEC.value
+
+    def noter_passage_worker(self, maintenant: dt.datetime) -> None:
+        self._passage_worker = maintenant
+
+    def dernier_passage_worker(self) -> dt.datetime | None:
+        return self._passage_worker
 
     def differer_message(self, message_id: str, envoyer_apres: dt.datetime) -> None:
         self._exige(self._messages, message_id)["envoyer_apres"] =             envoyer_apres.isoformat()

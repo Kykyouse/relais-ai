@@ -226,9 +226,19 @@ def creer_app(depot, registre: Registre, fabrique_llm, horloge=None,
         # déduction — trois fois dans la journée, la même enquête. **Dater ce qui tourne
         # doit être une donnée, pas un raisonnement.** Ce n'est pas un secret : c'est un
         # identifiant de révision, comme le numéro de version d'un logiciel.
+        # `worker` : le dernier passage, et surtout son ANCIENNETÉ (R86). C'est elle
+        # qu'on lit — « il y a 3 minutes » se comprend d'un coup d'œil, « 04:21:00Z »
+        # demande une soustraction et un fuseau. `None` signifie JAMAIS, et se dit
+        # explicitement : une base fraîche et un cron mort se ressemblent trop.
+        passage = depot.dernier_passage_worker()
+        age = None
+        if passage is not None:
+            age = int((maintenant() - passage).total_seconds() // 60)
         return {"statut": "ok", "contrat_lead": CONTRAT_LEAD_VERSION,
                 "cookie_secure": cookie_secure, "version": version,
-                "modeles": modeles or {}}
+                "modeles": modeles or {},
+                "worker": {"dernier_passage": passage.isoformat() if passage else None,
+                           "il_y_a_min": age}}
 
     # ---- sonde de l'étape 0 (chantier voix), absente par défaut ----
     if sonde_voix is not None:

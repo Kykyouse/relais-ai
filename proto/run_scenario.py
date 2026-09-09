@@ -3899,6 +3899,100 @@ def _contrainte_de_phrase(phrase: str) -> dict:
     return actions.valider_contrainte(MockLLM()._contrainte_mock(phrase.lower()))
 
 
+def check_dernier_passage_worker() -> bool:
+    """R86 : savoir si le worker tourne encore doit être une DONNÉE, pas une déduction.
+
+    Le 09/09, Geoffrey revient après une semaine et constate que ses RDV n'ont pas expiré.
+    Cause : son PC de développement était éteint — rien d'anormal. Mais pour l'établir,
+    j'ai dû lire l'état des RDV en base, comparer des échéances, et raisonner. Personne,
+    ni lui ni moi, ne pouvait répondre à « le worker a-t-il tourné ? » autrement qu'à
+    tâtons.
+
+    C'est la leçon de R65, mot pour mot, appliquée à l'autre moitié du système : **dater
+    ce qui tourne doit être une donnée, pas un raisonnement.** R65 l'a fait pour la
+    révision déployée après trois enquêtes dans la même journée.
+
+    Et le besoin ne disparaîtra pas avec un cron branché — il grandira. Un cron muet qui
+    ne tourne plus ressemble EXACTEMENT à un cron qui n'a rien à faire : mêmes journaux
+    vides, même base immobile. Un processus permanent bloqué sur une exception avalée
+    ressemble tout autant à un processus en bonne santé. Quelle que soit la forme retenue
+    — timer systemd, cron, process worker supervisé — c'est le même symptôme, et c'est
+    cette donnée qui le distingue.
+
+    Ce que ce test verrouille :
+
+    1. le passage est NOTÉ, et relu tel quel — un instant UTC, comme tout le reste ;
+    2. avant tout passage, la réponse est « jamais » et non une date inventée ;
+    3. le dernier passage ÉCRASE le précédent (on veut le dernier, pas un historique) ;
+    4. `/sante` le publie, avec l'ancienneté en minutes — c'est elle qu'on lit, pas
+       l'horodatage : « il y a 3 minutes » se comprend d'un coup d'œil, « 04:21:00Z »
+       demande une soustraction.
+    """
+    import datetime as dt
+
+    try:
+        from fastapi.testclient import TestClient
+    except ImportError:
+        print("   fastapi/httpx absents : pip install -r requirements.txt")
+        return False
+
+    from relais_proto.api import creer_app
+    from relais_proto.registre import Artisan, Registre, empreinte as emp
+
+    depot = DepotMemoire()
+
+    # (2) avant tout passage : « jamais », pas une date par défaut
+    if depot.dernier_passage_worker() is not None:
+        print(f"   un passage est inventé avant tout worker : "
+              f"{depot.dernier_passage_worker()}")
+        return False
+
+    # (1) noté, relu tel quel
+    depot.noter_passage_worker(LUNDI_9H)
+    lu = depot.dernier_passage_worker()
+    if lu != LUNDI_9H:
+        print(f"   le passage relu diffère de celui noté : {lu} vs {LUNDI_9H}")
+        return False
+    if lu.tzinfo is None:
+        print("   l'instant relu est NAÏF — règle n°7 : un horodatage est un instant UTC")
+        return False
+
+    # (3) le dernier écrase
+    plus_tard = LUNDI_9H + dt.timedelta(minutes=17)
+    depot.noter_passage_worker(plus_tard)
+    if depot.dernier_passage_worker() != plus_tard:
+        print(f"   le passage suivant n'écrase pas : {depot.dernier_passage_worker()}")
+        return False
+
+    # (4) /sante le publie, avec l'ANCIENNETÉ
+    registre = Registre([Artisan("art-dupont", "+33189701234", emp("t"), CFG)],
+                        emp("s"))
+    pendule = [plus_tard + dt.timedelta(minutes=3)]
+    app = creer_app(depot, registre, MockLLM, lambda: pendule[0])
+    with TestClient(app) as c:
+        sante = c.get("/sante").json()
+    w = sante.get("worker")
+    if not isinstance(w, dict):
+        print(f"   /sante ne publie pas le worker : {sorted(sante)}")
+        return False
+    if not w.get("dernier_passage", "").startswith(plus_tard.strftime("%Y-%m-%dT%H:%M")):
+        print(f"   la date publiée est fausse : {w}")
+        return False
+    if w.get("il_y_a_min") != 3:
+        print(f"   l'ancienneté est fausse : {w.get('il_y_a_min')} (attendu 3)")
+        return False
+
+    # …et quand rien n'a jamais tourné, `/sante` le DIT au lieu de mentir par omission
+    app2 = creer_app(DepotMemoire(), registre, MockLLM, lambda: pendule[0])
+    with TestClient(app2) as c:
+        w2 = c.get("/sante").json().get("worker")
+    if w2 is None or w2.get("dernier_passage") is not None:
+        print(f"   sans passage, /sante devrait le dire explicitement : {w2}")
+        return False
+
+    return True
+
+
 def check_boite_naffirme_pas_un_sms_non_parti() -> bool:
     """R85 : la boîte ne dit pas « le client est prévenu » quand il ne l'est pas.
 
@@ -9922,6 +10016,14 @@ def run() -> int:
     if check_boite_naffirme_pas_un_sms_non_parti():
         print("   → la boîte n'affirme plus un SMS que le worker n'a peut-être pas "
               "envoyé, et n'offre toujours aucune action sur un RDV échu : ✅ PASS")
+    else:
+        print("   → ❌ FAIL")
+        echecs += 1
+
+    print(f"\n──── R86_dernier_passage_worker ────")
+    if check_dernier_passage_worker():
+        print("   → le dernier passage du worker est une donnée publiée par /sante : "
+              "un cron muet se voit en dix secondes : ✅ PASS")
     else:
         print("   → ❌ FAIL")
         echecs += 1

@@ -110,6 +110,11 @@ def run() -> int:
     if restants is not None:
         alerte = "  ⚠️ RECHARGER" if restants < SEUIL_CREDITS else ""
         print(f"  crédits SMS restants : {restants}{alerte}")
+    # LE PASSAGE EST NOTÉ EN DERNIER, et c'est le point important (R86) : la trace dit
+    # « un passage COMPLET a eu lieu », pas « un processus a démarré ». Un worker qui
+    # planterait au milieu ne doit pas laisser croire que la file a été vidée — sinon la
+    # donnée qu'on ajoute ici serait pire qu'une absence de donnée.
+    depot.noter_passage_worker(maintenant)
     depot.fermer()
     return 0
 

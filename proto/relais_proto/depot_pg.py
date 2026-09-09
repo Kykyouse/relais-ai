@@ -398,6 +398,18 @@ class DepotPostgres:
         if not self._executer(sql, params):
             raise Introuvable(message_id)
 
+    def noter_passage_worker(self, maintenant: dt.datetime) -> None:
+        # `on conflict do update` : une seule ligne, jamais un historique. Voir la
+        # migration 010 pour le pourquoi.
+        self._executer(
+            "insert into jalon (cle, instant) values ('worker', %s) "
+            "on conflict (cle) do update set instant = excluded.instant",
+            (maintenant,))
+
+    def dernier_passage_worker(self) -> dt.datetime | None:
+        lignes = self._plusieurs("select instant from jalon where cle = 'worker'")
+        return lignes[0][0] if lignes else None
+
     def differer_message(self, message_id: str, envoyer_apres: dt.datetime) -> None:
         message_id = self._uuid(message_id, message_id)
         if not self._executer(
