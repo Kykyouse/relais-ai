@@ -201,6 +201,35 @@ CAS_FAITS: list[tuple[str, dict, str, object, str]] = [
 ]
 
 
+# Le contexte des cas de CONTRAINTE, distinct de celui des actions — et la raison vaut
+# d'être écrite. `CTX_S5` propose deux créneaux « demain » ; dans ce contexte, « demain si
+# possible » DÉSIGNE une des propositions, donc c'est un CHOIX et non une contrainte
+# (règle de priorité du menu). Le modèle a répondu `choisir/1`, ce qui est juste, et mon
+# cas comptait ça comme un échec.
+#
+# J'ai d'abord essayé de déplacer les propositions sur un jour éloigné. Ça a déplacé
+# l'ambiguïté au lieu de la lever : « après-demain » finissait par désigner le créneau, et
+# « pas avant vendredi » devenait incongru face à des propositions du lundi suivant.
+# AUCUN contexte AVEC propositions ne peut lever l'ambiguïté pour tous les jours cités,
+# puisque les cas balaient la semaine.
+#
+# La bonne fixture est donc un contexte SANS proposition — et c'est aussi la situation la
+# plus naturelle pour une contrainte : l'appelant annonce ses disponibilités avant qu'on
+# lui offre quoi que ce soit (c'est exactement R11, « uniquement le samedi matin » dans la
+# première phrase). Une contrainte étant un FAIT extractible à tout état depuis R83, ce
+# contexte est légitime, et l'ambiguïté disparaît par construction plutôt que par choix
+# de dates.
+#
+# Cinquième itération sur cette fixture. Le CONTEXTE d'un cas fait partie du cas, et je
+# l'ai sous-estimé à chaque fois.
+CTX_CONTRAINTE = {
+    **CTX_S5,
+    "etat": "S4_IDENTITE",
+    "dernier_agent": ("C'est noté pour Nogent-sur-Marne. À quel nom Julien peut-il noter "
+                      "le rendez-vous ?"),
+    "propositions": [],
+}
+
 # (phrase, contexte, contrainte attendue, étiquette) — R83. Ce que le modèle doit RANGER
 # dans la structure, pas ce qu'il doit dire. Les tournures viennent des appels réels et du
 # sondage du 27/08 : celles qui étaient INVERSÉES (« ni le jeudi » préférait jeudi) et
@@ -386,7 +415,7 @@ def main() -> int:
     for phrase, ctx, attendu, etiquette in contrs:
         debut = time.monotonic()
         try:
-            ex = llm.extract(phrase, ctx or CTX_S5)
+            ex = llm.extract(phrase, ctx or CTX_CONTRAINTE)
         except Exception as exc:                                      # noqa: BLE001
             ex = {"_erreur": repr(exc)}
         ms = int((time.monotonic() - debut) * 1000)

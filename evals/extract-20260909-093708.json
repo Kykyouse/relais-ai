@@ -1,0 +1,25 @@
+{
+  "modele": "claude-haiku-4-5",
+  "reussis": 1,
+  "total": 1,
+  "latence_p50_ms": 1144,
+  "latence_p95_ms": 1144,
+  "latence_max_ms": 1144,
+  "cas": [
+    {
+      "etiquette": "contr/ni-jeudi",
+      "phrase": "Ni le jeudi.",
+      "attendu": "{'exclut_jours': ['jeudi']}",
+      "obtenu": "contrainte={'exclut_jours': ['jeudi']}",
+      "ok": true,
+      "brut": {
+        "contrainte": {
+          "exclut_jours": [
+            "jeudi"
+          ]
+        }
+      },
+      "ms": 1144
+    }
+  ]
+}

@@ -300,6 +300,48 @@ Le spike vocal ne s'ouvre **qu'en session dédiée**. Le Sender ID et l'OAuth Go
 le nom commercial — c'est-à-dire le cousin, pas nous.
 ---
 
+## 09/09 (suite) — La règle de portée, mesurée (et la fixture, cinq fois)
+
+Mesure enfin possible : la clé du 02/09 avait été révoquée (401, pas 529 comme la
+semaine passée), Geoffrey en a remis une. **Le garde du banc a fait son travail** — 26
+appels sur 26 en échec, sortie 2, aucun score affiché. Sans lui j'aurais rapporté
+« 2/18 compris » et on aurait conclu à une régression catastrophique du modèle.
+Troisième fois que ce mécanisme sert, première fois sans avoir à le corriger.
+
+**La règle de portée tient.** « Plutôt jeudi, et pas le matin » → `{jours: ["jeudi"],
+exclut_moment: "matin"}`, quatre passages consécutifs verts sur les trois cas de portée.
+C'est la faute mesurée le 02/09 sur un appel réel — le modèle étendait la négation aux
+deux membres de la phrase, exactement comme l'ancien parseur et sa fenêtre de trois mots.
+
+**Banc complet : 64/66**, p50 1080 ms. Les deux échecs restants sont les violations
+connues du modèle sur le numéro, que le contrôleur attrape (R55/R75).
+
+**LA FIXTURE M'A PRIS CINQ ITÉRATIONS, et la leçon vaut plus que le résultat.** Les cas
+de contrainte héritaient du contexte des actions, où les deux propositions tombent
+« demain » : dans ce contexte, « demain si possible » DÉSIGNE une proposition, donc c'est
+un CHOIX — et le modèle répondait `choisir/1`, ce qui est juste. Mon cas comptait ça
+comme un échec.
+
+J'ai d'abord déplacé les propositions sur un lundi éloigné. Ça a déplacé l'ambiguïté :
+« après-demain » finissait par désigner le créneau, et « pas avant vendredi » devenait
+incongru. **Aucun contexte AVEC propositions ne peut lever l'ambiguïté pour tous les
+jours cités**, puisque les cas balaient la semaine.
+
+La bonne fixture est un contexte SANS proposition — et c'est aussi la situation la plus
+naturelle : l'appelant annonce ses disponibilités avant qu'on lui offre quoi que ce soit
+(c'est R11, « uniquement le samedi matin » dans la première phrase). Une contrainte étant
+un FAIT extractible à tout état depuis R83, ce contexte est légitime, et l'ambiguïté
+disparaît par construction plutôt que par choix de dates.
+
+**Le contexte d'un cas fait partie du cas.** Je l'ai sous-estimé cinq fois de suite.
+
+**Instabilité résiduelle, mesurée et consignée** : environ un cas sur dix-sept par
+passage rend `contrainte: {}`, jamais le même, et non reproductible à la demande
+(quatre passages d'affilée corrects sur le cas fautif du passage précédent). Le mode de
+panne est SÛR : une contrainte vide fait tomber le garde de R82, qui empêche l'agent de
+prétendre avoir compris, et on retombe sur la reproposition normale. Sourd un tour, pas
+faux. À surveiller si le taux monte.
+
 ## 09/09 (suite) — Dater le worker, pas le déduire (R86)
 
 Suite de la pause. Geoffrey, après que j'ai qualifié l'absence d'expiration de défaut :

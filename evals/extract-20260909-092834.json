@@ -1,0 +1,64 @@
+{
+  "modele": "claude-haiku-4-5",
+  "reussis": 3,
+  "total": 3,
+  "latence_p50_ms": 1352,
+  "latence_p95_ms": 1574,
+  "latence_max_ms": 1574,
+  "cas": [
+    {
+      "etiquette": "contr/portee-negation",
+      "phrase": "Plutôt jeudi, et pas le matin.",
+      "attendu": "{'jours': ['jeudi'], 'exclut_moment': 'matin'}",
+      "obtenu": "contrainte={'jours': ['jeudi'], 'exclut_moment': 'matin'}",
+      "ok": true,
+      "brut": {
+        "action": "contrainte",
+        "disponibilites": "Plutôt jeudi, et pas le matin.",
+        "contrainte": {
+          "jours": [
+            "jeudi"
+          ],
+          "exclut_moment": "matin"
+        }
+      },
+      "ms": 1574
+    },
+    {
+      "etiquette": "contr/portee-samedi",
+      "phrase": "Samedi si possible, mais pas l'après-midi.",
+      "attendu": "{'jours': ['samedi'], 'exclut_moment': 'apres_midi'}",
+      "obtenu": "contrainte={'jours': ['samedi'], 'exclut_moment': 'apres_midi'}",
+      "ok": true,
+      "brut": {
+        "action": "contrainte",
+        "disponibilites": "Samedi si possible, mais pas l'après-midi.",
+        "contrainte": {
+          "jours": [
+            "samedi"
+          ],
+          "exclut_moment": "apres_midi"
+        }
+      },
+      "ms": 1352
+    },
+    {
+      "etiquette": "contr/portee-demain",
+      "phrase": "Demain, et surtout pas en soirée.",
+      "attendu": "{'jours': ['demain'], 'exclut_moment': 'soir'}",
+      "obtenu": "contrainte={'jours': ['demain'], 'exclut_moment': 'soir'}",
+      "ok": true,
+      "brut": {
+        "action": "choisir",
+        "rang": 1,
+        "contrainte": {
+          "jours": [
+            "demain"
+          ],
+          "exclut_moment": "soir"
+        }
+      },
+      "ms": 1179
+    }
+  ]
+}
