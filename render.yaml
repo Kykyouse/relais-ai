@@ -26,6 +26,12 @@ services:
   - name: nelyo-api
     type: web
     runtime: python
+    branch: main               # ⚠️ PAS `wip`. Le workflow du projet est « commit+push à
+                               # chaque fin de session, 2 machines » : déployer depuis
+                               # l'établi ferait partir en production un travail laissé à
+                               # moitié sur l'autre machine. `main` = ce qui tourne, `wip` =
+                               # ce qu'on fabrique ; la mise en prod est un merge qu'on
+                               # relit, comme le commit qui passera `RELAIS_SMS` à `ovh`.
     region: frankfurt          # UE : RGPD, et la latence compte à chaque tour d'appel
     plan: starter              # ⚠️ PAS le palier gratuit : il s'endort après inactivité, et
                                # Vapi attend notre réponse en ~1 s. Un démarrage à froid ne
@@ -50,6 +56,14 @@ services:
     # vérité (révision déployée, dernier passage du worker) — une donnée, pas une gâchette.
 
     envVars:
+      # ⚠️ ÉPINGLÉ, et ce n'est pas de la prudence de principe : le défaut de Render pour un
+      # service créé aujourd'hui est **Python 3.14.3**, alors que tout ce qui est mesuré ici
+      # l'a été en 3.13. Un déploiement de production n'est pas l'endroit où l'on découvre
+      # une version majeure. La variable exige une version COMPLÈTE (un `.python-version`
+      # accepterait `3.13`, mais il doit vivre à la racine du DÉPÔT, pas dans `rootDir` —
+      # donc loin de ce fichier et de ses raisons). À relever délibérément, jamais à subir.
+      - key: PYTHON_VERSION
+        value: "3.13.15"
       - key: DATABASE_URL          # connexion directe Supabase
         sync: false
       - key: DATABASE_URL_POOLER   # repli (pooler) — cf. run_depot_pg.py
@@ -85,6 +99,9 @@ services:
   - name: nelyo-worker
     type: cron
     runtime: python
+    branch: main               # même branche que l'API, et pour la même raison : les deux
+                               # services partagent un schéma de base. Les voir diverger
+                               # serait un worker qui écrit un format que l'API ne lit pas.
     region: frankfurt
     plan: starter
     rootDir: proto
@@ -97,12 +114,18 @@ services:
     startCommand: python worker.py
 
     envVars:
+      - key: PYTHON_VERSION        # même épinglage que l'API — cf. le commentaire là-haut
+        value: "3.13.15"
       - key: DATABASE_URL
         sync: false
       - key: DATABASE_URL_POOLER
         sync: false
-      - key: RELAIS_BASE_URL       # les liens de validation partent d'ici aussi
-        sync: false
+      # PAS de `RELAIS_BASE_URL` ici, et c'est vérifié plutôt que supposé : la seule chose
+      # qui fabrique une URL est `confirmation.lien()`, appelée depuis `api.py` et de nulle
+      # part ailleurs. Le worker n'écrit au client que par `expiration_client`, un gabarit
+      # SANS lien (le lien coûterait ~43 caractères, donc un second crédit — cf. R23). La
+      # déclarer ici coûtait un `sync: false` de plus à renseigner, pour une variable que
+      # personne ne lit, sous un commentaire qui affirmait le contraire du code.
       - key: RELAIS_SMS            # ⚠️ VALEUR EN DUR, PAS `sync: false` : le défaut
         value: journal             # inoffensif doit être VERSIONNÉ. Passer à « ovh » envoie
                                    # de vrais SMS à de vrais clients ; ça doit être un
