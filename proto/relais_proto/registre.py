@@ -42,12 +42,23 @@ class Artisan:
 
 
 class Registre:
-    def __init__(self, artisans: list[Artisan], secret_webhook_sha256: str):
+    def __init__(self, artisans: list[Artisan], secret_webhook_sha256: str,
+                 config_produit: dict | None = None):
         # La config PRODUIT, une fois pour toutes. Elle est identique pour tous les
         # artisans (c'est le sens d'un expéditeur unique), mais elle doit être joignable
         # SANS artisan : la page « lien invalide » s'affiche avant qu'on sache de qui
         # relève le jeton, et elle porte quand même le nom du produit.
-        self.produit: dict | None = next(
+        #
+        # R94 (20/09) : cette règle était écrite ici et CONTREDITE par la ligne suivante,
+        # qui dérivait la config de la liste d'artisans. Sur une base de production neuve
+        # — table `artisan` vide, ce qui est l'état normal d'une installation — le produit
+        # devenait `None` et `creer_app` refusait de construire l'application. Les deux
+        # constructeurs chargeaient pourtant déjà `produit.charger(...)` sans le passer.
+        #
+        # La dérivation reste en REPLI, et pas par prudence : des dizaines de tests
+        # construisent un `Registre` directement avec des configs qui portent déjà
+        # `produit`. L'explicite gagne, l'implicite dépanne.
+        self.produit: dict | None = config_produit or next(
             (a.config["produit"] for a in artisans if a.config.get("produit")), None)
         for a in artisans:
             # Le fuseau est vérifié À LA CONSTRUCTION, pas à l'usage : `ZoneInfo` lève sur
@@ -89,7 +100,7 @@ class Registre:
                     config=produit.appliquer(
                         json.loads((base / a["config"]).read_text(encoding="utf-8")), p))
             for a in brut["artisans"]]
-        return cls(artisans, empreinte(secret_webhook))
+        return cls(artisans, empreinte(secret_webhook), config_produit=p)
 
     @classmethod
     def depuis_depot(cls, depot, dossier_config: pathlib.Path,
@@ -127,7 +138,7 @@ class Registre:
                 config_fichier=ligne.config_fichier,
                 config=produit.appliquer(
                     json.loads(chemin.read_text(encoding="utf-8")), p)))
-        return cls(artisans, empreinte(secret_webhook)), ignores
+        return cls(artisans, empreinte(secret_webhook), config_produit=p), ignores
 
     @classmethod
     def charger(cls, depot, dossier_config: pathlib.Path, secret_webhook: str,

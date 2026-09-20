@@ -45,6 +45,7 @@ from relais_proto.depot_pg import DepotPostgres, candidats_env, resoudre_connexi
 from relais_proto.envoi import choisir_envoyeur
 from relais_proto.llm import make_llm
 from relais_proto.registre import Registre
+from relais_proto import version as version_module
 
 RACINE = pathlib.Path(__file__).parent
 load_dotenv(RACINE.parent / ".env")
@@ -75,24 +76,17 @@ def _cookie_secure() -> bool:
 
 
 def _version() -> str:
-    """Le commit qui tourne, ou « inconnue ».
+    """Le commit qui tourne, ou « inconnue ». Délègue à `relais_proto.version`.
 
-    Lu depuis git au démarrage, avec un repli sur la variable `RELAIS_VERSION` pour les
-    déploiements où le dépôt n'est pas là (conteneur, archive). Jamais bloquant : une
-    version inconnue ne doit pas empêcher le serveur de démarrer.
+    Le résolveur a DÉMÉNAGÉ le 20/09 (R93), sans changer d'un caractère. Il vivait ici,
+    et R65 l'éprouvait par `import serveur` — ce qui exécutait `app = construire()`, donc
+    ouvrait une connexion Postgres pour tester une lecture de variable d'environnement.
+    La suite « sans clé ni base » dépendait ainsi d'une base joignable.
+
+    Ce qui doit être éprouvable sans base vit désormais hors du câblage de production.
+    L'alias reste : `_version` est le nom sous lequel ce fichier annonce sa version.
     """
-    depuis_env = (os.environ.get("RELAIS_VERSION") or "").strip()
-    if depuis_env:
-        return depuis_env
-    try:
-        import subprocess
-        r = subprocess.run(["git", "rev-parse", "--short", "HEAD"],
-                           cwd=RACINE.parent, capture_output=True, text=True, timeout=5)
-        if r.returncode == 0 and r.stdout.strip():
-            return r.stdout.strip()
-    except Exception:
-        pass
-    return "inconnue"
+    return version_module.resoudre(RACINE.parent)
 
 
 def _sonde_voix() -> pathlib.Path | None:

@@ -3676,6 +3676,140 @@ def check_pas_de_promesse_sans_numero() -> bool:
     return True
 
 
+def check_produit_sans_artisan() -> bool:
+    """R94 : le nom du PRODUIT ne dépend pas de l'existence d'un client.
+
+    Trouvé le 20/09, en faisant booter `serveur.py` contre la base de production fraîche
+    avant de la confier à Render. L'API a refusé de se construire :
+
+        RuntimeError: config produit absente du registre : le nom visible du produit
+        est obligatoire (proto/config/produit.json).
+
+    La table `artisan` était vide — normale pour une base neuve, et voulue : les jetons
+    de `config/artisans.json` sont des jetons de DÉV documentés en clair dans le dépôt,
+    les semer en production reviendrait à publier des identifiants.
+
+    Le défaut : `Registre.__init__` dérivait la config produit de la LISTE D'ARTISANS
+    (`next(a.config["produit"] for a in artisans …)`). Zéro artisan, donc `produit = None`,
+    donc `creer_app` lève. Alors que le commentaire juste au-dessus énonçait déjà la règle
+    — « elle doit être joignable SANS artisan : la page “lien invalide” s'affiche avant
+    qu'on sache de qui relève le jeton ». Les deux constructeurs chargeaient d'ailleurs
+    `produit.charger(...)` sans jamais le transmettre.
+
+    C'est la forme la plus coûteuse d'un défaut : l'intention était écrite, correcte, et
+    contredite trois lignes plus bas. Un commentaire ne s'exécute pas.
+
+    Et le mode de panne qu'il ouvrait vaut d'être nommé : **il ne se déclenche qu'à
+    l'installation.** Toute machine qui a déjà un artisan le masque — c'est-à-dire toutes
+    les nôtres. Il attendait le premier déploiement, le seul moment où personne n'a encore
+    d'outil pour diagnostiquer.
+    """
+    from relais_proto.api import creer_app
+    from relais_proto.registre import Registre
+
+    # une base de PRODUCTION FRAÎCHE : le schéma est là, la table `artisan` est vide.
+    registre, ignores = Registre.depuis_depot(DepotMemoire(), _DOSSIER_CONFIG, "secret")
+    if ignores:
+        print(f"   un dépôt vide ne devrait rien écarter : {ignores}")
+        return False
+    if not (registre.produit or {}).get("nom"):
+        print("   registre sans artisan : le nom du produit est introuvable")
+        return False
+
+    # et l'API doit se CONSTRUIRE — c'est le geste que Render exécutera.
+    app = creer_app(DepotMemoire(), registre, MockLLM, lambda: LUNDI_9H,
+                    base_url="https://nelyo.test", cookie_secure=True,
+                    version="neuve")
+    from fastapi.testclient import TestClient
+    with TestClient(app) as c:
+        if c.get("/sante").status_code != 200:
+            print("   /sante ne répond pas sur une instance sans artisan")
+            return False
+        # la page « lien invalide » : le cas que le commentaire d'origine invoquait, et
+        # qui doit porter le nom du produit alors qu'aucun artisan n'est connu.
+        r = c.get("/c/jeton-qui-nexiste-pas")
+        if r.status_code not in (200, 404):
+            print(f"   page de jeton invalide : HTTP {r.status_code}")
+            return False
+        if "Nelyo" not in r.text:
+            print("   la page de jeton invalide ne porte pas le nom du produit")
+            return False
+
+    # la voie de secours (fichier) doit tenir la même promesse.
+    depuis_fichier = Registre.depuis_fichier(
+        _DOSSIER_CONFIG / "artisans.json", "secret")
+    if not (depuis_fichier.produit or {}).get("nom"):
+        print("   la voie fichier ne porte pas non plus la config produit")
+        return False
+    return True
+
+
+def check_suite_sans_base() -> bool:
+    """R93 : cette suite ne doit RIEN attendre d'une base de données.
+
+    Trouvé le 20/09 en déployant. La base de dév a été mise en pause (plan gratuit, deux
+    projets actifs) et la suite n'a pas échoué — elle s'est **interrompue sur une trace**,
+    au milieu, après 64 tests verts. Aucun verdict, ni PASS ni FAIL.
+
+    La cause : R65 éprouvait le résolveur de version par `import serveur`. Or `serveur.py`
+    est le câblage de PRODUCTION et exécute `app = construire()` à l'import — donc il
+    ouvrait une connexion Postgres. Pour tester la lecture d'une variable d'environnement.
+
+    Deux choses en sortent, et la seconde est la vraie :
+
+    1. le résolveur a déménagé dans `relais_proto.version`, module sans effet à l'import ;
+    2. **une dépendance qu'on ne déclare pas, on ne la voit qu'en panne.** La suite est
+       annoncée « sans clé ni base » dans CLAUDE.md et rendue obligatoire avant tout
+       changement par la règle n°3. Une suite qui exige en silence une base joignable
+       n'est pas indisponible le jour où la base tombe : elle est indisponible le jour où
+       l'on en a le plus besoin — pendant un déploiement, hors du réseau habituel, sur
+       une machine neuve.
+
+    Ce test ne vérifie donc pas le résolveur (R65 s'en charge) mais l'ABSENCE du couplage :
+    le câblage de production ne doit jamais entrer dans le processus de test, et ce qui
+    doit être éprouvable sans base ne doit pas connaître de base.
+    """
+    import sys as _sys
+
+    # (a) le câblage de production n'est pas entré dans le processus. C'est le point le
+    # plus littéral : `serveur` importé, c'est une connexion Postgres ouverte, quel que
+    # soit le test qui l'a demandée.
+    if "serveur" in _sys.modules:
+        print("   `serveur` (câblage de production) a été importé par la suite : "
+              "il ouvre une connexion Postgres à l'import")
+        return False
+
+    # (b) le résolveur de version fonctionne avec des DSN qui ne mènent nulle part. Si
+    # quelqu'un le reconnecte un jour au câblage, ce point tombe avant la mise en prod
+    # et non pendant. On restaure l'environnement : d'autres tests lisent ces variables.
+    import os
+    avant = {c: os.environ.get(c) for c in ("DATABASE_URL", "DATABASE_URL_POOLER",
+                                            "RELAIS_VERSION")}
+    try:
+        os.environ["DATABASE_URL"] = "postgresql://nul:nul@base.qui.nexiste.pas:5432/nul"
+        os.environ["DATABASE_URL_POOLER"] = os.environ["DATABASE_URL"]
+        os.environ["RELAIS_VERSION"] = "hors-ligne-1"
+        from relais_proto import version as _v
+        if _v.resoudre() != "hors-ligne-1":
+            print(f"   le résolveur ne rend pas sa valeur sans base : {_v.resoudre()!r}")
+            return False
+    finally:
+        for cle, val in avant.items():
+            if val is None:
+                os.environ.pop(cle, None)
+            else:
+                os.environ[cle] = val
+
+    # (c) et le module de version lui-même ne tire aucune dépendance de persistance.
+    from relais_proto import version as _v2
+    suspects = [m for m in ("psycopg", "relais_proto.depot_pg")
+                if m in getattr(_v2, "__dict__", {})]
+    if suspects:
+        print(f"   `relais_proto.version` référence {suspects} : il doit rester pur")
+        return False
+    return True
+
+
 def check_base_de_production_dit_non() -> bool:
     """R92 : une base de PRODUCTION doit pouvoir refuser d'être tronquée, elle-même.
 
@@ -6661,16 +6795,20 @@ def check_version_deployee() -> bool:
     # et jamais bloquant. Un déploiement sans dépôt (conteneur, archive) doit démarrer.
     import os
 
-    import serveur
+    # `relais_proto.version` et NON `serveur` (R93, 20/09) : importer le câblage de
+    # production ouvrait une connexion Postgres pour éprouver une lecture de variable
+    # d'environnement. Le résolveur est le même, à son voisinage près.
+    from relais_proto import version as serveur_version
 
     avant = os.environ.get("RELAIS_VERSION")
     try:
         os.environ["RELAIS_VERSION"] = "deploiement-42"
-        if serveur._version() != "deploiement-42":
-            print(f"   RELAIS_VERSION n'est pas prioritaire : {serveur._version()!r}")
+        if serveur_version.resoudre() != "deploiement-42":
+            print(f"   RELAIS_VERSION n'est pas prioritaire : "
+                  f"{serveur_version.resoudre()!r}")
             return False
         os.environ["RELAIS_VERSION"] = "   "
-        vu = serveur._version()
+        vu = serveur_version.resoudre()
         if not vu or vu == "   ":
             print(f"   une variable vide n'est pas ignorée : {vu!r}")
             return False
@@ -6686,7 +6824,7 @@ def check_version_deployee() -> bool:
 
         _sp.run = _echoue
         try:
-            vu = serveur._version()
+            vu = serveur_version.resoudre()
         finally:
             _sp.run = vrai
         if vu != "inconnue":
@@ -10742,6 +10880,25 @@ def run() -> int:
     if check_base_de_production_dit_non():
         print("   → une base déclarée production refuse le truncate elle-même, "
               "et le refus dit quoi retirer pour l'annuler : ✅ PASS")
+    else:
+        print("   → ❌ FAIL")
+        echecs += 1
+
+    print(f"\n──── R94_produit_sans_artisan ────")
+    if check_produit_sans_artisan():
+        print("   → une base de production fraîche (table `artisan` vide) construit "
+              "l'API, et les pages portent le nom du produit : ✅ PASS")
+    else:
+        print("   → ❌ FAIL")
+        echecs += 1
+
+    # EN DERNIER, délibérément : ce test constate que `serveur` n'est entré dans le
+    # processus à aucun moment. Le placer avant les autres le rendrait vrai par simple
+    # antériorité — il doit voir tout ce que la suite a importé.
+    print(f"\n──── R93_suite_sans_base ────")
+    if check_suite_sans_base():
+        print("   → la suite n'importe pas le câblage de production et n'attend "
+              "aucune base : ✅ PASS")
     else:
         print("   → ❌ FAIL")
         echecs += 1

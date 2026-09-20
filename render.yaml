@@ -43,8 +43,17 @@ services:
     # (« dater ce qui tourne doit être une donnée, pas un raisonnement »). Render expose le
     # commit déployé ; l'override existe déjà dans le code, on s'en sert. Le `:-` garantit
     # qu'une variable absente ne casse pas le démarrage.
+    # `RELAIS_BASE_URL` : repli sur `RENDER_EXTERNAL_URL`, que Render peuple pour les
+    # services WEB (et laisse vide partout ailleurs — ce qui confirme au passage qu'elle
+    # n'a rien à faire sur le cron). Ce repli SUPPRIME l'œuf et la poule au lieu de le
+    # documenter : `serveur.py` exige cette variable au démarrage, or le domaine n'est
+    # attribué qu'une fois le service créé — le premier déploiement échouait donc
+    # forcément. `${VAR:-defaut}` se déclenche sur une variable absente OU VIDE, et
+    # l'explicite garde la priorité : le jour du domaine propre (nelyo-ia.*), on renseigne
+    # la variable et le repli s'efface tout seul. Un piège qu'on peut coder ne se note pas.
     startCommand: >-
       RELAIS_VERSION="${RENDER_GIT_COMMIT:-inconnue}"
+      RELAIS_BASE_URL="${RELAIS_BASE_URL:-$RENDER_EXTERNAL_URL}"
       uvicorn serveur:app --host 0.0.0.0 --port $PORT
 
     # PAS de `healthCheckPath`, et c'est un choix. `/sante` interroge la base (il rend le
@@ -84,14 +93,13 @@ services:
       - key: RELAIS_BASE_URL       # l'URL PUBLIQUE de ce service : elle compose les liens
         sync: false                # des SMS et l'URL du custom LLM de l'assistant Vapi.
                                    #
-                                   # ⚠️ L'ŒUF ET LA POULE, à savoir avant le premier
-                                   # déploiement : `serveur.py` l'EXIGE au démarrage (il
-                                   # refuse de tourner à moitié configuré), or Render
-                                   # n'attribue le domaine qu'une fois le service créé. Le
-                                   # premier déploiement échouera donc, une fois, avec un
-                                   # message explicite — ce n'est pas une panne, c'est
-                                   # l'ordre des choses. Renseigner la variable avec le
-                                   # domaine attribué, puis relancer le déploiement.
+                                   # PEUT ÊTRE LAISSÉE VIDE à la création du service : le
+                                   # `startCommand` retombe alors sur `RENDER_EXTERNAL_URL`
+                                   # (cf. son commentaire). Elle reste déclarée ici parce
+                                   # qu'elle devra être renseignée le jour du domaine
+                                   # propre (nelyo-ia.*) — un lien SMS censé être cliqué
+                                   # deux heures plus tard ne doit pas porter une adresse
+                                   # qu'on prévoit d'abandonner.
       - key: RELAIS_COOKIE_SECURE  # « true » ici : on est en https, et le cookie de session
         value: "true"              # de l'artisan n'a aucune raison de voyager en clair.
 
