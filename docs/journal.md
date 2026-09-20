@@ -5,66 +5,83 @@
 
 ---
 
-# ÉTAT AU 09/09/2026 — à lire en premier
+# ÉTAT AU 20/09/2026 — à lire en premier
 
 > **Ce bloc se REMPLACE, il ne s'empile pas.** Les entrées datées plus bas sont le journal
 > chronologique (le pourquoi des décisions) ; ce bloc-ci est le où-on-en-est.
->
-> Réécrit le 09/09 après deux semaines de retard (il annonçait encore 71 tests). Le détail
-> par R n'y figure plus : il vivait en double avec les entrées datées et les commentaires
-> des tests, et c'est cette moitié-là qui pourrissait. Ici : l'état, les décisions, les
-> dettes.
 
 ## En une phrase
 
-Le produit s'appelle **NELYO**. Le backend de la phase 1 est fonctionnel et vérifié contre
-un vrai Postgres ; **la compréhension est passée au LLM sous contrat fermé** (menu
-d'actions + contraintes structurées), mesurée à **68/70** sur le banc d'extraction et
-**57/57** en éval réelle ×3 ; la
-voix marche de bout en bout — mais **aucun numéro n'est joignable depuis la France**, et
-**le cron du worker n'est toujours pas branché**. Ces deux-là sont les seuls vrais murs.
+Le produit s'appelle **NELYO**, et depuis le 20/09 **il tourne en ligne** :
+<https://nelyo-api.onrender.com>, cron compris, sur une base de production séparée.
+La compréhension est au LLM sous contrat fermé (menu d'actions + contraintes
+structurées), mesurée à **68/70** au banc d'extraction et **57/57** en éval réelle ×3 ;
+**97 tests** de non-régression. Il reste **un seul mur** : aucun numéro n'est joignable
+depuis la France.
 
-## Ce qui tourne (rejoué le 09/09)
+## Ce qui tourne (rejoué le 20/09)
 
 ```bash
 cd proto
-python run_scenario.py                              # 95 tests, ~3 s, sans clé ni base
-python run_extract_eval.py [--mock] [--only …]      # banc d'EXTRACTION : 64/66, p50 1080 ms
-python run_llm_eval.py [--mock] [--n 3]             # éval appelant-simulé (mock 19/19)
+python run_scenario.py                              # 97 tests, ~3 s — sans clé NI BASE (R93)
+python run_extract_eval.py [--mock] [--only …]      # banc d'EXTRACTION : 68/70, p50 1131 ms
+python run_llm_eval.py [--mock] [--n 3]             # éval appelant-simulé (19 personas)
 python run_depot_pg.py [--migrer]                   # contrat du port contre Supabase
-python semer_artisans.py [--ecrire]                 # amorce la table `artisan`
 uvicorn serveur:app --port 8000                     # API HTTP (JAMAIS --reload)
-curl localhost:8000/sante                           # révision déployée + dernier passage du worker
 python worker.py [--a-vide]                         # expiration + expédition (un passage)
+
+curl https://nelyo-api.onrender.com/sante           # LA PROD : révision + dernier cron
 ```
 
 ⚠️ Sous un shell dont la console est en cp1252 (Git Bash sous Windows), préfixer
 `PYTHONIOENCODING=utf-8` : sinon l'affichage plante sur les cadres Unicode, et un plantage
 d'affichage ressemble à un échec de test.
 
+## L'HÉBERGEMENT, fait le 20/09
+
+| Quoi | Où |
+|---|---|
+| API + pages | `nelyo-api`, Render Frankfurt, palier `starter`, branche **`main`** |
+| Cron | `nelyo-worker`, `*/10 * * * *`, **vérifié en ligne** (`il_y_a_min: 0`) |
+| Base de PROD | Supabase `zovieyaqzqrfeztghjah`, **eu-central-1**, marqueur `relais_production` |
+| Base de DEV | Supabase `gxoozjgpldnwhgpzdxes`, eu-west-1, marqueur `relais_base_de_test` |
+| Révision déployée | `/sante` rend le SHA complet, alimenté par `RENDER_GIT_COMMIT` |
+
+**`main` est ce qui tourne, `wip` est ce qu'on fabrique.** Render se synchronise sur `main` :
+la mise en production est un merge qu'on relit, pas un `git push` de fin de session. C'est
+le même raisonnement que `RELAIS_SMS=journal` en dur dans `render.yaml`.
+
+⚠️ **La table `artisan` de la prod est VIDE, et c'est voulu.** Les jetons de
+`config/artisans.json` sont des jetons de DÉV documentés en clair dans le dépôt : les semer
+en production publierait des identifiants. Le premier artisan réel entrera par un parcours
+d'onboarding, ou à la main avec un jeton généré — jamais par `semer_artisans.py`.
+
+⚠️ **Plan gratuit Supabase = deux projets actifs.** Créer la base de prod a mis la dév **en
+pause** (DNS qui ne résout plus, pooler qui répond `tenant/user not found`). Bouton
+« Restore » dans le tableau de bord. Depuis R93, ça ne bloque plus `run_scenario.py`.
+
 ## Où en est chaque brique
 
 | Brique | État | Vérifié contre |
 |---|---|---|
-| Agent conversationnel S0–S11, garde-fous, dégradation | ✅ | 89 tests mock + 32 convs LLM réelles + 13 appels vocaux |
-| **Compréhension confiée au LLM sous menu fermé** (`actions.py`) | ✅ | **banc d'extraction 68/70**, p50 1131 ms, agent **Haiku 4.5** |
-| **Contraintes de disponibilité structurées** (R83) | ✅ | banc, dont les 3 cas de portée de la négation — 4 passages verts |
-| Cycle de vie du RDV, expiration, sérialisation de l'état | ✅ | mock + usage réel (4 RDV expirés le 09/09) |
-| Port `Depot` + adaptateur Postgres | ✅ | **Supabase réel**, contrat identique aux deux implémentations |
-| API HTTP, 2 portes d'auth, 1 tour = 1 requête | ✅ | mock + câblage réel sur Supabase |
+| Agent conversationnel S0–S11, garde-fous, dégradation | ✅ | 97 tests mock + 32 convs LLM réelles + 13 appels vocaux |
+| Compréhension confiée au LLM sous menu fermé (`actions.py`) | ✅ | banc d'extraction 68/70, p50 1131 ms, agent **Haiku 4.5** |
+| Contraintes de disponibilité structurées (R83) | ✅ | banc, dont les 3 cas de portée de la négation |
+| Cycle de vie du RDV, expiration, sérialisation de l'état | ✅ | mock + usage réel |
+| Port `Depot` + adaptateur Postgres | ✅ | Supabase réel, contrat identique aux deux implémentations |
+| API HTTP, 2 portes d'auth, 1 tour = 1 requête | ✅ | mock + **en ligne** |
 | File sortante, plage de silence (21 h–8 h), réessais | ✅ | mock + usage réel |
-| Adaptateur OVH | ✅ | **SMS réellement reçu le 24/08** (`ovh:802084252`) |
-| Connexion artisan par code SMS, boîte de validation, session | ✅ | mock + **parcours réel bout en bout le 02/09** (R84) |
-| Validation client par lien à un tap + page HTML sans JS | ✅ | mock — le lien SMS mène à une vraie page |
+| Adaptateur OVH | ✅ | SMS réellement reçu le 24/08 (`ovh:802084252`) |
+| Connexion artisan par code SMS, boîte de validation, session | ✅ | mock + parcours réel bout en bout (R84) |
+| Validation client par lien à un tap + page HTML sans JS | ✅ | mock + **page servie en ligne** (`/c/…` → « Lien expiré · Nelyo ») |
 | Instants UTC vs heures de pendule (règle n°7) | ✅ | mock + migration 007 |
-| Table `artisan` + FK sur 5 tables | ✅ | Supabase réel |
-| Observabilité : révision déployée + dernier passage du worker | ✅ | `/sante`, migration 010, contrat du port (R65, R86) |
-| **Ce qu'on promet, on peut le tenir** (R79 + R87) | ✅ | mock + **invariant du verdict de l'éval**, sur les 19 personas |
-| **Adaptateur de la plateforme vocale (Vapi)** | ✅ | mock + **appels vocaux réels, RDV créés en base** |
-| Sondes de diagnostic (étape 0, tournures de temps) | ✅ | hors produit, éteintes par défaut |
+| Observabilité : révision déployée + dernier passage du worker | ✅ | **`/sante` en ligne**, R65 + R86 |
+| Ce qu'on promet, on peut le tenir (R79 + R87) | ✅ | mock + invariant du verdict de l'éval, 19 personas |
+| Adaptateur de la plateforme vocale (Vapi) | ✅ | mock + appels vocaux réels, RDV créés en base |
+| **Hébergement : API publique + cron supervisé** | ✅ **20/09** | **`/sante` à travers l'URL publique** |
 | **Entrée téléphonique depuis la France** | ❌ | **numéro Vapi gratuit = appels nationaux US** (R81) |
-| **Cron / supervision du worker** | ❌ | jamais branché — troisième constat en usage réel |
-| Éval LLM réelle, 19 personas × 3 | ✅ **57/57 le 09/09** | 17/19 → 19/19 (R87, contrat) → 56/57 en ×3 → **57/57 après R91**. Comparable au 57/57 du 26/08, sur un arbre qui a reçu depuis le menu d'actions, R83 et cinq correctifs |
+| **Parcours d'onboarding artisan** | ❌ | n'existe pas — et la prod part sans artisan |
+| Éval LLM réelle, 19 personas × 3 | ✅ 57/57 le 09/09 | à rejouer après R94 |
 
 ## Le fait structurant de la période (01–02/09) : le curseur a bougé
 
@@ -75,13 +92,28 @@ de compréhension. Geoffrey a tranché — on arrête d'allonger la liste. Depui
   action ou `pas_clair`, le contrôleur valide contre le menu et les invariants ;
 - le **contenu** d'une contrainte suit la même règle (R83) : le modèle remplit une structure
   au vocabulaire de NOMS (« jeudi », « matin »), le code convertit en jours et dates ;
-- `engine.py` ne fait plus **aucune** correspondance de texte. Les mots-clés vivent dans
-  `MockLLM` (harnais de test), les mille formulations dans `run_extract_eval.py` ;
+- `engine.py` ne fait plus **aucune** correspondance de texte ;
 - **une tournure ratée en appel réel devient une ligne d'éval, jamais une ligne de moteur.**
 
 Corollaire mesuré : « Haiku est trop bête » était faux. Sur les tournures qui avaient cassé
-le produit, Haiku fait le plein ; le défaut était à 100 % dans le contrat. Et Sonnet, à
-justesse égale, coûte 1,5 à 5 s de plus par tour — l'extracteur reste **Haiku**.
+le produit, Haiku fait le plein ; le défaut était à 100 % dans le contrat.
+
+## Le fait structurant du 20/09 : les défauts d'INSTALLATION
+
+R93 et R94 ont une propriété commune, et elle vaut plus que les deux correctifs :
+**toute machine qui a déjà servi les masque.** Une suite qui exigeait secrètement une base ;
+un nom de produit qui dépendait d'avoir au moins un client. Aucun des deux ne pouvait
+apparaître ici — nos machines ont une base et des artisans depuis des semaines. Ils
+attendaient la première installation, c'est-à-dire le moment où personne n'a encore d'outil
+de diagnostic en face.
+
+**Conséquence de méthode : répéter le démarrage d'un environnement NEUF est un test**, et
+c'est celui que rien d'autre ne remplace. Les deux défauts sont tombés en important
+`serveur.py` avec l'environnement de production, en local, avant de confier quoi que ce soit
+à Render.
+
+Deuxième leçon, de R94 : **un commentaire ne s'exécute pas.** La règle violée était écrite,
+correcte, trois lignes au-dessus du code qui la contredisait.
 
 ## Ce qui est encore un double (et non un manque caché)
 
@@ -90,124 +122,80 @@ justesse égale, coûte 1,5 à 5 s de plus par tour — l'extracteur reste **Hai
   un mobile français reçoit une tonalité occupée. Il faut un numéro **Twilio** (entrant
   international) importé dans Vapi, et le registre `artisan` mis à jour — sans ça,
   `artisan_de_l_appel` ne trouve pas le numéro composé et **l'appel meurt en silence**.
-- **Cron du worker** : `worker.py` reste UN PASSAGE, testable et idempotent — c'est voulu.
-  Ce qui manque est la couche au-dessus : **supervision** (quelqu'un le relance) et
-  **observabilité** (on voit qu'il tourne, désormais lisible dans `/sante`). Pas une tâche
-  planifiée Windows : un pansement de dev là où la question est d'hébergement.
-- **Réception SMS** : n'existe pas. Pendant entrant du worker sortant, rendu nécessaire par
-  la révision OUI/NON. Trois questions à poser à OVH avant d'écrire une ligne (coût des
-  entrants, traitement du STOP, polling ou callback).
+- **Réception SMS** : n'existe pas. Trois questions à poser à OVH avant d'écrire une ligne
+  (coût des entrants, traitement du STOP, polling ou callback).
 - **`CalendarStub`** : applique les vraies règles d'agenda sans calendrier branché. Ce n'est
-  **pas** un cas dégradé — c'est le cas de l'artisan sans agenda numérique, probablement le
-  cas courant. Le calendrier externe sera un anti-double-réservation, pas une condition
-  d'existence.
+  **pas** un cas dégradé — c'est le cas de l'artisan sans agenda numérique.
 - **Pas de push** : la relance artisan est mise en file, jamais délivrée.
-- **Onboarding** : le seul chemin d'écriture dans `artisan` est `semer_artisans.py`.
-- **`EnvoyeurJournal` est le défaut** (`RELAIS_SMS=journal`) : rien ne part, mais depuis R84
-  tout ce qui partirait est IMPRIMÉ en entier, avec la mention « rien n'est parti » sur la
-  même ligne.
+- **Onboarding** : le seul chemin d'écriture dans `artisan` est `semer_artisans.py`, et il
+  est désormais INUTILISABLE en production (jetons de dév publics). C'est passé de dette
+  confortable à chemin bloqué.
+- **`EnvoyeurJournal` est le défaut** (`RELAIS_SMS=journal`, en dur dans `render.yaml`) :
+  rien ne part, mais depuis R84 tout ce qui partirait est IMPRIMÉ en entier.
+- **Pas de plateforme** : `/app` est une boîte de validation à trois boutons. Ni dashboard,
+  ni facturation, ni agenda, ni config éditable par l'artisan. Arbitrage du 20/09 : c'est un
+  mur de SCALE, pas de fonctionnement — la boucle appel → validation → SMS est complète.
 
 ## Décisions verrouillées
 
-- **Le LLM ne décide jamais ce qui ENGAGE** (transitions, prix, créneaux, promesses) —
-  **mais c'est lui qui COMPREND**, dans un vocabulaire que nous possédons. La règle n°1
-  n'est pas assouplie, elle est précisée.
+- **Le LLM ne décide jamais ce qui ENGAGE** — **mais c'est lui qui COMPREND**, dans un
+  vocabulaire que nous possédons.
 - **L'artisan valide toujours** (pas d'auto-validation en V1), annonce IA en ouverture,
   téléphone confirmé avant tout RDV.
-- **Un numéro que la plateforme nous donne est une PROPOSITION, pas une confirmation**
-  (R81) : `tel_confirme` reste faux jusqu'au « oui », et le numéro passe la même relecture
-  qu'un numéro dicté.
-- **Demander un CHAMP est verbatim ; RÉPONDRE à quelqu'un reste au formuleur** (R76). Les
-  garde-fous vérifient un contenu INTERDIT, jamais la FIDÉLITÉ à l'instruction — c'est
-  pourquoi cette frontière est une décision et pas un garde-fou.
-- **Jamais de repli « on vous rappelle » tant que l'appelant coopère.** Une contrainte
-  RESSERRE le calendrier au lieu de le faire défiler : elle ne consomme pas le quota de
-  l'invariant n°6, qui borne la NÉGOCIATION (R72).
+- **Un numéro que la plateforme nous donne est une PROPOSITION, pas une confirmation** (R81).
+- **Demander un CHAMP est verbatim ; RÉPONDRE à quelqu'un reste au formuleur** (R76).
+- **Jamais de repli « on vous rappelle » tant que l'appelant coopère** (R72).
 - **Une décision terminale ne se prend jamais sur une donnée non relue** (R54).
-- **Dater ce qui tourne est une DONNÉE, pas un raisonnement** (R65 pour la révision
-  déployée, R86 pour le worker). Et un jalon se note APRÈS le travail : la trace dit « un
-  passage complet a eu lieu », pas « un processus a démarré ».
-- **Ne dire que ce qui est SÛR** (R79, R85) : une interface qui affirme un acte non
-  accompli le fait avec l'autorité d'une interface.
-- **Pas de streaming des sorties gardées** : la latence se traite par des phrases-tampons
-  pré-approuvées, jamais en contournant `guards.check_output`.
-- **Délais de validation : 24 h / 2 h en heures réelles**, réglables par artisan.
-  **L'échéance fait foi, pas le passage du worker.**
+- **Dater ce qui tourne est une DONNÉE, pas un raisonnement** (R65, R86) — et c'est ce qui
+  a rendu la vérification du déploiement immédiate le 20/09.
+- **Ne dire que ce qui est SÛR** (R79, R85).
+- **Pas de streaming des sorties gardées.**
+- **Délais de validation : 24 h / 2 h en heures réelles. L'échéance fait foi, pas le passage
+  du worker.**
 - **Un horodatage est un INSTANT en UTC ; une heure de config est une heure de PENDULE.**
-- **SMS strictement sortant — CIRCONSCRIT le 25/08, pas annulé** : pas de dialogue libre ni
-  de parsing de texte libre, mais la confirmation client peut passer par une réponse à
-  vocabulaire fermé (OUI/NON, une seule proposition active par numéro). Canal en config
-  (`sms_oui_non | lien`).
-- **Conséquence : le Sender ID ne bloque plus aucune fonctionnalité.** ⚠️ Mais le Kbis qu'il
-  demandait **reparaît côté VOIX** : un numéro français exige un bundle ARCEP. Reporter
-  l'administratif déplace le mur, il ne le supprime pas.
-- **Expéditeur SMS UNIQUE, déclaré sous NOTRE société**, pas sous celle de chaque artisan.
-- **Deux portes d'authentification distinctes** (secret webhook / jeton porteur), et
-  **l'API ne décide jamais** — corollaire backend de la règle n°1.
-- **Un banc qui compte une bonne réponse comme une faute est pire qu'un banc absent** : il
-  donne du travail faux avec l'autorité d'un chiffre. D'où le garde qui sort en 2 quand les
-  appels ont échoué, et les attentes qui acceptent un tuple quand plusieurs lectures mènent
-  à un comportement correct. Ce mécanisme a déjà servi trois fois.
+- **SMS strictement sortant**, confirmation client possible en vocabulaire fermé (OUI/NON).
+- **Expéditeur SMS UNIQUE, déclaré sous NOTRE société.**
+- **Deux portes d'authentification distinctes**, et **l'API ne décide jamais**.
+- **Un banc qui compte une bonne réponse comme une faute est pire qu'un banc absent.**
+- **`main` déploie, `wip` fabrique** (20/09).
+- **Ce qui doit être éprouvable sans base ne connaît pas de base** (R93, 20/09) : le câblage
+  de production n'entre jamais dans le processus de test.
 
 ## Dettes et décisions ouvertes
 
-1. ~~**Instabilité résiduelle de l'extraction**~~ — **traitée le 09/09 par R88, et le
-   diagnostic ci-dessus était FAUX.** Il disait « ~1 cas sur 17, jamais le même, non
-   reproductible » ; la cause était enregistrée dans le `brut` du banc depuis le matin —
-   le modèle écrit parfois `constrainte`, et le code jetait la clé en silence. Cinq
-   occurrences retrouvées sur la seule journée. Conservé ici parce que la leçon vaut plus
-   que le correctif : **une panne dont on n'ouvre pas la trace n'est pas une panne
-   mystérieuse**, et « non reproductible » est une conclusion, pas une observation.
-2. **Les deux échecs permanents du banc (64/66)** sont des violations DÉTERMINISTES du
-   modèle sur le numéro (8 chiffres rendus en 10, 12 rendus en 10). Renforcer le prompt n'y
-   change rien — mesuré. Seul `_numero_suspect` protège : c'est la ceinture, il n'y a pas de
-   bretelles.
-3. **Petites dettes de conversation**, toutes vues en appel réel : dire quelque chose quand
-   une contrainte ne change rien (« demain n'est pas un vendredi ») ; la phrase de
-   clarification mal formée (« saisi. demain entre… ») ; la commune jamais prononcée quand
-   seul le code postal a validé la zone ; « d'ici 24 heures » un peu mécanique à l'oral.
-4. **Consignés, non corrigés** : le push artisan dit « client prévenu » alors que le SMS
-   n'est qu'en file à cet instant ; `rdv.creneau` ne porte pas `label_parle` alors que le
-   hold l'a (sans conséquence tant que le RDV n'est pas prononcé).
-5. **Premier calendrier à brancher** (Google / Outlook / aucun) — tranché par les interviews
-   terrain du cousin. L'OAuth Google est **volontairement non lancé** : sa vérification exige
-   nom d'app, domaine vérifié et politique de confidentialité hébergée.
-6. **Fournisseur SMS** — choix réversible (port `Envoyeur`). Critère : processus de
-   déclaration du Sender ID, DPA, hébergement UE. OVHcloud en place.
-7. **`FOR UPDATE SKIP LOCKED`** quand plusieurs workers tourneront (optimisation, pas
-   justesse).
-8. **Worker de rattrapage** pour les RDV décidés dont le SMS n'a pas été mis en file :
-   l'écriture et la mise en file ne sont pas atomiques.
-9. **Couvrir `appel_muet` (S9)** — la dernière des six issues que personne n'emprunte. Le
-   harnais lit une réplique vide comme une fin d'appel : un persona silencieux est
-   indistinguable d'un persona qui raccroche.
-10. **Séquence externe, côté cousin, rien ne bloque le code** : INPI/marque → domaine
-    (candidat `nelyo-ia.*`, **pas acheté**) → structure & Kbis → Sender ID OVH (~72 h). Le
-    document « décisions côté cousin » (5 blocs) est produit et transmis, **pas versionné
-    dans `docs/`**.
+1. **Les deux échecs permanents du banc (68/70)** sont des violations DÉTERMINISTES du
+   modèle sur le numéro. Renforcer le prompt n'y change rien — mesuré. Seul
+   `_numero_suspect` protège.
+2. **Petites dettes de conversation**, toutes vues en appel réel : dire quelque chose quand
+   une contrainte ne change rien ; la phrase de clarification mal formée (« saisi. demain
+   entre… ») ; la commune jamais prononcée quand seul le code postal a validé la zone.
+3. **Consignés, non corrigés** : le push artisan dit « client prévenu » alors que le SMS
+   n'est qu'en file ; `rdv.creneau` ne porte pas `label_parle`.
+4. **Premier calendrier à brancher** — tranché par les interviews terrain du cousin. L'OAuth
+   Google est volontairement non lancé.
+5. **`FOR UPDATE SKIP LOCKED`** quand plusieurs workers tourneront.
+6. **Worker de rattrapage** pour les RDV décidés dont le SMS n'a pas été mis en file.
+7. **Couvrir `appel_muet` (S9)** — la dernière des six issues que personne n'emprunte.
+8. **Rejouer l'éval ×3 après R94.** La dernière mesure (57/57) date du 09/09, avant R93/R94.
+9. **Séquence externe, côté cousin** : INPI/marque → domaine (candidat `nelyo-ia.*`, **pas
+   acheté**) → structure & Kbis → Sender ID OVH (~72 h). Le jour du domaine propre,
+   renseigner `RELAIS_BASE_URL` sur `nelyo-api` : le repli `RENDER_EXTERNAL_URL` s'efface
+   tout seul.
 
 ## Prochaine étape
 
-Les deux premières sont des MURS : sans elles le produit n'a ni porte d'entrée, ni suite
-après l'appel.
-
-1. **Héberger le worker** (cron ou service — le débat est mal posé : ce qui compte est
-   supervision + observabilité). `/sante` répond désormais « il tourne ? » en dix secondes ;
-   il reste à ce que quelqu'un le lance et le relance. Troisième fois que ce constat sort
-   d'un usage réel.
-2. **Un numéro joignable depuis la France** : acheter chez Twilio, importer dans Vapi, et
-   mettre le numéro dans le registre `artisan`. Le compte Twilio portera aussi le dossier
-   ARCEP plus tard — pas un détour, la première pierre. Le premier appel devient une
-   CONFIRMATION de `call.customer.number`, déjà codé et déjà capturé (R80, R81).
-3. ~~Rejouer l'éval ×3~~ — **fait le 09/09 : 57/57**, après R91. La leçon reste, elle :
-   19/19 en passage simple avait laissé passer un défaut que le ×3 a trouvé (la troisième
-   variante du sur-déclenchement de `veut_humain`). **Ne pas annoncer un défaut réglé sur
-   la foi d'un passage simple** — un passage simple ne dit rien de la variabilité.
-4. **Finir le chantier voix** : `endCallPhrases` sur la phrase de fin (désormais
-   déterministe), barge-in (`stopSpeakingPlan`), et la latence mesurée sur un appel complet.
-5. Puis, par valeur décroissante : les petites dettes de conversation (dette n°3), un vrai
-   parcours d'onboarding à la place de `semer_artisans.py`, `appel_muet`, le worker de
-   rattrapage.
+1. **Un numéro joignable depuis la France** — désormais **le seul mur**. Acheter chez
+   Twilio, importer dans Vapi, pointer l'assistant sur
+   `https://nelyo-api.onrender.com/voix/vapi/chat/completions`
+   (`configurer_assistant_vapi.py --url …`, qui exige une URL publique — elle existe enfin),
+   et inscrire le numéro dans la table `artisan`. Le compte Twilio portera le dossier ARCEP.
+2. **Un premier artisan en production**, avec un jeton GÉNÉRÉ — jamais ceux du dépôt.
+   Ébauche d'onboarding, ou script à la main : c'est ce qui rend l'appel n°1 possible.
+3. **Finir le chantier voix** : `endCallPhrases`, barge-in (`stopSpeakingPlan`), latence
+   mesurée sur un appel complet à travers Render (et non plus un tunnel).
+4. **Rejouer l'éval ×3** (dette n°8).
+5. Puis, par valeur décroissante : les petites dettes de conversation, la plateforme
+   (onboarding, dashboard, facturation, agenda), `appel_muet`, le worker de rattrapage.
 
 En parallèle, à préparer sans coder : la **réception SMS** (révision OUI/NON), une fois les
 trois questions OVH tranchées.
@@ -228,6 +216,77 @@ trois questions OVH tranchées.
 Le mode d'emploi des sondes et le détail de la récolte du 25/08 sont dans les entrées
 datées ; l'en-tête de `vapi.py` porte le format de fil SSE. **Les lire avant de toucher au
 chantier voix.**
+
+---
+
+## 20/09 — Nelyo est en ligne, et deux défauts que seule une installation pouvait révéler
+
+« on déploie sur Render ». Le fichier `render.yaml` existait depuis le 09/09, écrit mais
+jamais confronté ni à Render ni au code qu'il déclare.
+
+**Trois écarts avant même de commencer.** Aucune branche déclarée — un Blueprint se
+synchronise sur une branche, et avec « commit+push à chaque fin de session, 2 machines »,
+déployer depuis `wip` aurait fait partir en production le travail laissé à moitié sur
+l'autre machine. Aucune version de Python épinglée, alors que le défaut de Render est
+désormais 3.14.3 et que tout ce qui est mesuré ici l'a été en 3.13. Et le worker déclarait
+`RELAIS_BASE_URL` sous un commentaire affirmant que « les liens de validation partent d'ici
+aussi » — faux : la seule fabrique d'URL est `confirmation.lien()`, appelée depuis `api.py`
+et de nulle part ailleurs. Un commentaire qui décrit une intention plutôt qu'une
+vérification vieillit comme une donnée fausse, avec l'autorité d'une donnée.
+
+**L'œuf et la poule a été supprimé au lieu d'être documenté.** Le fichier annonçait un
+premier déploiement forcément en échec (`serveur.py` exige `RELAIS_BASE_URL`, Render
+n'attribue le domaine qu'après création). Render peuple `RENDER_EXTERNAL_URL` pour les
+services web : le `startCommand` s'y replie. Un piège qu'on peut coder ne se note pas.
+
+**La base de prod.** Créée en eu-central-1, 10 migrations jouées, marqueur
+`relais_production` posé — et le refus vérifié **sur la vraie base**, en lecture seule
+(`verdict_truncate` est une fonction pure, on l'interroge sans lui demander de le prouver en
+se détruisant). Elle refuse quels que soient les drapeaux. R92 tient en réel.
+
+Effet de bord immédiat : le plan gratuit Supabase n'autorise que deux projets actifs, et la
+base de DÉV est passée en pause. C'est ce qui a révélé le premier défaut.
+
+**R93 — la suite « sans clé ni base » exigeait une base.** `run_scenario.py` n'a pas
+échoué : il s'est INTERROMPU sur une trace, après 64 tests verts, sans rendre de verdict.
+R65 éprouvait le résolveur de version par `import serveur` — or `serveur.py` exécute
+`app = construire()` à l'import, donc ouvre une connexion Postgres. Pour tester la lecture
+d'une variable d'environnement. Le résolveur déménage dans `relais_proto/version.py`,
+inchangé d'un caractère ; c'est son voisinage qui était faux. La leçon : **une dépendance
+qu'on ne déclare pas, on ne la voit qu'en panne** — et une suite obligatoire avant tout
+changement (règle n°3) devient indisponible précisément quand on en a le plus besoin, en
+déploiement, sur une machine neuve.
+
+**R94 — le nom du produit dépendait de l'existence d'un client.** En répétant le démarrage
+de Render en local contre la base de prod fraîche, l'API a refusé de se construire : « config
+produit absente du registre ». La table `artisan` était vide — état normal d'une
+installation, et voulu, puisque les jetons de `config/artisans.json` sont des jetons de dév
+documentés en clair dans le dépôt. `Registre.__init__` dérivait la config produit de la
+liste d'artisans ; zéro artisan, donc `None`. Le commentaire trois lignes au-dessus énonçait
+pourtant la règle : « elle doit être joignable SANS artisan ». Les deux constructeurs
+chargeaient `produit.charger(...)` sans le transmettre. **Un commentaire ne s'exécute pas.**
+
+**Ce que ces deux-là ont en commun est plus important que les correctifs** : toute machine
+qui a déjà servi les masque. Ils attendaient la première installation. D'où une méthode à
+garder : **répéter le démarrage d'un environnement neuf est un test**, et rien ne le
+remplace.
+
+**En ligne, vérifié.** `https://nelyo-api.onrender.com/sante` rend
+`version = fbc4cb402bece0de…` — le commit exact de `main`, pas une déduction (R65) — et
+`worker.dernier_passage` daté d'un **vrai passage du cron Render**, `il_y_a_min: 0` (R86).
+`/c/<jeton invalide>` sert « Lien expiré · Nelyo » : R94 en conditions réelles, avec zéro
+artisan en base. Le constat « le cron n'est pas branché », sorti trois fois d'un usage réel,
+est réglé.
+
+**Et une question de Geoffrey qui méritait mieux que ma première réponse** : « pourquoi
+déployer alors qu'on n'a aucun front ? ». J'avais répondu que le front existait — vrai pour
+`pages.py`, mais hors sujet. Il n'y a pas de plateforme : ni dashboard, ni facturation, ni
+agenda, ni config éditable. Arbitrage rendu : la boucle appel → validation → SMS est ce qui
+fait que le produit MARCHE ; la plateforme est ce qui le rend VENDABLE et autonome. Pour les
+trois premiers artisans, les configurer à la main est le geste normal — et ça donne trois
+configs réelles avant de figer une UI dessus.
+
+Reste **un seul mur** : un numéro joignable depuis la France.
 
 ---
 

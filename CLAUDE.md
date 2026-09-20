@@ -16,7 +16,11 @@ Cible V1 : plombiers/chauffagistes FR. Solo dev : Geoffrey (binôme Claude) ; ma
 ```bash
 cd proto
 pip install -r requirements.txt     # anthropic, python-dotenv (inutiles en mock)
-python run_scenario.py              # suite de non-régression (mock, sans clé, ~3 s) — 95 tests
+python run_scenario.py              # suite de non-régression (mock, sans clé, ~3 s) — 97 tests
+                                    # « sans BASE » est désormais VÉRIFIÉ, pas promis (R93) :
+                                    # la suite importait `serveur.py` — le câblage de prod,
+                                    # qui ouvre une connexion Postgres à l'import — et
+                                    # s'interrompait sans verdict quand la base tombait.
 python run_llm_eval.py --mock       # plomberie de l'éval appelant-simulé (sans clé)
 python run_extract_eval.py [--mock] [--only plus_tot]
                                     # tests unitaires d'EXTRACTION : (phrase + contexte)
@@ -199,7 +203,10 @@ agenda · `scoring.py` lead + score 0–5 · `produit.py` config PRODUIT — nom
 (**Nelyo**) et expéditeur SMS unique (**nelyo**), contraintes AF2M vérifiées au
 démarrage ; « Relais » reste le nom de CODE (repo, modules, tables) ·
 `temps.py` instants UTC vs heures de pendule (règle n°7,
-à lire avant de toucher à une échéance) · `nombres.py` nombres PRONONCÉS en toutes
+à lire avant de toucher à une échéance) · `version.py` la révision qui tourne
+(`RELAIS_VERSION`, puis git, puis « inconnue ») — **module sans effet à l'import,
+délibérément** : il vivait dans `serveur.py`, et l'éprouver y importait le câblage de
+production, donc ouvrait une connexion Postgres (R93) · `nombres.py` nombres PRONONCÉS en toutes
 lettres → chiffres (code postal, téléphone ; déterministe, jamais confié au LLM) ·
 `communes.py` table des communes + normalisation, partagée par le contrôleur ET les
 garde-fous · `config/dupont.json` persona de test de bout en bout ·
@@ -228,16 +235,26 @@ DATABASE_URL="…" DATABASE_URL_POOLER="…" python run_depot_pg.py --migrer --d
 (les points d'entrée qui touchent la base chargent le `.env` SANS `override` : la ligne de
 commande gagne. `chat.py` et `run_llm_eval.py` font l'inverse, mais ne touchent pas la base.)
 
-## Hébergement
+## Hébergement — EN LIGNE depuis le 20/09
+
+**<https://nelyo-api.onrender.com>** — `curl .../sante` dit la révision qui tourne ET le
+dernier passage du cron. C'est la première chose à faire quand quelque chose semble faux.
 
 `render.yaml` (racine) déclare les DEUX services : `nelyo-api` (web, uvicorn) et
-`nelyo-worker` (cron, `*/10 * * * *`). Arbitrage du 09/09 : **Render plutôt que Fly**, et
-le motif est le CRON — Fly ne planifie nativement qu'à l'heure, donc il faudrait embarquer
-un ordonnanceur, alors que Render a le cron comme type de service et que `worker.py` reste
-UN PASSAGE. Lire l'en-tête du fichier avant d'y toucher : il porte les raisons de chaque
-réglage, dont trois pièges (palier payant obligatoire sinon le conteneur s'endort et le
-premier tour de l'appel meurt ; `RELAIS_BASE_URL` exigée au démarrage mais attribuée après
-la création du service ; pas de `healthCheckPath` sur `/sante`, qui interroge la base).
+`nelyo-worker` (cron, `*/10 * * * *`), **tous deux sur la branche `main`**. Arbitrage du
+09/09 : **Render plutôt que Fly**, et le motif est le CRON — Fly ne planifie nativement
+qu'à l'heure, donc il faudrait embarquer un ordonnanceur, alors que Render a le cron comme
+type de service et que `worker.py` reste UN PASSAGE. Lire l'en-tête du fichier avant d'y
+toucher : il porte les raisons de chaque réglage (palier payant obligatoire sinon le
+conteneur s'endort et le premier tour de l'appel meurt ; `PYTHON_VERSION` épinglée en
+3.13.15 parce que le défaut de Render est passé à 3.14 ; pas de `healthCheckPath` sur
+`/sante`, qui interroge la base — un hoquet Supabase ne doit pas faire redémarrer l'app).
+
+⚠️ **La table `artisan` de la PROD est vide, et doit le rester tant qu'il n'y a pas
+d'onboarding.** `semer_artisans.py` est INUTILISABLE en production : les jetons de
+`config/artisans.json` sont des jetons de dév documentés en clair dans le dépôt. Un
+artisan réel entre avec un jeton GÉNÉRÉ. Depuis R94, une table vide n'empêche plus l'API
+de démarrer — le nom du produit ne dépend plus d'avoir un client.
 
 **Ce qui est en dur dans le fichier plutôt qu'en `sync: false` l'est exprès** :
 `RELAIS_SMS=journal` (passer à `ovh` envoie de vrais SMS — ça doit être un commit qu'on
@@ -247,3 +264,8 @@ relit) et `RELAIS_MODEL` (une décision mesurée se versionne).
 
 Monorepo, branche `wip` pour l'encours, commit+push à chaque fin de session (2 machines).
 `docs/` évolue dans les mêmes commits que le code qu'il spécifie.
+
+**`main` DÉPLOIE, `wip` FABRIQUE** (20/09). Render se synchronise sur `main` : mettre en
+production est un `git checkout main && git merge --ff-only wip && git push`, c'est-à-dire
+un geste qu'on relit. Sans cette séparation, la sauvegarde de fin de session déploierait le
+travail laissé à moitié sur l'autre machine.
