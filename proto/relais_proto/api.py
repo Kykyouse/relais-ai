@@ -12,6 +12,7 @@ derrière un répartiteur sans coller les appels à une instance.
 from __future__ import annotations
 
 import datetime as dt
+import json as _json_mod
 import pathlib
 
 from fastapi import Cookie, Depends, FastAPI, Form, Header, HTTPException, Request
@@ -26,14 +27,20 @@ from . import (connexion, messages, pages, session, sonde_dispo as _sonde_dispo,
                vapi as _vapi)
 from .calendar_stub import JOURS_FR, MOIS_FR, CalendarStub, libelle_creneau
 from .confirmation import creer_jeton, empreinte, lien
-from .depot import Introuvable
+from . import admin as admin_mdp
+from .depot import Introuvable, LigneArtisan
 from .engine import Conversation
 from .rdv import TransitionInterdite
-from .registre import Artisan, Registre
+from .registre import (Artisan, Registre, empreinte as registre_empreinte,
+                       valider_config)
 from .scoring import build_lead, est_urgent as scoring_est_urgent
 from .states import State
 
 CONTRAT_LEAD_VERSION = 1
+
+# Le dossier des configs : modèles dont part un nouvel artisan (page d'admin), et
+# repli pour les artisans dont la config n'a pas encore migré en base (migr. 011).
+DOSSIER_CONFIG = pathlib.Path(__file__).parent.parent / "config"
 
 # Cookie de la connexion EN COURS : il ne porte que l'identifiant de l'artisan à qui un
 # code vient d'être envoyé, le temps de le taper. Ce n'est pas un secret — la sécurité
@@ -986,5 +993,252 @@ def creer_app(depot, registre: Registre, fabrique_llm, horloge=None,
             return HTMLResponse(pages.action_impossible(NOM, str(exc.detail)),
                                 status_code=exc.status_code)
         return RedirectResponse("/app", status_code=303)
+
+    # ------------------------------------------------------------------ ADMINISTRATION
+    #
+    # Sujet DISTINCT de l'artisan : sa table, sa session, son cookie (migration 012).
+    # « je suis pas un artisan je suis le maitre du produit » — et le produit ne peut pas
+    # être auto-servi : un plombier ne s'active pas seul (il faut lui provisionner un
+    # numéro et lui faire configurer son renvoi conditionnel). Les premiers artisans sont
+    # donc inscrits À LA MAIN, ici, pendant ou après l'appel de vente. Ce formulaire
+    # deviendra la page d'inscription le jour où un numéro pourra être attribué tout seul.
+
+    def _admin_de_session(jeton: str) -> str | None:
+        if not jeton:
+            return None
+        try:
+            return depot.admin_de_session(session.empreinte(jeton), maintenant())
+        except Introuvable:
+            return None
+
+    def _exige_admin(jeton: str):
+        """Le compte, ou `None`. L'appelant rend la page de connexion — jamais un 401 nu :
+        un admin dont la session a expiré doit voir un écran utilisable."""
+        aid = _admin_de_session(jeton)
+        if aid is None:
+            return None
+        return next((a for a in depot.admins() if a.id == aid), None)
+
+    def _modele_config() -> dict:
+        """Le modèle dont part un nouvel artisan, et l'étalon de la validation.
+
+        C'est `dupont.json` : le fichier que la suite de tests exerce à chaque exécution.
+        S'en servir comme référence garantit que les exigences de validation suivent le
+        moteur — une liste de clés écrite à la main aurait vieilli en silence.
+        """
+        return _json_mod.loads(
+            (DOSSIER_CONFIG / "dupont.json").read_text(encoding="utf-8"))
+
+    @app.get("/admin/connexion", response_class=HTMLResponse)
+    def admin_page_connexion() -> HTMLResponse:
+        return HTMLResponse(pages.admin_connexion(NOM))
+
+    @app.post("/admin/connexion")
+    def admin_ouvrir_session(identifiant: str = Form(default=""),
+                             mot_de_passe: str = Form(default="")):
+        compte = depot.admin_par_identifiant(identifiant.strip())
+        # UN SEUL message pour les trois échecs — compte inconnu, compte désactivé, mot
+        # de passe faux. La vérification est exécutée MÊME quand le compte est inconnu,
+        # contre une empreinte factice : sinon le temps de réponse dirait quels
+        # identifiants existent, et scrypt coûte assez cher pour que l'écart se mesure.
+        empreinte_factice = "scrypt$32768$8$1$" + "00" * 16 + "$" + "00" * 32
+        ok = admin_mdp.verifier(mot_de_passe,
+                                compte.mot_de_passe if compte else empreinte_factice)
+        if compte is None or not ok:
+            return HTMLResponse(
+                pages.admin_connexion(NOM, "Identifiant ou mot de passe incorrect."),
+                status_code=401)
+        jeton, emp = session.creer_jeton()
+        t = maintenant()
+        depot.creer_session_admin(
+            emp, compte.id, t + dt.timedelta(days=admin_mdp.DUREE_JOURS), t)
+        reponse = RedirectResponse("/admin", status_code=303)
+        attributs = session.attributs_cookie(cookie_secure)
+        attributs["max_age"] = admin_mdp.DUREE_JOURS * 24 * 3600
+        reponse.set_cookie(admin_mdp.NOM_COOKIE, jeton, **attributs)
+        return reponse
+
+    @app.post("/admin/deconnexion")
+    def admin_fermer_session(
+            nelyo_admin: str = Cookie(default="", alias=admin_mdp.NOM_COOKIE)):
+        if nelyo_admin:
+            depot.supprimer_session_admin(session.empreinte(nelyo_admin))
+        reponse = RedirectResponse("/admin/connexion", status_code=303)
+        reponse.delete_cookie(admin_mdp.NOM_COOKIE, path="/")
+        return reponse
+
+    @app.get("/admin", response_class=HTMLResponse)
+    def admin_liste(nelyo_admin: str = Cookie(default="", alias=admin_mdp.NOM_COOKIE)):
+        compte = _exige_admin(nelyo_admin)
+        if compte is None:
+            return HTMLResponse(pages.admin_connexion(NOM), status_code=401)
+        lignes = []
+        for a in depot.artisans():
+            lignes.append({
+                "id": a.id, "nom": a.nom_affiche,
+                "numero_relais": a.numero_relais, "telephone": a.telephone,
+                "etat": a.etat_abonnement,
+                # D'où vient sa config : « base » depuis la migration 011, « fichier »
+                # pour les artisans antérieurs. Affiché parce que c'est exactement ce
+                # qu'on veut voir disparaître, et qu'on ne le verra pas autrement.
+                "source_config": ("base" if a.config is not None
+                                  else (a.config_fichier or "AUCUNE")),
+                "appels": depot.compter_appels(a.id),
+                "utilisable": a.utilisable(),
+            })
+        return HTMLResponse(pages.admin_artisans(NOM, compte.nom or compte.identifiant,
+                                                 lignes))
+
+    @app.get("/admin/artisan/nouveau", response_class=HTMLResponse)
+    def admin_nouveau(nelyo_admin: str = Cookie(default="", alias=admin_mdp.NOM_COOKIE)):
+        if _exige_admin(nelyo_admin) is None:
+            return HTMLResponse(pages.admin_connexion(NOM), status_code=401)
+        # Pré-rempli avec le MODÈLE : un formulaire vide obligerait à connaître par cœur
+        # onze sections, et la première config créée serait incomplète.
+        return HTMLResponse(pages.admin_artisan(
+            NOM, {}, _json_mod.dumps(_modele_config(), ensure_ascii=False, indent=2)))
+
+    def _enregistrer_artisan(donnees: dict, existant, nelyo_admin: str,
+                             nouveau: bool) -> HTMLResponse:
+        """Le chemin d'écriture, partagé par la création et l'édition.
+
+        Un seul endroit valide et écrit : deux chemins jumeaux finiraient par diverger
+        sur une vérification, et ce serait celle qui manque qui casserait un appel.
+        """
+        erreurs: list[str] = []
+        identifiant = (donnees.get("id") or "").strip()
+        if not identifiant:
+            erreurs.append("l'identifiant technique est obligatoire")
+        elif nouveau and depot.artisan_par_id(identifiant) is not None:
+            erreurs.append(f"l'identifiant « {identifiant} » est déjà pris")
+
+        try:
+            brute = _json_mod.loads(donnees.get("config") or "")
+        except ValueError as exc:
+            brute = None
+            erreurs.append(f"config illisible : {exc}")
+        if brute is not None:
+            erreurs += valider_config(brute, _modele_config())
+
+        numero = (donnees.get("numero_relais") or "").strip()
+        if numero:
+            # Le numéro Relais DÉSIGNE l'artisan : deux artisans qui le partagent
+            # rendraient le rattachement d'un appel arbitraire. La base porte déjà la
+            # contrainte ; on la vérifie ici pour rendre un message plutôt qu'une 500.
+            occupe = depot.artisan_par_numero_relais(numero)
+            if occupe is not None and occupe.id != identifiant:
+                erreurs.append(f"le numéro {numero} est déjà celui de « {occupe.id} »")
+
+        if erreurs:
+            vue = {"id": "" if nouveau else identifiant,
+                   "nom": donnees.get("nom"),
+                   "numero_relais": numero,
+                   "telephone": donnees.get("telephone"),
+                   "etat_abonnement": donnees.get("etat_abonnement")}
+            return HTMLResponse(
+                pages.admin_artisan(NOM, vue, donnees.get("config") or "",
+                                    erreurs=erreurs),
+                status_code=400)
+
+        jeton = ""
+        empreinte_jeton = existant.token_sha256 if existant is not None else None
+        if nouveau:
+            # Le jeton est GÉNÉRÉ, jamais repris du dépôt : les jetons de
+            # `config/artisans.json` sont des jetons de dév publics.
+            jeton = "nelyo_" + secrets.token_urlsafe(24)
+            empreinte_jeton = registre_empreinte(jeton)
+        depot.enregistrer_artisan(LigneArtisan(
+            id=identifiant, nom_affiche=(donnees.get("nom") or "").strip() or None,
+            numero_relais=numero or None,
+            telephone=(donnees.get("telephone") or "").strip() or None,
+            config_fichier=existant.config_fichier if existant is not None else None,
+            token_sha256=empreinte_jeton,
+            etat_abonnement=(donnees.get("etat_abonnement") or "actif"),
+            config=brute))
+        relu = depot.artisan_par_id(identifiant)
+        return HTMLResponse(pages.admin_artisan(
+            NOM,
+            {"id": relu.id, "nom": relu.nom_affiche,
+             "numero_relais": relu.numero_relais, "telephone": relu.telephone,
+             "etat_abonnement": relu.etat_abonnement},
+            _json_mod.dumps(relu.config, ensure_ascii=False, indent=2),
+            jeton=jeton, cree=nouveau))
+
+    @app.post("/admin/artisan", response_class=HTMLResponse)
+    def admin_creer(nelyo_admin: str = Cookie(default="", alias=admin_mdp.NOM_COOKIE),
+                    id: str = Form(default=""), nom: str = Form(default=""),
+                    numero_relais: str = Form(default=""),
+                    telephone: str = Form(default=""),
+                    etat_abonnement: str = Form(default="actif"),
+                    config: str = Form(default="")):
+        if _exige_admin(nelyo_admin) is None:
+            return HTMLResponse(pages.admin_connexion(NOM), status_code=401)
+        return _enregistrer_artisan(
+            {"id": id, "nom": nom, "numero_relais": numero_relais,
+             "telephone": telephone, "etat_abonnement": etat_abonnement,
+             "config": config}, None, nelyo_admin, nouveau=True)
+
+    @app.get("/admin/artisan/{artisan_id}", response_class=HTMLResponse)
+    def admin_editer(artisan_id: str,
+                     nelyo_admin: str = Cookie(default="", alias=admin_mdp.NOM_COOKIE)):
+        if _exige_admin(nelyo_admin) is None:
+            return HTMLResponse(pages.admin_connexion(NOM), status_code=401)
+        a = depot.artisan_par_id(artisan_id)
+        if a is None:
+            raise HTTPException(404, "artisan inconnu")
+        # Un artisan dont la config est encore un FICHIER : on montre le contenu du
+        # fichier, et l'enregistrer le fera passer en base. La migration se fait donc par
+        # l'usage, sans script de conversion à écrire ni à se rappeler de lancer.
+        brute = a.config
+        if brute is None and a.config_fichier:
+            chemin = DOSSIER_CONFIG / a.config_fichier
+            brute = (_json_mod.loads(chemin.read_text(encoding="utf-8"))
+                     if chemin.exists() else {})
+        return HTMLResponse(pages.admin_artisan(
+            NOM,
+            {"id": a.id, "nom": a.nom_affiche, "numero_relais": a.numero_relais,
+             "telephone": a.telephone, "etat_abonnement": a.etat_abonnement},
+            _json_mod.dumps(brute or _modele_config(), ensure_ascii=False, indent=2)))
+
+    @app.post("/admin/artisan/{artisan_id}", response_class=HTMLResponse)
+    def admin_enregistrer(artisan_id: str,
+                          nelyo_admin: str = Cookie(default="",
+                                                    alias=admin_mdp.NOM_COOKIE),
+                          nom: str = Form(default=""),
+                          numero_relais: str = Form(default=""),
+                          telephone: str = Form(default=""),
+                          etat_abonnement: str = Form(default="actif"),
+                          config: str = Form(default="")):
+        if _exige_admin(nelyo_admin) is None:
+            return HTMLResponse(pages.admin_connexion(NOM), status_code=401)
+        existant = depot.artisan_par_id(artisan_id)
+        if existant is None:
+            raise HTTPException(404, "artisan inconnu")
+        return _enregistrer_artisan(
+            {"id": artisan_id, "nom": nom, "numero_relais": numero_relais,
+             "telephone": telephone, "etat_abonnement": etat_abonnement,
+             "config": config}, existant, nelyo_admin, nouveau=False)
+
+    @app.post("/admin/artisan/{artisan_id}/jeton", response_class=HTMLResponse)
+    def admin_regenerer_jeton(
+            artisan_id: str,
+            nelyo_admin: str = Cookie(default="", alias=admin_mdp.NOM_COOKIE)):
+        """Régénère le jeton porteur. L'ancien cesse de fonctionner IMMÉDIATEMENT —
+        c'est le sens d'une révocation, et c'est pour ça que ce bouton existe."""
+        if _exige_admin(nelyo_admin) is None:
+            return HTMLResponse(pages.admin_connexion(NOM), status_code=401)
+        a = depot.artisan_par_id(artisan_id)
+        if a is None:
+            raise HTTPException(404, "artisan inconnu")
+        jeton = "nelyo_" + secrets.token_urlsafe(24)
+        a.token_sha256 = registre_empreinte(jeton)
+        depot.enregistrer_artisan(a)
+        return HTMLResponse(pages.admin_artisan(
+            NOM,
+            {"id": a.id, "nom": a.nom_affiche, "numero_relais": a.numero_relais,
+             "telephone": a.telephone, "etat_abonnement": a.etat_abonnement},
+            _json_mod.dumps(a.config or {}, ensure_ascii=False, indent=2),
+            jeton=jeton))
+
 
     return app

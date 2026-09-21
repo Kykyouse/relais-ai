@@ -471,6 +471,59 @@ def verifier(fabrique, cfg: dict) -> list[str]:
            "l'ANCIEN numéro retrouve encore l'artisan : l'index normalisé n'est pas "
            "nettoyé à l'écriture")
 
+    # ---- comptes d'exploitation (migration 012) ----
+    #
+    # Sujet DISTINCT de l'artisan : sa table, sa session, son cookie. Ce que le contrat
+    # tient ici, c'est surtout la RÉVOCATION — un compte qui peut tout faire doit pouvoir
+    # être fermé d'un geste, sessions comprises.
+    from relais_proto.depot import LigneAdmin
+    depot.enregistrer_admin(LigneAdmin(
+        id="adm-1", identifiant="geoffrey", mot_de_passe="scrypt$1$2$3$aa$bb",
+        nom="Geoffrey"))
+    exiger("adm-1" in {a.id for a in depot.admins()},
+           "admins() ne rend pas le compte enregistré")
+    trouve = depot.admin_par_identifiant("geoffrey")
+    exiger(trouve is not None and trouve.mot_de_passe == "scrypt$1$2$3$aa$bb",
+           "admin_par_identifiant : aller-retour incomplet")
+    exiger(depot.admin_par_identifiant("inconnu") is None,
+           "admin_par_identifiant(inconnu) doit rendre None")
+    exiger(depot.admin_par_identifiant("") is None,
+           "admin_par_identifiant('') doit rendre None")
+
+    fin_sess = LUNDI_9H + dt.timedelta(days=7)
+    depot.creer_session_admin("emp-adm", "adm-1", fin_sess, LUNDI_9H, appareil="test")
+    exiger(depot.admin_de_session("emp-adm", LUNDI_9H) == "adm-1",
+           "admin_de_session ne rend pas le compte")
+    exiger_leve(Introuvable,
+                lambda: depot.admin_de_session("emp-adm", fin_sess),
+                "une session admin PÉRIMÉE doit être traitée comme absente")
+    exiger_leve(Introuvable,
+                lambda: depot.admin_de_session("emp-inconnue", LUNDI_9H),
+                "admin_de_session(empreinte inconnue) doit lever Introuvable")
+
+    # LA propriété : désactiver le compte ferme ses sessions IMMÉDIATEMENT. Sans ça, un
+    # admin révoqué garderait tous ses droits jusqu'à l'échéance de son cookie.
+    depot.enregistrer_admin(LigneAdmin(
+        id="adm-1", identifiant="geoffrey", mot_de_passe="scrypt$1$2$3$aa$bb",
+        nom="Geoffrey", actif=False))
+    exiger(depot.admin_par_identifiant("geoffrey") is None,
+           "un compte DÉSACTIVÉ reste trouvable : il pourrait encore se connecter")
+    exiger_leve(Introuvable,
+                lambda: depot.admin_de_session("emp-adm", LUNDI_9H),
+                "désactiver un admin ne ferme pas ses sessions en cours — son cookie "
+                "ouvre encore toutes les portes")
+
+    depot.enregistrer_admin(LigneAdmin(
+        id="adm-1", identifiant="geoffrey", mot_de_passe="scrypt$1$2$3$aa$bb",
+        nom="Geoffrey", actif=True))
+    exiger(depot.admin_de_session("emp-adm", LUNDI_9H) == "adm-1",
+           "réactiver le compte ne rouvre pas sa session")
+    depot.supprimer_session_admin("emp-adm")
+    exiger_leve(Introuvable,
+                lambda: depot.admin_de_session("emp-adm", LUNDI_9H),
+                "la déconnexion admin ne supprime pas la session")
+    depot.supprimer_session_admin("emp-adm")   # idempotent
+
     # ---- codes de connexion (migration 009) ----
     exiger(depot.code_connexion("art-dupont") is None,
            "code_connexion() devrait être vide avant toute demande")

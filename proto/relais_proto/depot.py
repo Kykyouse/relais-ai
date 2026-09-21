@@ -106,6 +106,22 @@ class LigneArtisan:
 
 
 @dataclass
+class LigneAdmin:
+    """Un compte d'exploitation (migration 012). Sujet DISTINCT de l'artisan : ce n'est
+    pas un client du produit, c'est celui qui le tient.
+
+    `mot_de_passe` porte « scrypt$n$r$p$sel$empreinte » — jamais le clair. Les paramètres
+    de dérivation voyagent avec l'empreinte pour que les durcir n'invalide pas les comptes
+    existants (cf. `admin.py`).
+    """
+    id: str
+    identifiant: str
+    mot_de_passe: str
+    nom: str | None = None
+    actif: bool = True
+
+
+@dataclass
 class CodeConnexion:
     """Un code SMS en attente. **Un seul vivant par artisan** — voir migration 009."""
     artisan_id: str
@@ -197,6 +213,8 @@ class Depot(Protocol):
 
     def leads(self, artisan_id: str, limite: int = 50) -> list[Lead]: ...
 
+    def compter_appels(self, artisan_id: str) -> int: ...
+
     def marquer_lead_alerte(self, lead_id: str, motif: str,
                             maintenant: dt.datetime) -> None: ...
 
@@ -211,6 +229,21 @@ class Depot(Protocol):
     def artisan_de_session(self, empreinte: str, maintenant: dt.datetime) -> str: ...
 
     def supprimer_session(self, empreinte: str) -> None: ...
+
+    # ---- comptes d'exploitation (migration 012) ----
+    def admins(self) -> list[LigneAdmin]: ...
+
+    def enregistrer_admin(self, ligne: LigneAdmin) -> None: ...
+
+    def admin_par_identifiant(self, identifiant: str) -> LigneAdmin | None: ...
+
+    def creer_session_admin(self, empreinte: str, admin_id: str,
+                            expire_a: dt.datetime, maintenant: dt.datetime,
+                            appareil: str | None = None) -> None: ...
+
+    def admin_de_session(self, empreinte: str, maintenant: dt.datetime) -> str: ...
+
+    def supprimer_session_admin(self, empreinte: str) -> None: ...
 
     def marquer_message_envoye(self, message_id: str, maintenant: dt.datetime,
                                reference: str | None = None,
@@ -253,6 +286,8 @@ class DepotMemoire:
         self._messages: dict[str, dict] = {}
         self._par_cle: dict[str, str] = {}   # clé d'idempotence -> id message
         self._sessions: dict[str, dict] = {}  # empreinte -> session
+        self._admins: dict[str, LigneAdmin] = {}
+        self._sessions_admin: dict[str, dict] = {}
         self._artisans_registre: dict[str, LigneArtisan] = {}
         self._codes: dict[str, CodeConnexion] = {}   # artisan_id -> code SMS en attente
         self._compteurs: dict[str, int] = {}
@@ -446,6 +481,13 @@ class DepotMemoire:
                 return r
         raise Introuvable("jeton de confirmation inconnu")
 
+    def compter_appels(self, artisan_id: str) -> int:
+        # Un COMPTE, pas une liste : la page d'admin veut un nombre, et charger
+        # cinquante transcripts pour en faire un `len()` serait payer très cher
+        # une information d'une ligne.
+        return sum(1 for a in self._appels.values()
+                   if a["artisan_id"] == artisan_id)
+
     def marquer_lead_alerte(self, lead_id: str, motif: str,
                             maintenant: dt.datetime) -> None:
         """Alerte rouge sur la carte lead (spec §3.6). Écrite DANS les données du lead :
@@ -530,6 +572,42 @@ class DepotMemoire:
 
     def supprimer_session(self, empreinte: str) -> None:
         self._sessions.pop(empreinte, None)   # déconnexion idempotente
+
+    # ---- comptes d'exploitation (migration 012) ----
+    def admins(self) -> list[LigneAdmin]:
+        return [replace(a) for a in sorted(self._admins.values(), key=lambda x: x.id)]
+
+    def enregistrer_admin(self, ligne: LigneAdmin) -> None:
+        self._admins[ligne.id] = replace(ligne)
+
+    def admin_par_identifiant(self, identifiant: str) -> LigneAdmin | None:
+        # Un compte DÉSACTIVÉ est traité comme absent : le filtre est ici, dans le dépôt,
+        # et pas chez l'appelant — sinon il suffirait d'oublier de le vérifier une fois.
+        if not identifiant:
+            return None
+        return next((replace(a) for a in self._admins.values()
+                     if a.identifiant == identifiant and a.actif), None)
+
+    def creer_session_admin(self, empreinte: str, admin_id: str,
+                            expire_a: dt.datetime, maintenant: dt.datetime,
+                            appareil: str | None = None) -> None:
+        self._sessions_admin[empreinte] = {"admin_id": admin_id, "cree_a": maintenant,
+                                           "expire_a": expire_a, "appareil": appareil}
+
+    def admin_de_session(self, empreinte: str, maintenant: dt.datetime) -> str:
+        """Comme pour l'artisan : une session périmée est traitée comme absente, et c'est
+        le dépôt qui applique l'expiration. Un compte DÉSACTIVÉ l'est aussi — sinon
+        révoquer un admin laisserait son cookie ouvrir les portes jusqu'à l'échéance."""
+        brut = self._sessions_admin.get(empreinte)
+        if brut is None or brut["expire_a"] <= maintenant:
+            raise Introuvable("session admin inconnue ou périmée")
+        compte = self._admins.get(brut["admin_id"])
+        if compte is None or not compte.actif:
+            raise Introuvable("session admin inconnue ou périmée")
+        return brut["admin_id"]
+
+    def supprimer_session_admin(self, empreinte: str) -> None:
+        self._sessions_admin.pop(empreinte, None)
 
     # ---- utils ----
     @staticmethod

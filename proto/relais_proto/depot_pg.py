@@ -22,8 +22,8 @@ from __future__ import annotations
 import datetime as dt
 import uuid
 
-from .depot import (Appel, CodeConnexion, Introuvable, Lead, LigneArtisan,
-                    normaliser_numero)
+from .depot import (Appel, CodeConnexion, Introuvable, Lead, LigneAdmin,
+                    LigneArtisan, normaliser_numero)
 from .messages import Brouillon, MessageSortant, StatutMessage
 from .rdv import Rdv, StatutRdv, TERMINAUX
 
@@ -339,6 +339,11 @@ class DepotPostgres:
             f"select {self._COLS_LEAD} where l.artisan_id = %s "
             "order by a.debut_a desc, l.id desc limit %s", (artisan_id, limite))]
 
+    def compter_appels(self, artisan_id: str) -> int:
+        return self._plusieurs(
+            "select count(*) from appel where artisan_id = %s",
+            (artisan_id,))[0][0]
+
     def marquer_lead_alerte(self, lead_id: str, motif: str,
                             maintenant: dt.datetime) -> None:
         lead_id = self._uuid(lead_id, lead_id)
@@ -472,6 +477,55 @@ class DepotPostgres:
 
     def supprimer_session(self, empreinte: str) -> None:
         self._executer("delete from session_artisan where empreinte = %s", (empreinte,))
+
+    # ---- comptes d'exploitation (migration 012) ----
+    _COLS_ADMIN = "id, identifiant, mot_de_passe, nom, actif"
+
+    def admins(self) -> list[LigneAdmin]:
+        return [LigneAdmin(*l) for l in self._plusieurs(
+            f"select {self._COLS_ADMIN} from admin order by id")]
+
+    def enregistrer_admin(self, ligne: LigneAdmin) -> None:
+        self._executer(
+            f"insert into admin ({self._COLS_ADMIN}) values (%s,%s,%s,%s,%s) "
+            "on conflict (id) do update set identifiant = excluded.identifiant, "
+            "mot_de_passe = excluded.mot_de_passe, nom = excluded.nom, "
+            "actif = excluded.actif",
+            (ligne.id, ligne.identifiant, ligne.mot_de_passe, ligne.nom, ligne.actif))
+
+    def admin_par_identifiant(self, identifiant: str) -> LigneAdmin | None:
+        # `and actif` est DANS la requête : un compte désactivé doit être introuvable, et
+        # le filtre appartient au dépôt — un appelant qui l'oublierait une seule fois
+        # rouvrirait un compte révoqué.
+        if not identifiant:
+            return None
+        lignes = self._plusieurs(
+            f"select {self._COLS_ADMIN} from admin where identifiant = %s and actif",
+            (identifiant,))
+        return LigneAdmin(*lignes[0]) if lignes else None
+
+    def creer_session_admin(self, empreinte: str, admin_id: str,
+                            expire_a: dt.datetime, maintenant: dt.datetime,
+                            appareil: str | None = None) -> None:
+        self._executer(
+            "insert into session_admin (empreinte, admin_id, cree_a, expire_a, "
+            "appareil) values (%s,%s,%s,%s,%s) on conflict (empreinte) do update set "
+            "expire_a = excluded.expire_a, appareil = excluded.appareil",
+            (empreinte, admin_id, maintenant, expire_a, appareil))
+
+    def admin_de_session(self, empreinte: str, maintenant: dt.datetime) -> str:
+        """Expiration ET compte actif appliqués EN SQL, par une jointure : impossible
+        d'oublier l'un des deux. Désactiver un admin doit fermer ses sessions du même
+        geste — un compte révoqué dont le cookie ouvre encore les portes n'est pas
+        révoqué."""
+        ligne = self._un(
+            "select s.admin_id from session_admin s join admin a on a.id = s.admin_id "
+            "where s.empreinte = %s and s.expire_a > %s and a.actif",
+            (empreinte, maintenant), "session admin inconnue ou périmée")
+        return ligne[0]
+
+    def supprimer_session_admin(self, empreinte: str) -> None:
+        self._executer("delete from session_admin where empreinte = %s", (empreinte,))
 
     def marquer_message_envoye(self, message_id: str, maintenant: dt.datetime,
                                reference: str | None = None,

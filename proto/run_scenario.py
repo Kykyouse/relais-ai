@@ -3693,6 +3693,226 @@ def _appel_sans_rdv(depot, nom_scenario: str, maintenant: dt.datetime):
     return depot.cloturer_appel(appel.id, build_lead(convo), maintenant)
 
 
+def check_admin() -> bool:
+    """T13 : l'administration — créer un artisan SANS commit ni redéploiement.
+
+    C'est l'aboutissement du chantier du 21/09, et le défaut qu'il ferme n'était pas une
+    fonctionnalité manquante : **il n'existait aucune création de compte.** Le seul chemin
+    d'écriture dans `artisan` était `semer_artisans.py`, qui sème un fichier versionné dont
+    les jetons sont publics. En production la table était donc vide, et personne — Geoffrey
+    compris — ne pouvait ouvrir l'application.
+
+    Ce que ce test tient, dans l'ordre d'importance :
+
+    1. **la porte est fermée** : aucune page d'admin sans session valide ;
+    2. **une config invalide n'est PAS enregistrée** et tous ses défauts sont rendus d'un
+       coup. C'est le point le plus important du chantier : jusqu'ici une config passait
+       par une relecture humaine et la suite de tests avant d'atteindre un client. Un
+       formulaire supprime ces deux filets, et une clé manquante ne casse pas une page,
+       elle casse un appel en cours ;
+    3. **l'artisan créé est servi IMMÉDIATEMENT**, sans redémarrage — c'est ce que R95 a
+       rendu possible, et sans quoi ce formulaire ne servirait à rien ;
+    4. **régénérer un jeton révoque l'ancien**, sinon le bouton ment ;
+    5. **désactiver un admin ferme sa session en cours**, sinon la révocation ment aussi.
+    """
+    try:
+        from fastapi.testclient import TestClient
+    except ImportError:
+        print("   fastapi/httpx absents : pip install -r requirements.txt")
+        return False
+
+    import copy
+    import json as _js
+
+    from relais_proto import admin as admin_mdp
+    from relais_proto.api import creer_app
+    from relais_proto.depot import LigneAdmin
+    from relais_proto.registre import RegistreBase, empreinte as emp
+
+    modele = _js.loads((_DOSSIER_CONFIG / "dupont.json").read_text(encoding="utf-8"))
+    depot = DepotMemoire()
+    depot.enregistrer_admin(LigneAdmin(
+        id="adm-1", identifiant="geoffrey", nom="Geoffrey",
+        mot_de_passe=admin_mdp.chiffrer("un-mot-de-passe-solide")))
+
+    # LE REGISTRE EST CELUI DE LA PRODUCTION (lu en base) : c'est indispensable ici,
+    # puisque tout l'objet du test est qu'un artisan créé soit vu sans redémarrage.
+    registre = RegistreBase(depot, produit.charger(_DOSSIER_CONFIG), emp("secret"),
+                            _DOSSIER_CONFIG, journal=lambda m: None)
+    app = creer_app(depot, registre, MockLLM, lambda: LUNDI_9H,
+                    base_url="https://nelyo.test", cookie_secure=False)
+
+    # (1) la porte est fermée
+    with TestClient(app) as anonyme:
+        for chemin in ("/admin", "/admin/artisan/nouveau", "/admin/artisan/x"):
+            r = anonyme.get(chemin)
+            if r.status_code != 401 or "Administration" not in r.text:
+                print(f"   {chemin} sans session : {r.status_code}, "
+                      f"page = {r.text[:60]!r}")
+                return False
+        # une écriture non plus, et surtout pas avec une redirection vers le formulaire
+        if anonyme.post("/admin/artisan", data={"id": "pirate"}).status_code != 401:
+            print("   création d'artisan possible sans session")
+            return False
+        if depot.artisan_par_id("pirate") is not None:
+            print("   un artisan a été créé par une requête non authentifiée")
+            return False
+
+    with TestClient(app) as geoffrey:
+        # mauvais mot de passe : refusé, et le message ne dit pas si le compte existe
+        r = geoffrey.post("/admin/connexion",
+                          data={"identifiant": "geoffrey", "mot_de_passe": "faux"})
+        r2 = geoffrey.post("/admin/connexion",
+                           data={"identifiant": "inconnu", "mot_de_passe": "faux"})
+        if r.status_code != 401 or r2.status_code != 401:
+            print(f"   mot de passe faux accepté : {r.status_code} / {r2.status_code}")
+            return False
+        import re as _re
+        def _msg(page):
+            m = _re.search(r'class="erreurs">(.*?)</p>', page)
+            return m.group(1) if m else ""
+        if _msg(r.text) != _msg(r2.text) or not _msg(r.text):
+            print("   le message distingue un compte existant d'un compte inconnu")
+            return False
+
+        # connexion
+        r = geoffrey.post("/admin/connexion",
+                          data={"identifiant": "geoffrey",
+                                "mot_de_passe": "un-mot-de-passe-solide"},
+                          follow_redirects=False)
+        if r.status_code != 303:
+            print(f"   connexion admin refusée : {r.status_code}")
+            return False
+        biscuit = geoffrey.cookies.get(admin_mdp.NOM_COOKIE)
+        if not biscuit or len(biscuit) < 40:
+            print(f"   cookie admin absent ou trop court : {biscuit!r}")
+            return False
+        if any(biscuit in str(v) for v in depot._sessions_admin.values()):
+            print("   le jeton de session admin est stocké en clair")
+            return False
+
+        if "Artisans" not in geoffrey.get("/admin").text:
+            print("   /admin ne rend pas la liste après connexion")
+            return False
+
+        # (2) config invalide : RIEN n'est enregistré, et tous les défauts sont rendus
+        casse = copy.deepcopy(modele)
+        del casse["zone"]
+        del casse["tarifs"]
+        casse["fuseau"] = "Europe/Pari"
+        r = geoffrey.post("/admin/artisan", data={
+            "id": "art-test", "nom": "Test SARL", "numero_relais": "+33189700123",
+            "telephone": "+33611223344", "etat_abonnement": "actif",
+            "config": _js.dumps(casse)})
+        if r.status_code != 400:
+            print(f"   une config invalide a été acceptée : {r.status_code}")
+            return False
+        for attendu in ("zone", "tarifs", "fuseau"):
+            if attendu not in r.text:
+                print(f"   le défaut « {attendu} » n'est pas signalé — "
+                      f"les défauts doivent être rendus TOUS à la fois")
+                return False
+        if depot.artisan_par_id("art-test") is not None:
+            print("   l'artisan a été créé malgré une config invalide")
+            return False
+
+        # un JSON qui n'en est pas : refusé aussi, sans trace
+        r = geoffrey.post("/admin/artisan", data={
+            "id": "art-test", "config": "{ceci n est pas du json"})
+        if r.status_code != 400 or depot.artisan_par_id("art-test") is not None:
+            print("   un JSON illisible passe")
+            return False
+
+        # (3) création valide
+        r = geoffrey.post("/admin/artisan", data={
+            "id": "art-test", "nom": "Test SARL", "numero_relais": "+33189700123",
+            "telephone": "+33611223344", "etat_abonnement": "actif",
+            "config": _js.dumps(modele)})
+        if r.status_code != 200 or "Artisan créé" not in r.text:
+            print(f"   création refusée : {r.status_code}")
+            return False
+        jetons = _re.findall(r"nelyo_[A-Za-z0-9_-]{20,}", r.text)
+        if not jetons:
+            print("   le jeton porteur n'est pas affiché à la création")
+            return False
+        jeton = jetons[0]
+        cree = depot.artisan_par_id("art-test")
+        if cree is None or cree.config is None:
+            print("   l'artisan n'est pas en base, ou sans config")
+            return False
+        if cree.token_sha256 == emp(jeton) is None:
+            print("   le jeton n'est pas stocké en empreinte")
+            return False
+        if any(jeton in str(v) for v in (cree.token_sha256, cree.config)):
+            print("   le jeton est stocké en clair")
+            return False
+
+        # identifiant déjà pris, et numéro Relais déjà utilisé : refusés avec un message
+        r = geoffrey.post("/admin/artisan", data={
+            "id": "art-test", "config": _js.dumps(modele)})
+        if r.status_code != 400 or "déjà pris" not in r.text:
+            print("   un identifiant en double est accepté")
+            return False
+        r = geoffrey.post("/admin/artisan", data={
+            "id": "art-autre", "numero_relais": "0189700123",
+            "config": _js.dumps(modele)})
+        if r.status_code != 400 or "déjà" not in r.text:
+            print("   un numéro Relais en double est accepté — le rattachement d'un "
+                  "appel deviendrait arbitraire")
+            return False
+
+    # (4) L'ARTISAN EST SERVI IMMÉDIATEMENT, sans redémarrage. Nouveau client HTTP, mais
+    # la MÊME application : c'est le processus en cours qui doit le voir.
+    with TestClient(app) as artisan:
+        r = artisan.get("/app", headers={"Authorization": f"Bearer {jeton}"})
+        if r.status_code != 200:
+            print(f"   l'artisan créé n'est pas servi sans redémarrage : {r.status_code}")
+            return False
+        if registre.par_numero_relais("0189700123") is None:
+            print("   le nouvel artisan n'est pas joignable par son numéro Relais")
+            return False
+
+    # (5) régénérer le jeton révoque l'ancien
+    with TestClient(app) as geoffrey:
+        geoffrey.post("/admin/connexion",
+                      data={"identifiant": "geoffrey",
+                            "mot_de_passe": "un-mot-de-passe-solide"})
+        r = geoffrey.post("/admin/artisan/art-test/jeton")
+        neufs = [j for j in _re.findall(r"nelyo_[A-Za-z0-9_-]{20,}", r.text)
+                 if j != jeton]
+        if r.status_code != 200 or not neufs:
+            print("   la régénération ne rend pas de nouveau jeton")
+            return False
+    with TestClient(app) as artisan:
+        if artisan.get("/app",
+                       headers={"Authorization": f"Bearer {jeton}"}).status_code != 401:
+            print("   l'ANCIEN jeton fonctionne encore après régénération — "
+                  "le bouton de révocation ment")
+            return False
+        if artisan.get("/app",
+                       headers={"Authorization": f"Bearer {neufs[0]}"}
+                       ).status_code != 200:
+            print("   le nouveau jeton ne fonctionne pas")
+            return False
+
+    # (6) désactiver l'admin ferme sa session EN COURS
+    with TestClient(app) as geoffrey:
+        geoffrey.post("/admin/connexion",
+                      data={"identifiant": "geoffrey",
+                            "mot_de_passe": "un-mot-de-passe-solide"})
+        if geoffrey.get("/admin").status_code != 200:
+            print("   session admin non ouverte")
+            return False
+        depot.enregistrer_admin(LigneAdmin(
+            id="adm-1", identifiant="geoffrey", nom="Geoffrey",
+            mot_de_passe=admin_mdp.chiffrer("un-mot-de-passe-solide"), actif=False))
+        if geoffrey.get("/admin").status_code != 401:
+            print("   désactiver un admin ne ferme pas sa session : son cookie ouvre "
+                  "encore toutes les portes")
+            return False
+    return True
+
+
 def check_registre_lu_en_base() -> bool:
     """R95 : le registre lu EN BASE se comporte comme celui tenu en mémoire — et voit
     les artisans écrits APRÈS son ouverture.
@@ -11146,6 +11366,14 @@ def run() -> int:
     if check_base_de_production_dit_non():
         print("   → une base déclarée production refuse le truncate elle-même, "
               "et le refus dit quoi retirer pour l'annuler : ✅ PASS")
+    else:
+        print("   → ❌ FAIL")
+        echecs += 1
+
+    print(f"\n──── T13_administration ────")
+    if check_admin():
+        print("   → un artisan se crée sans commit ni redéploiement, une config "
+              "invalide est refusée en bloc, et les révocations révoquent : ✅ PASS")
     else:
         print("   → ❌ FAIL")
         echecs += 1

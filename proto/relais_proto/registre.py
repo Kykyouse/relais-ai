@@ -333,3 +333,58 @@ class RegistreBase:
                 ecartes.append(f"{ligne.id} ({ligne.etat_abonnement}, "
                                f"numero_relais={ligne.numero_relais!r})")
         return servables, ecartes
+
+
+def valider_config(brute, modele: dict) -> list[str]:
+    """Ce qui empêcherait cette config de servir un appel. Liste vide = utilisable.
+
+    Écrit pour l'admin (21/09) : jusque-là une config n'était modifiable que par un
+    commit, donc relue par un humain et éprouvée par la suite de tests avant d'atteindre
+    qui que ce soit. Un formulaire supprime ces deux filets. Or **une clé manquante ne
+    casse pas une page, elle casse un appel en cours** : dix-huit chemins sont lus sans
+    `.get` dans le moteur et les gabarits — `cfg["entreprise"]["prenom_patron"]`,
+    `cfg["validation"]["delai_max_urgence_heures"]`, et ainsi de suite.
+
+    LES EXIGENCES SONT DÉRIVÉES DU MODÈLE, pas listées ici. Une liste écrite à la main
+    aurait vieilli à la première section ajoutée, et elle aurait vieilli en silence : le
+    jour où le moteur lit une clé neuve, c'est l'appel d'un client qui l'apprend. Le
+    modèle, lui, est le fichier que la suite de tests exerce à chaque exécution.
+
+    **Tous les défauts sont rendus, pas seulement le premier.** Un formulaire qui corrige
+    une faute à la fois fait faire dix allers-retours là où un seul suffirait.
+    """
+    if not isinstance(brute, dict):
+        return [f"la config doit être un objet JSON, pas {type(brute).__name__}"]
+
+    defauts: list[str] = []
+
+    def comparer(attendu: dict, recu: dict, chemin: str = "") -> None:
+        for cle, valeur in attendu.items():
+            # `produit` est RÉAPPLIQUÉ à chaque lecture (`produit.appliquer`) : l'exiger
+            # dans la config d'un artisan reviendrait à lui faire porter une copie
+            # figée du nom et de l'expéditeur du produit.
+            if cle == "produit" and not chemin:
+                continue
+            ici = f"{chemin}.{cle}" if chemin else cle
+            if cle not in recu:
+                defauts.append(f"section manquante : {ici}")
+                continue
+            if isinstance(valeur, dict) and isinstance(recu[cle], dict):
+                comparer(valeur, recu[cle], ici)
+            elif isinstance(valeur, dict) != isinstance(recu[cle], dict):
+                defauts.append(
+                    f"{ici} : attendu {'un objet' if isinstance(valeur, dict) else 'une valeur'}, "
+                    f"reçu {type(recu[cle]).__name__}")
+
+    comparer(modele, brute)
+
+    # Le fuseau est vérifié À PART parce qu'il ne se voit pas dans la forme : « Europe/Pari »
+    # est une chaîne parfaitement bien formée qui fait lever au premier calcul d'heure,
+    # donc en plein appel. C'est la faute que `Registre` attrapait au démarrage.
+    if "fuseau" in brute:
+        try:
+            temps.fuseau(brute)
+        except Exception as exc:
+            defauts.append(f"fuseau invalide ({brute.get('fuseau')!r}) — {exc}")
+
+    return defauts

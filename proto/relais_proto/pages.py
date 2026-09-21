@@ -389,3 +389,172 @@ def saisie_code(produit: str, telephone: str, erreur: str = "") -> str:
           'autofocus required>'
           '<label></label><button type="submit">Entrer</button></form>'
           '<p class="apres"><a href="/connexion">Recommencer avec un autre numéro</a></p>')
+
+
+# ------------------------------------------------------------------ côté admin
+_STYLE_ADMIN = _STYLE_APP + """
+main { max-width: 52rem; }
+table { width: 100%; border-collapse: collapse; margin: 0 0 18px; }
+th, td { text-align: left; padding: 9px 8px; border-bottom: 1px solid #e2e5ea;
+  font-size: .94rem; vertical-align: top; }
+th { color: #5b6472; font-weight: 600; font-size: .85rem; }
+td.num { font-variant-numeric: tabular-nums; white-space: nowrap; }
+textarea { width: 100%; min-height: 24rem; font-family: ui-monospace, Menlo, Consolas,
+  monospace; font-size: .86rem; line-height: 1.45; padding: 10px;
+  border: 1px solid #cfd5de; border-radius: 8px; background: #fff; color: #14181f; }
+select { width: 100%; min-height: 46px; font-size: 1rem; padding: 0 10px;
+  border: 1px solid #cfd5de; border-radius: 8px; background: #fff; color: #14181f; }
+.erreurs { background: #fde8e4; color: #98261a; border-radius: 8px; padding: 12px 14px;
+  margin: 0 0 16px; }
+.erreurs ul { margin: 6px 0 0; padding-left: 20px; }
+.secret { background: #fdf3df; color: #7a5510; border-radius: 8px; padding: 12px 14px;
+  margin: 0 0 16px; font-family: ui-monospace, Menlo, Consolas, monospace;
+  word-break: break-all; }
+.inactif { opacity: .55; }
+.barre { display: flex; gap: 14px; align-items: baseline; margin: 0 0 18px; }
+.barre h1 { margin: 0; }
+.barre .pousse { margin-left: auto; }
+form.enligne { display: inline; }
+button.discret { background: #fff; color: #3c454a; border: 1px solid #cfd5de;
+  min-height: 36px; font-size: .9rem; padding: 0 12px; width: auto; }
+@media (prefers-color-scheme: dark) {
+  th, td { border-color: #2c3542; }
+  textarea, select { background: #14181f; color: #e8eaed; border-color: #2c3542; }
+  .erreurs { background: #3d2320; color: #f0a99f; }
+  .secret { background: #3a3322; color: #e0c07a; }
+  button.discret { background: #1d232c; color: #c8d0da; border-color: #2c3542; }
+}
+"""
+
+
+def _page_admin(produit: str, titre: str, corps: str) -> str:
+    return (
+        "<!DOCTYPE html>\n"
+        '<html lang="fr"><head><meta charset="utf-8">'
+        '<meta name="viewport" content="width=device-width, initial-scale=1">'
+        '<meta name="robots" content="noindex, nofollow">'
+        f"<title>{escape(titre)} · admin {escape(produit)}</title>"
+        f"<style>{_STYLE_ADMIN}</style></head>"
+        f'<body><main>{corps}<p class="marque">{escape(produit)} · administration'
+        "</p></main></body></html>")
+
+
+def admin_connexion(produit: str, erreur: str = "") -> str:
+    """Le formulaire d'entrée de l'exploitant.
+
+    UN SEUL MESSAGE pour tous les échecs — identifiant inconnu, compte désactivé, mot de
+    passe faux. Distinguer serait aimable et renseignerait un inconnu sur l'existence
+    d'un compte. Contrairement à la page de connexion artisan, où le visiteur est un
+    client qu'on aide à se dépanner, celui qui échoue ici n'a rien à y faire.
+    """
+    alerte = f'<p class="erreurs">{escape(erreur)}</p>' if erreur else ""
+    return _page_admin(
+        produit, "Connexion",
+        "<h1>Administration</h1>" + alerte +
+        '<form method="post" action="/admin/connexion">'
+        '<label for="i">Identifiant</label>'
+        '<input id="i" name="identifiant" autocomplete="username" required autofocus>'
+        '<label for="m">Mot de passe</label>'
+        '<input id="m" name="mot_de_passe" type="password" '
+        'autocomplete="current-password" required>'
+        '<label></label><button type="submit">Entrer</button></form>')
+
+
+def admin_artisans(produit: str, nom: str, artisans: list[dict]) -> str:
+    """La liste. Première page après connexion : elle dit qui est servi et qui ne l'est
+    pas — un artisan inutilisable doit se voir ICI, pas au premier appel de son client.
+    """
+    if artisans:
+        lignes = "".join(
+            '<tr class="{}">'.format("" if a["utilisable"] else "inactif")
+            + '<td><a href="/admin/artisan/{}">{}</a><br>'.format(
+                escape(a["id"]), escape(a["id"]))
+            + '<span class="raisons">{}</span></td>'.format(escape(a["nom"] or "—"))
+            + '<td class="num">{}</td>'.format(escape(a["numero_relais"] or "—"))
+            + '<td class="num">{}</td>'.format(escape(a["telephone"] or "—"))
+            + "<td>{}</td>".format(escape(a["etat"]))
+            + "<td>{}</td>".format(escape(a["source_config"]))
+            + '<td class="num">{}</td></tr>'.format(a["appels"])
+            for a in artisans)
+        corps = ("<table><tr><th>Artisan</th><th>Numéro Relais</th><th>Mobile</th>"
+                 "<th>Abonnement</th><th>Config</th><th>Appels</th></tr>"
+                 + lignes + "</table>")
+    else:
+        corps = ('<p class="vide">Aucun artisan. Le produit ne peut servir personne '
+                 "tant que cette liste est vide.</p>")
+    return _page_admin(
+        produit, "Artisans",
+        '<div class="barre"><h1>Artisans</h1>'
+        + '<span class="pousse raisons">{}</span>'.format(escape(nom))
+        + '<form class="enligne" method="post" action="/admin/deconnexion">'
+          '<button class="discret" type="submit">Quitter</button></form></div>'
+        + corps
+        + '<p class="apres"><a href="/admin/artisan/nouveau">+ Nouvel artisan</a></p>')
+
+
+def admin_artisan(produit: str, artisan: dict, config_json: str,
+                  erreurs: list = (), jeton: str = "", cree: bool = False) -> str:
+    """Création et édition. UN SEUL gabarit pour les deux : les champs sont les mêmes, et
+    deux pages jumelles finiraient par diverger sur le détail qui compte.
+
+    LA CONFIG EST ÉDITÉE EN JSON, et c'est un choix assumé pour cette première version.
+    Elle compte onze sections et dix-huit chemins que le moteur lit sans filet ; un
+    formulaire structuré est un vrai travail de conception, qui mérite d'être fait APRÈS
+    avoir vu trois configs réelles. En attendant, le JSON donne accès à TOUT
+    immédiatement — et la validation côté serveur est la même quelle que soit la forme
+    du champ. C'est elle qui protège l'appel, pas le formulaire.
+    """
+    neuf = not artisan.get("id")
+    action = "/admin/artisan" if neuf else "/admin/artisan/" + escape(artisan["id"])
+    alerte = ""
+    if erreurs:
+        alerte = ('<div class="erreurs"><b>Rien n a été enregistré.</b><ul>'
+                  .replace("n a", "n&#x27;a")
+                  + "".join("<li>{}</li>".format(escape(str(e))) for e in erreurs)
+                  + "</ul></div>")
+    secret = ""
+    if jeton:
+        secret = ('<div class="secret"><b>Jeton porteur — affiché une seule fois.</b>'
+                  "<br>" + escape(jeton) + "<br>"
+                  "La base n en garde que l empreinte : il ne sera pas relisible.</div>"
+                  ).replace("n en", "n&#x27;en").replace("l empreinte", "l&#x27;empreinte")
+    bandeau = '<p class="raisons">Artisan créé.</p>' if cree else ""
+    verrou = " required autofocus" if neuf else " readonly"
+    etat = artisan.get("etat_abonnement") or "actif"
+    options = "".join(
+        '<option value="{0}"{1}>{0}</option>'.format(
+            e, " selected" if e == etat else "")
+        for e in ("actif", "essai", "suspendu", "resilie"))
+    titre = artisan.get("id") or "Nouvel artisan"
+    regenerer = ""
+    if not neuf:
+        regenerer = (
+            '<form method="post" action="/admin/artisan/'
+            + escape(artisan["id"]) + '/jeton" style="margin-top:18px">'
+            '<button class="discret" type="submit">Régénérer le jeton porteur</button>'
+            "</form>")
+    return _page_admin(
+        produit, titre,
+        '<div class="barre"><h1>' + escape(titre) + "</h1>"
+        '<span class="pousse"><a href="/admin">Tous les artisans</a></span></div>'
+        + bandeau + alerte + secret
+        + '<form method="post" action="' + action + '">'
+        + '<label for="id">Identifiant technique</label>'
+        + '<input id="id" name="id" value="{}"{}>'.format(
+            escape(artisan.get("id") or ""), verrou)
+        + '<label for="nom">Nom affiché</label>'
+        + '<input id="nom" name="nom" value="{}">'.format(
+            escape(artisan.get("nom") or ""))
+        + '<label for="rel">Numéro Relais (celui que le client compose)</label>'
+        + '<input id="rel" name="numero_relais" value="{}">'.format(
+            escape(artisan.get("numero_relais") or ""))
+        + '<label for="tel">Mobile du patron (reçoit le code de connexion)</label>'
+        + '<input id="tel" name="telephone" value="{}">'.format(
+            escape(artisan.get("telephone") or ""))
+        + '<label for="ab">Abonnement</label>'
+        + '<select id="ab" name="etat_abonnement">' + options + "</select>"
+        + '<label for="cfg">Config — ce que l&#x27;agent saura pendant les appels</label>'
+        + '<textarea id="cfg" name="config" spellcheck="false">'
+        + escape(config_json) + "</textarea>"
+        + '<label></label><button type="submit">Enregistrer</button></form>'
+        + regenerer)
