@@ -10,13 +10,17 @@ Cible V1 : plombiers/chauffagistes FR. Solo dev : Geoffrey (binôme Claude) ; ma
    à REMPLACER en fin de session) ; les entrées datées en dessous sont le pourquoi.
 2. `docs/script-conversation-v1.md` — la machine à états S0–S11 et les 9 invariants. Source de vérité.
 3. `docs/config-artisan-v1.md` — schéma de config (le LLM ne sait RIEN hors config).
+   ⚠️ Depuis le 21/09 la config VIT EN BASE (`artisan.config`, migration 011) et
+   s'édite dans `/admin`. Les `config/*.json` sont des MODÈLES. Ce qui répond à
+   « qu'est-ce que l'agent savait pendant CET appel ? » n'est plus l'historique git
+   mais `appel.config_utilisee`, figée à l'ouverture de l'appel.
 
 ## Commandes
 
 ```bash
 cd proto
 pip install -r requirements.txt     # anthropic, python-dotenv (inutiles en mock)
-python run_scenario.py              # suite de non-régression (mock, sans clé, ~3 s) — 97 tests
+python run_scenario.py              # suite de non-régression (mock, sans clé, ~3 s) — 100 tests
                                     # « sans BASE » est désormais VÉRIFIÉ, pas promis (R93) :
                                     # la suite importait `serveur.py` — le câblage de prod,
                                     # qui ouvre une connexion Postgres à l'import — et
@@ -72,7 +76,22 @@ python worker.py [--a-vide]         # un passage : expiration puis expédition (
                                     # est en base — le clair ne se récupère pas.
                                     # RELAIS_SMS=journal (défaut, rien ne part) | ovh
 python semer_artisans.py [--ecrire] # ecrit config/artisans.json dans la table `artisan`
-                                    # (blanc par defaut). La table EST le registre.
+                                    # (blanc par defaut). ⚠️ INUTILISABLE EN PRODUCTION :
+                                    # ses jetons sont des jetons de DEV documentes en clair
+                                    # dans le depot. Pour la prod, voir creer_admin.py puis
+                                    # la page /admin.
+python creer_admin.py --identifiant <nom> [--ecrire] [--env-file ../.env.prod]
+                                    # cree le compte d'ADMINISTRATION. Resout l'oeuf et la
+                                    # poule : la page /admin est protegee par un compte
+                                    # d'admin, donc le premier nait en ligne de commande.
+                                    # Mot de passe affiche UNE fois (empreinte scrypt seule).
+                                    # `--desactiver` ferme le compte ET ses sessions.
+python semer_demo.py [--ecrire] [--effacer] --telephone <mobile> [--env-file …]
+                                    # un artisan `demo-nelyo` + un historique d'appels
+                                    # JOUE PAR LE VRAI MOTEUR (transcripts, scores et
+                                    # categories reels). Pour montrer le produit.
+                                    # ⚠️ Le RDV urgent expire au bout de 2 h par
+                                    # construction : resemer avant une demo.
 python configurer_assistant_vapi.py [--ecrire] [--url https://…] [--relever]
                                     # pousse config/assistant-vapi.json sur l'assistant
                                     # VOCAL (blanc par defaut : montre l'ECART champ par
@@ -179,7 +198,9 @@ persistance + implémentation mémoire · `depot_pg.py` adaptateur Postgres · `
 `contrat_depot.py` : suite de contrat jouée contre les DEUX implémentations du port.
 `api.py` façade HTTP (deux portes d'auth : secret webhook pour la plateforme vocale,
 token porteur pour l'app artisan) · `registre.py` artisans + numéros Relais, chargé depuis
-la **table `artisan`** (la config reste un fichier versionné) ·
+la **table `artisan`**, CONFIG COMPRISE depuis la migration 011 — les `config/*.json`
+sont devenus des MODÈLES ; deux implémentations, `Registre` (liste, pour les tests) et
+`RegistreBase` (lu en base à chaque recherche, en production) ·
 `confirmation.py` jetons du lien de validation client (empreinte seule en base) ·
 `envoi.py` plage de silence + réessais + port fournisseur (aucun câblé : `EnvoyeurJournal`) ·
 `pages.py` pages HTML (client + boîte de validation artisan, sans JS ni ressource externe) ·
@@ -195,6 +216,13 @@ seule, essais comptés, un seul code vivant) · `serveur.py` câblage de product
 `worker.py` un passage des workers de fond. **L'API ne décide jamais** — corollaire
 backend de la règle n°1 : elle transporte et persiste, le métier reste dans engine/rdv.
 
+`admin.py` le compte d'EXPLOITATION : mot de passe scrypt (bibliothèque standard, les
+paramètres voyagent avec l'empreinte), cookie et durée propres — sujet DISTINCT de
+l'artisan. Le mot de passe et non le code SMS parce qu'en production `RELAIS_SMS=journal` :
+un code d'admin atterrirait dans les journaux de l'hébergeur ·
+`registre.valider_config` ce qui empêcherait une config de servir un appel — exigences
+DÉRIVÉES du modèle `dupont.json`, jamais listées à la main (dix-huit chemins sont lus sans
+`.get` dans le moteur, et une liste écrite à la main vieillit en silence) ·
 `actions.py` le MENU d'actions fermé par état, la validation, et le bout de prompt qui le
 décrit — une seule source pour ce que le modèle peut proposer et ce que le code accepte ·
 `engine.py` contrôleur déterministe S0–S11 · `llm.py` extracteur+formuleur (Anthropic/Mock/Resilient,

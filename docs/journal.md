@@ -5,28 +5,30 @@
 
 ---
 
-# ÉTAT AU 20/09/2026 — à lire en premier
+# ÉTAT AU 21/09/2026 — à lire en premier
 
 > **Ce bloc se REMPLACE, il ne s'empile pas.** Les entrées datées plus bas sont le journal
 > chronologique (le pourquoi des décisions) ; ce bloc-ci est le où-on-en-est.
 
 ## En une phrase
 
-Le produit s'appelle **NELYO**, et depuis le 20/09 **il tourne en ligne** :
+Le produit s'appelle **NELYO** et **il tourne en ligne** :
 <https://nelyo-api.onrender.com>, cron compris, sur une base de production séparée.
-La compréhension est au LLM sous contrat fermé (menu d'actions + contraintes
-structurées), mesurée à **68/70** au banc d'extraction et **57/57** en éval réelle ×3 ;
-**97 tests** de non-régression. Il reste **un seul mur** : aucun numéro n'est joignable
-depuis la France.
+Depuis le 21/09 **un artisan s'inscrit sans commit ni redéploiement** : sa config vit en
+base et s'édite dans `/admin`. La compréhension est au LLM sous contrat fermé, mesurée à
+**68/70** au banc d'extraction et **57/57** en éval réelle ×3 ; **100 tests** de
+non-régression. Il reste **un seul mur** : aucun numéro n'est joignable depuis la France.
 
-## Ce qui tourne (rejoué le 20/09)
+## Ce qui tourne (rejoué le 21/09)
 
 ```bash
 cd proto
-python run_scenario.py                              # 97 tests, ~3 s — sans clé NI BASE (R93)
+python run_scenario.py                              # 100 tests, ~3 s — sans clé NI BASE (R93)
 python run_extract_eval.py [--mock] [--only …]      # banc d'EXTRACTION : 68/70, p50 1131 ms
 python run_llm_eval.py [--mock] [--n 3]             # éval appelant-simulé (19 personas)
 python run_depot_pg.py [--migrer]                   # contrat du port contre Supabase
+python creer_admin.py --identifiant <nom> [--ecrire] # le compte d'ADMINISTRATION
+python semer_demo.py --telephone <num> [--ecrire]   # un artisan de démo + son historique
 uvicorn serveur:app --port 8000                     # API HTTP (JAMAIS --reload)
 python worker.py [--a-vide]                         # expiration + expédition (un passage)
 
@@ -80,7 +82,9 @@ pause** (DNS qui ne résout plus, pooler qui répond `tenant/user not found`). B
 | Adaptateur de la plateforme vocale (Vapi) | ✅ | mock + appels vocaux réels, RDV créés en base |
 | **Hébergement : API publique + cron supervisé** | ✅ **20/09** | **`/sante` à travers l'URL publique** |
 | **Entrée téléphonique depuis la France** | ❌ | **numéro Vapi gratuit = appels nationaux US** (R81) |
-| **Parcours d'onboarding artisan** | ❌ | n'existe pas — et la prod part sans artisan |
+| **Onboarding : page d'admin, config éditable** | ✅ **21/09** | T13 + 2 mutations, et parcours réel en production |
+| **Config en base + instantané sur l'appel** | ✅ **21/09** | migrations 011/012, vérifiées contre la prod |
+| **Tableau de bord, facturation, agenda, site** | ❌ | rien de commencé |
 | Éval LLM réelle, 19 personas × 3 | ✅ 57/57 le 09/09 | à rejouer après R94 |
 
 ## Le fait structurant de la période (01–02/09) : le curseur a bougé
@@ -127,14 +131,15 @@ correcte, trois lignes au-dessus du code qui la contredisait.
 - **`CalendarStub`** : applique les vraies règles d'agenda sans calendrier branché. Ce n'est
   **pas** un cas dégradé — c'est le cas de l'artisan sans agenda numérique.
 - **Pas de push** : la relance artisan est mise en file, jamais délivrée.
-- **Onboarding** : le seul chemin d'écriture dans `artisan` est `semer_artisans.py`, et il
-  est désormais INUTILISABLE en production (jetons de dév publics). C'est passé de dette
-  confortable à chemin bloqué.
+- ~~**Onboarding**~~ — **réglé le 21/09.** `/admin` crée un artisan avec un jeton généré
+  et une config éditée en base. `semer_artisans.py` reste inutilisable en production (ses
+  jetons sont publics) et n'a plus de raison d'y servir.
 - **`EnvoyeurJournal` est le défaut** (`RELAIS_SMS=journal`, en dur dans `render.yaml`) :
   rien ne part, mais depuis R84 tout ce qui partirait est IMPRIMÉ en entier.
-- **Pas de plateforme** : `/app` est une boîte de validation à trois boutons. Ni dashboard,
-  ni facturation, ni agenda, ni config éditable par l'artisan. Arbitrage du 20/09 : c'est un
-  mur de SCALE, pas de fonctionnement — la boucle appel → validation → SMS est complète.
+- **Plateforme, ce qui manque encore** : tableau de bord et statistiques, facturation
+  (la colonne `etat_abonnement` existe, rien ne la fait bouger), agenda, site vitrine. La
+  config est éditable depuis le 21/09, mais par l'ADMIN — pas encore par l'artisan.
+  Arbitrage du 20/09 maintenu : c'est un mur de SCALE, pas de fonctionnement.
 
 ## Décisions verrouillées
 
@@ -160,6 +165,14 @@ correcte, trois lignes au-dessus du code qui la contredisait.
 - **`main` déploie, `wip` fabrique** (20/09).
 - **Ce qui doit être éprouvable sans base ne connaît pas de base** (R93, 20/09) : le câblage
   de production n'entre jamais dans le processus de test.
+- **La CONFIG vit en base, et chaque appel garde la sienne** (21/09). Ce qui répond à
+  « qu'est-ce que l'agent savait pendant CET appel ? » n'est plus l'historique git mais
+  `appel.config_utilisee`, figée à l'ouverture. Les `config/*.json` sont des MODÈLES.
+- **Un formulaire supprime la relecture humaine ET la suite de tests** : tout ce qu'il
+  écrit doit être validé côté serveur, et les exigences se DÉRIVENT du modèle plutôt que de
+  se lister à la main — une liste écrite à la main vieillit en silence.
+- **L'ADMIN est un sujet distinct de l'artisan** : sa table, sa session, son cookie, son
+  mot de passe. Ce n'est pas un client du produit, c'est celui qui le tient.
 
 ## Dettes et décisions ouvertes
 
@@ -189,11 +202,13 @@ correcte, trois lignes au-dessus du code qui la contredisait.
    `https://nelyo-api.onrender.com/voix/vapi/chat/completions`
    (`configurer_assistant_vapi.py --url …`, qui exige une URL publique — elle existe enfin),
    et inscrire le numéro dans la table `artisan`. Le compte Twilio portera le dossier ARCEP.
-2. **Un premier artisan en production**, avec un jeton GÉNÉRÉ — jamais ceux du dépôt.
-   Ébauche d'onboarding, ou script à la main : c'est ce qui rend l'appel n°1 possible.
+2. ~~Un premier artisan en production~~ — **fait le 21/09** : `/admin` le crée, jeton
+   généré et config en base.
 3. **Finir le chantier voix** : `endCallPhrases`, barge-in (`stopSpeakingPlan`), latence
    mesurée sur un appel complet à travers Render (et non plus un tunnel).
-4. **Rejouer l'éval ×3** (dette n°8).
+4. **Rejouer l'éval ×3** (dette n°8), et **rejouer `run_depot_pg.py`** dès que la base de
+   dév sort de pause : le contrat du port n'a pas tourné contre Postgres depuis les
+   migrations 011 et 012.
 5. Puis, par valeur décroissante : les petites dettes de conversation, la plateforme
    (onboarding, dashboard, facturation, agenda), `appel_muet`, le worker de rattrapage.
 
@@ -216,6 +231,103 @@ trois questions OVH tranchées.
 Le mode d'emploi des sondes et le détail de la récolte du 25/08 sont dans les entrées
 datées ; l'en-tête de `vapi.py` porte le format de fil SSE. **Les lire avant de toucher au
 chantier voix.**
+
+
+---
+
+## 21/09 — L'administration, et la config qui quitte git
+
+Trois questions de Geoffrey ont mené ici, et chacune a démonté une hypothèse.
+
+**« et les autres..? »** — j'avais livré une page sur sept. Dit franchement : la plateforme
+est à son début. Existent `/connexion`, `/app`, `/app/appels`, `/c/{jeton}`. Manquaient
+l'admin, la config éditable, le tableau de bord, la facturation, l'agenda, le site.
+
+**« comment je ne peux pas le voir ? »** — et il avait raison d'être agacé. La table
+`artisan` de la production était vide, volontairement (les jetons de `config/artisans.json`
+sont des jetons de dév publics). Mais je n'avais pas tiré la conséquence : la connexion
+cherche l'artisan par son MOBILE dans la table, donc aucune ligne = aucune connexion, pour
+personne. J'avais noté « l'onboarding n'existe pas » comme une dette de plus ; c'était un
+mur — le produit était en ligne et injoignable par son auteur.
+
+**« il faudra qu'ils aient une page pour sign up ? »** — non, et pas pour une raison
+technique : **le produit ne peut pas s'auto-activer.** Un plombier a besoin d'un numéro
+Relais qu'on provisionne et paie, du renvoi conditionnel configuré chez SON opérateur, et
+d'une config. Les premiers artisans s'inscrivent donc à la main, pendant l'appel de vente.
+Ce qu'il fallait n'était pas une page d'inscription pour l'artisan mais **une page d'admin
+pour Geoffrey** — le même formulaire deviendra le sign-up le jour où un numéro s'attribue
+tout seul.
+
+### Ce qui a été construit
+
+`semer_demo.py` d'abord, pour qu'il puisse VOIR : un artisan de démo et cinq appels joués
+par le vrai moteur. Puis le chantier lui-même, en trois commits.
+
+**La config quitte git pour la base** (migration 011). Le fichier versionné répondait à
+« qu'est-ce que l'agent savait le jour de cet appel ? » par son historique — mais il
+faisait payer cette réponse par un commit et un redéploiement à chaque inscription et à
+chaque changement de zone ou de tarif. `appel.config_utilisee` reprend la garantie et
+l'améliore : la config est figée sur la ligne d'appel à l'ouverture, donc la question
+devient une lecture exacte au lieu d'un recoupement de dates de déploiement. Vérifié en
+production, douze sections stockées.
+
+**R95 — le registre était un instantané du démarrage.** Constaté en semant la démo : son
+jeton tout neuf n'était reconnu par personne, et seul un redéploiement l'a rendu visible.
+Ça ne gênait alors personne, et ça condamnait la page d'admin avant qu'elle soit écrite. Un
+cache rafraîchi après écriture aurait suffi sur UN processus et divergé dès le second — le
+correctif qui marche jusqu'au jour où l'on monte en charge. `RegistreBase` lit donc la base
+à chaque recherche, en seconde implémentation plutôt qu'en mode de la première : seize
+tests construisent `Registre` à partir d'une liste.
+
+Une propriété est **améliorée** au passage : `Registre` validait tous les fuseaux à la
+construction et refusait de démarrer si l'un était faux — la faute de frappe d'un client
+empêchait de servir tous les autres. La validation est désormais par artisan, à la lecture.
+Une autre est **conservée exprès** : `par_token` comparait en temps constant sur tous les
+artisans ; l'index remplace le parcours, il ne remplace pas la comparaison.
+
+**L'administration** (migration 012, T13). Sujet distinct de l'artisan : table, session et
+cookie propres. Mot de passe scrypt plutôt que code SMS, et le motif est pratique — en
+production `RELAIS_SMS=journal`, donc un code d'admin atterrirait dans les journaux de
+l'hébergeur ; se connecter en lisant les logs du service qu'on administre n'est pas un
+parcours. Tables séparées plutôt que colonnes ajoutées : `code_connexion.artisan_id` est sa
+clé primaire avec clé étrangère, et la généraliser aurait signifié démonter la table qui
+porte le parcours de connexion des artisans. Le code, lui, reste partagé.
+
+### Le point le plus important du chantier : ce qui protège l'appel
+
+Jusqu'ici une config passait par une relecture humaine et la suite de tests avant
+d'atteindre un client. **Un formulaire supprime ces deux filets** — et une clé manquante ne
+casse pas une page, elle casse un appel en cours : dix-huit chemins sont lus sans `.get`
+dans le moteur et les gabarits.
+
+`valider_config` DÉRIVE donc ses exigences du modèle `dupont.json`, le fichier que la suite
+exerce à chaque exécution. Une liste écrite à la main aurait vieilli à la première section
+ajoutée, et elle aurait vieilli **en silence** : le jour où le moteur lit une clé neuve,
+c'est l'appel d'un client qui l'apprend. Tous les défauts sont rendus d'un coup.
+
+La config s'édite en JSON, choix assumé : onze sections, et un formulaire structuré mérite
+d'être conçu APRÈS avoir vu trois configs réelles. C'est la validation serveur qui protège,
+pas la forme du champ.
+
+### Deux leçons de méthode
+
+**Un test qui passe du premier coup sur un flux pareil ne prouve rien.** T13 a été éprouvé
+par deux mutations — validation neutralisée, authentification contournée — et les deux sont
+attrapées. Sans cette vérification, je n'aurais pas su si le test mordait.
+
+**La démo naissait expirée**, et c'est la même famille de faute que R94 : j'avais daté
+l'appel urgent de 2 h dans le passé, or un RDV urgent a 2 h de validation. Il est né échu,
+le cron l'a expiré, et l'écran principal était vide. Tout le mécanisme a parfaitement
+fonctionné — sur une donnée que j'avais fabriquée absurde. Le semoir refuse désormais de
+semer un RDV déjà échu : je n'avais aucune raison de découvrir ça devant un prospect.
+
+### Ce qui reste non vérifié
+
+Le contrat complet du port contre Postgres. La base de DÉV est en pause depuis la création
+de la prod (plan gratuit Supabase : deux projets actifs). Les nouvelles méthodes sont
+éprouvées contre `DepotMemoire` par le contrat, et contre le schéma RÉEL de la production en
+lecture — mais pas les deux ensemble. Un « Restore » côté Supabase et `run_depot_pg.py`
+tranche.
 
 ---
 
