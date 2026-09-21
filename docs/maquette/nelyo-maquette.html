@@ -1,0 +1,546 @@
+<title>Maquette Nelyo</title>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Bricolage+Grotesque:opsz,wght@12..96,500;12..96,600;12..96,700&family=Instrument+Sans:wght@400;500;600&display=swap">
+<style>
+:root{
+  --marine:#1E3D5C; --marine-deep:#16304A; --marine-soft:#E8EFF5;
+  --cuivre:#C06B45; --cuivre-deep:#A85837; --cuivre-soft:#F7E9E1;
+  --paper:#F3F5F6; --surface:#FFFFFF; --surface-2:#F8FAFB;
+  --ink:#1E2A33; --muted:#5C6B77; --faint:#8B99A4; --line:#DFE6EA;
+  --ok:#2E7D4F; --ok-bg:#E3F0E8; --warn:#A66A12; --warn-bg:#F8EEDC; --crit:#C24A3F; --crit-bg:#F8E6E3;
+  --chart-1:#2E6DA3; --chart-2:#C06B45; --chart-grid:#E7ECEF;
+  --sidebar:#16304A; --sidebar-ink:#C7D6E4; --sidebar-active:#FFFFFF;
+  --shadow:0 1px 2px rgba(22,48,74,.06),0 4px 16px rgba(22,48,74,.07);
+  --r:10px;
+}
+@media (prefers-color-scheme: dark){
+  :root:not([data-theme="light"]){
+    --marine:#7FA8CC; --marine-deep:#0F2438; --marine-soft:#1D2E3F;
+    --cuivre:#D07E55; --cuivre-deep:#E08B60; --cuivre-soft:#3A2A21;
+    --paper:#10161C; --surface:#18212A; --surface-2:#1D2833;
+    --ink:#E8EDF1; --muted:#9AAAB6; --faint:#6E7E8A; --line:#2A3641;
+    --ok:#5CB483; --ok-bg:#1C3227; --warn:#D9A24A; --warn-bg:#372B16; --crit:#E07A6E; --crit-bg:#3A211E;
+    --chart-1:#4A88C4; --chart-2:#C97B4E; --chart-grid:#26313C;
+    --sidebar:#0F1B28; --sidebar-ink:#8FA5B8; --sidebar-active:#FFFFFF;
+    --shadow:0 1px 2px rgba(0,0,0,.3),0 4px 16px rgba(0,0,0,.25);
+  }
+}
+:root[data-theme="dark"]{
+  --marine:#7FA8CC; --marine-deep:#0F2438; --marine-soft:#1D2E3F;
+  --cuivre:#D07E55; --cuivre-deep:#E08B60; --cuivre-soft:#3A2A21;
+  --paper:#10161C; --surface:#18212A; --surface-2:#1D2833;
+  --ink:#E8EDF1; --muted:#9AAAB6; --faint:#6E7E8A; --line:#2A3641;
+  --ok:#5CB483; --ok-bg:#1C3227; --warn:#D9A24A; --warn-bg:#372B16; --crit:#E07A6E; --crit-bg:#3A211E;
+  --chart-1:#4A88C4; --chart-2:#C97B4E; --chart-grid:#26313C;
+  --sidebar:#0F1B28; --sidebar-ink:#8FA5B8; --sidebar-active:#FFFFFF;
+  --shadow:0 1px 2px rgba(0,0,0,.3),0 4px 16px rgba(0,0,0,.25);
+}
+*{box-sizing:border-box}
+body{margin:0;background:var(--paper);color:var(--ink);font:400 14.5px/1.5 "Instrument Sans",system-ui,-apple-system,sans-serif}
+h1,h2,h3,.num{font-family:"Bricolage Grotesque","Instrument Sans",system-ui,sans-serif}
+.num{font-variant-numeric:tabular-nums}
+.app{display:flex;min-height:100vh}
+/* ---------- sidebar ---------- */
+.side{width:228px;flex:0 0 228px;background:var(--sidebar);color:var(--sidebar-ink);display:flex;flex-direction:column;position:sticky;top:0;height:100vh}
+.logo{display:flex;align-items:center;gap:10px;padding:22px 20px 18px;color:#fff}
+.logo-mark{width:32px;height:32px;border-radius:9px;background:var(--cuivre);display:grid;place-items:center;flex:0 0 32px}
+.logo-mark svg{width:18px;height:18px}
+.logo b{font-family:"Bricolage Grotesque";font-size:19px;font-weight:700;letter-spacing:.2px}
+.logo small{display:block;font-size:10.5px;letter-spacing:.08em;text-transform:uppercase;opacity:.65;font-weight:500}
+nav{padding:6px 12px;display:flex;flex-direction:column;gap:2px}
+.nav-item{display:flex;align-items:center;gap:11px;padding:9px 12px;border-radius:8px;color:inherit;cursor:pointer;border:0;background:none;font:500 14px/1 "Instrument Sans",sans-serif;text-align:left;width:100%}
+.nav-item svg{width:17px;height:17px;flex:0 0 17px;opacity:.8}
+.nav-item:hover{background:rgba(255,255,255,.07);color:#fff}
+.nav-item.on{background:rgba(255,255,255,.12);color:var(--sidebar-active)}
+.nav-item.on svg{opacity:1}
+.nav-item .cnt{margin-left:auto;background:var(--cuivre);color:#fff;font-size:11px;font-weight:600;border-radius:99px;padding:1px 7px}
+.side-foot{margin-top:auto;padding:14px 16px;border-top:1px solid rgba(255,255,255,.09)}
+.artisan{display:flex;gap:10px;align-items:center}
+.avatar{width:34px;height:34px;border-radius:50%;background:var(--cuivre-soft);color:var(--cuivre);display:grid;place-items:center;font-weight:600;font-size:13px;flex:0 0 34px}
+.side .avatar{background:rgba(255,255,255,.12);color:#fff}
+.artisan b{color:#fff;font-size:13.5px;display:block}
+.artisan span{font-size:11.5px;opacity:.65}
+/* ---------- main ---------- */
+.main{flex:1;min-width:0;display:flex;flex-direction:column}
+.topbar{display:flex;align-items:center;gap:14px;padding:14px 28px;background:var(--surface);border-bottom:1px solid var(--line);position:sticky;top:env(safe-area-inset-top,0px);z-index:5}
+.topbar h1{font-size:19px;font-weight:600;margin:0}
+.searchbox{margin-left:auto;display:flex;align-items:center;gap:8px;background:var(--surface-2);border:1px solid var(--line);border-radius:8px;padding:7px 12px;color:var(--faint);font-size:13px;min-width:220px}
+.bell{position:relative;width:36px;height:36px;border-radius:8px;border:1px solid var(--line);background:var(--surface);display:grid;place-items:center;cursor:pointer;color:var(--muted)}
+.bell i{position:absolute;top:6px;right:7px;width:8px;height:8px;border-radius:50%;background:var(--crit);border:2px solid var(--surface)}
+.content{padding:24px 28px 48px;display:flex;flex-direction:column;gap:20px;max-width:1180px;width:100%;margin:0 auto}
+section.view{display:none;flex-direction:column;gap:20px}
+section.view.on{display:flex}
+/* ---------- shared bits ---------- */
+.card{background:var(--surface);border:1px solid var(--line);border-radius:var(--r);box-shadow:var(--shadow)}
+.card-h{display:flex;align-items:center;gap:10px;padding:15px 18px;border-bottom:1px solid var(--line)}
+.card-h h3{margin:0;font-size:15px;font-weight:600}
+.card-h .sub{color:var(--muted);font-size:12.5px}
+.card-b{padding:18px}
+.pill{display:inline-flex;align-items:center;gap:5px;border-radius:99px;padding:2px 9px;font-size:11.5px;font-weight:600;white-space:nowrap}
+.p-ok{background:var(--ok-bg);color:var(--ok)}.p-warn{background:var(--warn-bg);color:var(--warn)}
+.p-crit{background:var(--crit-bg);color:var(--crit)}.p-mut{background:var(--surface-2);color:var(--muted);border:1px solid var(--line)}
+.p-marine{background:var(--marine-soft);color:var(--marine)}
+.btn{border:1px solid var(--line);background:var(--surface);color:var(--ink);border-radius:8px;padding:8px 14px;font:600 13px "Instrument Sans",sans-serif;cursor:pointer}
+.btn:hover{background:var(--surface-2)}
+.btn-cu{background:var(--cuivre);border-color:var(--cuivre);color:#fff}
+.btn-cu:hover{background:var(--cuivre-deep);border-color:var(--cuivre-deep)}
+.btn-ghost-crit{color:var(--crit)}
+.chip{display:inline-flex;align-items:center;border:1px solid var(--line);background:var(--surface-2);border-radius:99px;padding:4px 11px;font-size:12.5px;font-weight:500}
+.chip.x{border-style:dashed;color:var(--muted)}
+.grid{display:grid;gap:16px}
+.g4{grid-template-columns:repeat(4,1fr)}.g3{grid-template-columns:repeat(3,1fr)}.g2{grid-template-columns:repeat(2,1fr)}
+.eyebrow{font-size:11px;letter-spacing:.08em;text-transform:uppercase;color:var(--faint);font-weight:600}
+/* ---------- accueil ---------- */
+.hello h1{font-size:24px;margin:0 0 2px;text-wrap:balance}
+.hello p{margin:0;color:var(--muted)}
+.roi{background:linear-gradient(120deg,var(--marine-deep),#1E466B 70%);color:#fff;border:0;display:flex;flex-wrap:wrap;gap:24px;align-items:center;padding:22px 24px;border-radius:var(--r)}
+:root[data-theme="dark"] .roi,body .roi{box-shadow:var(--shadow)}
+.roi .big{font-family:"Bricolage Grotesque";font-size:38px;font-weight:700;line-height:1.05}
+.roi .big small{font-size:16px;font-weight:600;opacity:.85}
+.roi .lab{font-size:12px;letter-spacing:.07em;text-transform:uppercase;opacity:.7;font-weight:600}
+.roi .mult{margin-left:auto;text-align:right}
+.roi .mult b{font-family:"Bricolage Grotesque";font-size:22px;color:#F2B08A}
+.stat .card-b{display:flex;flex-direction:column;gap:2px;padding:15px 18px}
+.stat .num{font-size:26px;font-weight:700}
+.stat .lbl{color:var(--muted);font-size:12.5px}
+.stat .delta{font-size:12px;font-weight:600;color:var(--ok)}
+.valid-item{display:flex;gap:14px;padding:14px 18px;border-bottom:1px solid var(--line);align-items:center;flex-wrap:wrap}
+.valid-item:last-child{border-bottom:0}
+.score{width:38px;height:38px;border-radius:9px;display:grid;place-items:center;font:700 14px "Bricolage Grotesque";flex:0 0 38px}
+.s5{background:var(--crit-bg);color:var(--crit)}.s4{background:var(--cuivre-soft);color:var(--cuivre)}
+.s3{background:var(--marine-soft);color:var(--marine)}.s1{background:var(--surface-2);color:var(--faint)}
+.valid-info{min-width:190px;flex:1}
+.valid-info b{font-size:14.5px}
+.valid-info .d{color:var(--muted);font-size:12.5px}
+.valid-slot{font-weight:600;font-size:13.5px}
+.valid-slot .d{color:var(--muted);font-weight:400;font-size:12px}
+.valid-act{display:flex;gap:8px;margin-left:auto}
+.feed{list-style:none;margin:0;padding:0}
+.feed li{display:flex;gap:12px;padding:10px 18px;border-bottom:1px solid var(--line);font-size:13.5px;align-items:baseline}
+.feed li:last-child{border-bottom:0}
+.feed time{color:var(--faint);font-size:12px;font-variant-numeric:tabular-nums;flex:0 0 42px}
+.feed .dot{width:7px;height:7px;border-radius:50%;flex:0 0 7px;align-self:center}
+/* ---------- appels ---------- */
+.filters{display:flex;gap:8px;flex-wrap:wrap;align-items:center}
+.fbtn{border:1px solid var(--line);background:var(--surface);border-radius:99px;padding:6px 14px;font:500 13px "Instrument Sans";color:var(--muted);cursor:pointer}
+.fbtn.on{background:var(--marine);border-color:var(--marine);color:#fff}
+:root[data-theme="dark"] .fbtn.on{color:var(--marine-deep)}
+table.calls{width:100%;border-collapse:collapse;font-size:13.5px}
+.calls th{font-size:11px;letter-spacing:.07em;text-transform:uppercase;color:var(--faint);text-align:left;padding:11px 14px;border-bottom:1px solid var(--line);font-weight:600}
+.calls td{padding:12px 14px;border-bottom:1px solid var(--line);vertical-align:middle}
+.calls tr:last-child td{border-bottom:0}
+.calls tbody tr{cursor:pointer}
+.calls tbody tr:hover{background:var(--surface-2)}
+.caller b{display:block}.caller span{color:var(--faint);font-size:12px}
+.transcript{background:var(--surface-2);border-top:1px dashed var(--line);padding:16px 18px;display:flex;flex-direction:column;gap:10px}
+.bulle{max-width:520px;padding:8px 13px;border-radius:12px;font-size:13px;line-height:1.45}
+.b-ia{background:var(--marine-soft);color:var(--ink);border-top-left-radius:3px;align-self:flex-start}
+.b-cl{background:var(--surface);border:1px solid var(--line);border-top-right-radius:3px;align-self:flex-end}
+.bulle .who{display:block;font-size:10.5px;letter-spacing:.06em;text-transform:uppercase;color:var(--faint);margin-bottom:2px;font-weight:600}
+/* ---------- agenda ---------- */
+.week{display:grid;grid-template-columns:repeat(6,1fr);gap:10px}
+.day{background:var(--surface);border:1px solid var(--line);border-radius:var(--r);min-height:280px;display:flex;flex-direction:column}
+.day-h{padding:10px 12px;border-bottom:1px solid var(--line);font-weight:600;font-size:13px}
+.day-h span{color:var(--faint);font-weight:400;display:block;font-size:11.5px}
+.day-b{padding:8px;display:flex;flex-direction:column;gap:7px}
+.evt{border-radius:8px;padding:8px 10px;font-size:12.5px;line-height:1.35;border:1px solid transparent}
+.evt time{display:block;font-size:11px;font-weight:600;opacity:.75;font-variant-numeric:tabular-nums}
+.evt b{font-size:12.5px}
+.e-ok{background:var(--marine-soft);border-color:transparent;color:var(--ink)}
+.e-ok .bar{background:var(--marine)}
+.e-wait{background:var(--cuivre-soft);border:1px dashed var(--cuivre);color:var(--ink)}
+.e-urg{position:relative}
+.e-urg::after{content:"URGENCE";font-size:9px;letter-spacing:.06em;font-weight:700;color:var(--crit);position:absolute;top:7px;right:8px}
+.e-slot{background:none;border:1px dashed var(--line);color:var(--faint);text-align:center;font-size:11.5px}
+.legend{display:flex;gap:18px;flex-wrap:wrap;font-size:12.5px;color:var(--muted);align-items:center}
+.sw{width:12px;height:12px;border-radius:4px;display:inline-block;vertical-align:-2px;margin-right:6px}
+/* ---------- stats ---------- */
+.funnel{display:flex;flex-direction:column;gap:9px}
+.frow{display:grid;grid-template-columns:150px 1fr 74px;gap:12px;align-items:center;font-size:13px}
+.frow .bar{height:26px;border-radius:5px;background:var(--chart-1);min-width:4px}
+.frow .v{font-weight:700;font-variant-numeric:tabular-nums;text-align:right}
+.frow .v small{display:block;font-weight:400;color:var(--faint);font-size:11px}
+.chart-wrap{position:relative}
+svg text{font-family:"Instrument Sans",sans-serif}
+.tip{position:fixed;pointer-events:none;background:var(--ink);color:var(--paper);font-size:12px;padding:5px 9px;border-radius:6px;opacity:0;transition:opacity .1s;z-index:50;white-space:nowrap}
+.hbar{display:grid;grid-template-columns:120px 1fr 44px;gap:10px;align-items:center;font-size:13px;margin-bottom:9px}
+.hbar .t{height:18px;border-radius:4px;background:var(--chart-1)}
+.hbar .v{font-weight:600;font-variant-numeric:tabular-nums;color:var(--muted)}
+/* ---------- config ---------- */
+.numline{display:flex;align-items:center;gap:16px;flex-wrap:wrap}
+.numline .n{font-family:"Bricolage Grotesque";font-size:22px;font-weight:700;letter-spacing:.5px}
+.kv{display:grid;grid-template-columns:1fr auto;gap:8px 16px;font-size:13.5px}
+.kv dt{color:var(--muted)}.kv dd{margin:0;font-weight:600;text-align:right;font-variant-numeric:tabular-nums}
+.accueil-msg{background:var(--surface-2);border:1px solid var(--line);border-radius:8px;padding:13px 15px;font-size:13.5px;line-height:1.55;font-style:italic;color:var(--muted)}
+.switch{width:40px;height:22px;border-radius:99px;background:var(--ok);position:relative;flex:0 0 40px}
+.switch::after{content:"";position:absolute;width:16px;height:16px;border-radius:50%;background:#fff;top:3px;right:3px}
+/* ---------- facturation ---------- */
+.plan{display:flex;gap:20px;align-items:baseline;flex-wrap:wrap}
+.plan .price{font-family:"Bricolage Grotesque";font-size:34px;font-weight:700}
+.plan .price small{font-size:14px;color:var(--muted);font-weight:500}
+.conso{display:flex;flex-direction:column;gap:6px;font-size:13px}
+.gauge{height:7px;border-radius:99px;background:var(--surface-2);border:1px solid var(--line);overflow:hidden}
+.gauge i{display:block;height:100%;background:var(--chart-1);border-radius:99px}
+ul.incl{margin:10px 0 0;padding:0;list-style:none;color:var(--muted);font-size:13px;display:flex;flex-direction:column;gap:5px}
+ul.incl li::before{content:"✓";color:var(--ok);font-weight:700;margin-right:8px}
+/* ---------- responsive ---------- */
+.mobilebar{display:none}
+@media (max-width:940px){
+  .side{display:none}
+  .topbar{padding:12px 16px}
+  .searchbox{display:none}
+  .content{padding:16px 16px 90px}
+  .g4,.g3{grid-template-columns:repeat(2,1fr)}
+  .g2{grid-template-columns:1fr}
+  .week{grid-template-columns:repeat(2,1fr)}
+  .valid-act{margin-left:0;width:100%}
+  .frow{grid-template-columns:96px 1fr 64px}
+  .roi .mult{margin-left:0;text-align:left}
+  .mobilebar{display:flex;position:fixed;bottom:0;left:0;right:0;background:var(--surface);border-top:1px solid var(--line);z-index:20;justify-content:space-around;padding:6px 4px calc(6px + env(safe-area-inset-bottom,0px))}
+  .mobilebar button{border:0;background:none;color:var(--faint);font:500 10px "Instrument Sans";display:flex;flex-direction:column;align-items:center;gap:3px;cursor:pointer;padding:4px 8px}
+  .mobilebar button.on{color:var(--cuivre)}
+  .mobilebar svg{width:19px;height:19px}
+  table.calls th:nth-child(6),table.calls td:nth-child(6),table.calls th:nth-child(4),table.calls td:nth-child(4){display:none}
+}
+@media (max-width:520px){.g4,.g3{grid-template-columns:1fr}.week{grid-template-columns:1fr}}
+</style>
+
+<div class="app">
+<!-- ======================= SIDEBAR ======================= -->
+<aside class="side">
+  <div class="logo">
+    <span class="logo-mark"><svg viewBox="0 0 24 24" fill="none" stroke="#fff" stroke-width="2.2" stroke-linecap="round"><path d="M5 4v6a7 7 0 0 0 14 0V4"/><path d="M12 17v3"/></svg></span>
+    <div><b>Nelyo</b><small>Ne ratez plus rien</small></div>
+  </div>
+  <nav id="nav">
+    <button class="nav-item on" data-v="accueil"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><path d="M3 11 12 4l9 7"/><path d="M5 10v10h14V10"/></svg>Aujourd'hui<span class="cnt">2</span></button>
+    <button class="nav-item" data-v="appels"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><path d="M5 4h4l2 5-2.5 1.5a12 12 0 0 0 5 5L15 13l5 2v4a2 2 0 0 1-2 2A16 16 0 0 1 3 6a2 2 0 0 1 2-2z"/></svg>Appels</button>
+    <button class="nav-item" data-v="agenda"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><rect x="3" y="5" width="18" height="16" rx="2"/><path d="M8 3v4M16 3v4M3 10h18"/></svg>Agenda</button>
+    <button class="nav-item" data-v="stats"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><path d="M4 20V10M10 20V4M16 20v-7M21 20H3"/></svg>Statistiques</button>
+    <button class="nav-item" data-v="ia"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><circle cx="12" cy="12" r="3"/><path d="M12 2v3M12 19v3M2 12h3M19 12h3M4.9 4.9l2.1 2.1M17 17l2.1 2.1M19.1 4.9 17 7M7 17l-2.1 2.1"/></svg>Assistant IA</button>
+    <button class="nav-item" data-v="factu"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><rect x="3" y="6" width="18" height="13" rx="2"/><path d="M3 10h18M7 15h4"/></svg>Facturation</button>
+  </nav>
+  <div class="side-foot">
+    <div class="artisan"><span class="avatar">JD</span><div><b>Dupont Chauffage</b><span>Julien · Nogent-sur-Marne</span></div></div>
+  </div>
+</aside>
+
+<!-- ======================= MAIN ======================= -->
+<div class="main">
+  <header class="topbar">
+    <h1 id="pagetitle">Aujourd'hui</h1>
+    <div class="searchbox">⌕&nbsp; Rechercher un appel, un client…</div>
+    <button class="bell" aria-label="Notifications"><svg width="17" height="17" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><path d="M6 9a6 6 0 0 1 12 0c0 5 2 6 2 6H4s2-1 2-6"/><path d="M10 20a2 2 0 0 0 4 0"/></svg><i></i></button>
+    <span class="avatar" style="width:32px;height:32px;font-size:12px">JD</span>
+  </header>
+
+  <div class="content">
+
+  <!-- ============ VUE : AUJOURD'HUI ============ -->
+  <section class="view on" id="v-accueil">
+    <div class="hello">
+      <h1>Bonjour Julien 👋</h1>
+      <p>Lundi 21 septembre · Votre assistant a répondu à <b>3 appels</b> pendant que vous étiez sur chantier.</p>
+    </div>
+
+    <div class="card" style="border-left:3px solid var(--cuivre)">
+      <div class="card-h"><h3>À valider</h3><span class="pill p-warn">2 rendez-vous en attente</span><span class="sub" style="margin-left:auto">Sans réponse de votre part, le client est prévenu qu'on le rappelle</span></div>
+      <div class="valid-item">
+        <span class="score s5">5</span>
+        <div class="valid-info"><b>Mme Garcia</b> · 06 12 34 56 78<div class="d">Fuite active sous évier · Nogent-sur-Marne · Propriétaire</div></div>
+        <div class="valid-slot">Demain 8 h – 10 h<div class="d">Créneau réservé par l'assistant</div></div>
+        <span class="pill p-crit">expire dans 42 min</span>
+        <div class="valid-act"><button class="btn btn-cu">Valider</button><button class="btn">Modifier l'horaire</button><button class="btn btn-ghost-crit">Refuser</button></div>
+      </div>
+      <div class="valid-item">
+        <span class="score s4">4</span>
+        <div class="valid-info"><b>M. Katz</b> · 06 99 88 77 66<div class="d">WC bouché · Créteil · Demande urgente</div></div>
+        <div class="valid-slot">Demain 14 h – 16 h<div class="d">Créneau réservé par l'assistant</div></div>
+        <span class="pill p-warn">expire dans 3 h 10</span>
+        <div class="valid-act"><button class="btn btn-cu">Valider</button><button class="btn">Modifier l'horaire</button><button class="btn btn-ghost-crit">Refuser</button></div>
+      </div>
+    </div>
+
+    <div class="roi">
+      <div><div class="lab">CA récupéré ce mois par Nelyo</div><div class="big num">4 850 €<small> confirmés</small></div></div>
+      <div><div class="lab">Pipeline en attente</div><div class="big num" style="font-size:24px;opacity:.85">2 300 €</div></div>
+      <div class="mult"><b>× 32</b><div class="lab">votre abonnement</div></div>
+    </div>
+
+    <div class="grid g4">
+      <div class="card stat"><div class="card-b"><span class="num">127</span><span class="lbl">Appels traités en sept.</span><span class="delta">+18 % vs août</span></div></div>
+      <div class="card stat"><div class="card-b"><span class="num">0</span><span class="lbl">Appel resté sans réponse</span><span class="delta">100 % de prise en charge</span></div></div>
+      <div class="card stat"><div class="card-b"><span class="num">24</span><span class="lbl">RDV pris par l'assistant</span><span class="delta">+6 vs août</span></div></div>
+      <div class="card stat"><div class="card-b"><span class="num">9</span><span class="lbl">Chantiers signés</span><span class="delta">38 % de conversion</span></div></div>
+    </div>
+
+    <div class="card">
+      <div class="card-h"><h3>Activité récente</h3></div>
+      <ul class="feed">
+        <li><time>14:32</time><span class="dot" style="background:var(--ok)"></span><span><b>RDV validé</b> — Mme Petit, chauffe-eau, mardi 8 h – 10 h. SMS de confirmation envoyé.</span></li>
+        <li><time>13:05</time><span class="dot" style="background:var(--cuivre)"></span><span><b>Nouvel appel qualifié</b> — M. Katz, WC bouché à Créteil. Créneau proposé, en attente de votre validation.</span></li>
+        <li><time>11:48</time><span class="dot" style="background:var(--crit)"></span><span><b>Lead prioritaire</b> — M. Brun (client existant) souhaite vous parler. À rappeler en priorité.</span></li>
+        <li><time>09:15</time><span class="dot" style="background:var(--faint)"></span><span><b>Hors zone</b> — Demande de devis PAC à Champigny, refusée poliment.</span></li>
+      </ul>
+    </div>
+  </section>
+
+  <!-- ============ VUE : APPELS ============ -->
+  <section class="view" id="v-appels">
+    <div class="filters">
+      <button class="fbtn on">Tous <b>127</b></button><button class="fbtn">RDV pris</button><button class="fbtn">À rappeler</button><button class="fbtn">Prioritaires</button><button class="fbtn">Hors zone</button>
+      <span style="margin-left:auto" class="chip">Septembre 2026 ▾</span>
+    </div>
+    <div class="card" style="overflow-x:auto">
+      <table class="calls">
+        <thead><tr><th>Heure</th><th>Appelant</th><th>Motif</th><th>Commune</th><th>Score</th><th>Durée</th><th>Issue</th></tr></thead>
+        <tbody>
+          <tr><td class="num">14:32</td><td class="caller"><b>Mme Petit</b><span>06 44 55 66 77</span></td><td>Chauffe-eau en panne</td><td>Saint-Maur</td><td><span class="score s5" style="width:30px;height:30px">5</span></td><td class="num">2:41</td><td><span class="pill p-ok">RDV validé</span></td></tr>
+          <tr><td class="num">13:05</td><td class="caller"><b>M. Katz</b><span>06 99 88 77 66</span></td><td>WC bouché</td><td>Créteil</td><td><span class="score s4" style="width:30px;height:30px">4</span></td><td class="num">3:12</td><td><span class="pill p-warn">En attente</span></td></tr>
+        </tbody>
+        <tbody>
+          <tr><td class="num">11:48</td><td class="caller"><b>M. Brun</b><span>06 21 43 65 87</span></td><td>Intervention à revoir</td><td>Nogent</td><td><span class="score s1" style="width:30px;height:30px">1</span></td><td class="num">1:05</td><td><span class="pill p-crit">Prioritaire</span></td></tr>
+          <tr class="open"><td class="num">10:20</td><td class="caller"><b>Mme Garcia</b><span>06 12 34 56 78</span></td><td>Fuite sous évier</td><td>Nogent</td><td><span class="score s5" style="width:30px;height:30px">5</span></td><td class="num">2:24</td><td><span class="pill p-warn">En attente</span></td></tr>
+        </tbody>
+      </table>
+      <div class="transcript">
+        <span class="eyebrow">Transcript — Mme Garcia · 10:20 · les consignes de sécurité ont été données</span>
+        <div class="bulle b-cl"><span class="who">Client</span>Bonjour, j'ai une fuite sous l'évier de la cuisine, ça goutte dans le placard, c'est urgent !</div>
+        <div class="bulle b-ia"><span class="who">Assistant Nelyo</span>Je comprends, on va s'occuper de vous rapidement. Si vous le pouvez, coupez l'arrivée d'eau en attendant. Vous êtes sur quelle commune ?</div>
+        <div class="bulle b-cl"><span class="who">Client</span>Nogent-sur-Marne, le 94130. Vous pouvez venir demain matin ?</div>
+        <div class="bulle b-ia"><span class="who">Assistant Nelyo</span>Je vous réserve demain entre 8 h et 10 h. Vous recevrez un SMS de confirmation de Julien d'ici 1 heure.</div>
+        <div><button class="btn">Voir l'appel complet</button> <button class="btn">Écouter l'audio · 2:24</button></div>
+      </div>
+      <table class="calls">
+        <tbody>
+          <tr><td class="num">09:15</td><td class="caller"><b>M. Lefèvre</b><span>07 12 32 13 56</span></td><td>Devis pompe à chaleur</td><td>Champigny</td><td><span class="score s1" style="width:30px;height:30px">0</span></td><td class="num">1:12</td><td><span class="pill p-mut">Hors zone</span></td></tr>
+          <tr><td class="num">Hier</td><td class="caller"><b>M. Diallo</b><span>07 88 11 22 33</span></td><td>Entretien chaudière</td><td>Nogent</td><td><span class="score s4" style="width:30px;height:30px">4</span></td><td class="num">2:05</td><td><span class="pill p-ok">RDV validé · samedi</span></td></tr>
+          <tr><td class="num">Hier</td><td class="caller"><b>M. Roussel</b><span>06 54 23 45 67</span></td><td>Robinet qui fuit</td><td>Neuilly-Plaisance</td><td><span class="score s3" style="width:30px;height:30px">3</span></td><td class="num">4:48</td><td><span class="pill p-marine">À rappeler</span></td></tr>
+          <tr><td class="num">Hier</td><td class="caller"><b>Numéro masqué</b><span>—</span></td><td>Appel muet</td><td>—</td><td><span class="score s1" style="width:30px;height:30px">1</span></td><td class="num">0:22</td><td><span class="pill p-mut">Message répondeur</span></td></tr>
+        </tbody>
+      </table>
+    </div>
+  </section>
+
+  <!-- ============ VUE : AGENDA ============ -->
+  <section class="view" id="v-agenda">
+    <div class="filters">
+      <button class="fbtn">◀</button><span class="chip" style="font-weight:600">Semaine du 21 au 26 septembre</span><button class="fbtn">▶</button>
+      <span style="margin-left:auto" class="legend">
+        <span><span class="sw" style="background:var(--marine)"></span>Validé</span>
+        <span><span class="sw" style="background:var(--cuivre-soft);border:1px dashed var(--cuivre)"></span>En attente</span>
+        <span><span class="sw" style="border:1px dashed var(--line)"></span>Fenêtre urgences</span>
+      </span>
+    </div>
+    <div class="week">
+      <div class="day"><div class="day-h">Lundi <span>21 sept · aujourd'hui</span></div><div class="day-b">
+        <div class="evt e-ok"><time>08:00 – 10:00</time><b>M. Fontaine</b> — chaudière, Le Perreux</div>
+        <div class="evt e-ok"><time>14:00 – 15:30</time><b>Mme Nkomo</b> — radiateurs, Vincennes</div>
+        <div class="evt e-slot">17 h – 19 h réservé urgences</div>
+      </div></div>
+      <div class="day"><div class="day-h">Mardi <span>22 sept</span></div><div class="day-b">
+        <div class="evt e-wait e-urg"><time>08:00 – 10:00</time><b>Mme Garcia</b> — fuite évier, Nogent</div>
+        <div class="evt e-ok"><time>10:30 – 12:00</time><b>Mme Petit</b> — chauffe-eau, Saint-Maur</div>
+        <div class="evt e-wait"><time>14:00 – 16:00</time><b>M. Katz</b> — WC, Créteil</div>
+      </div></div>
+      <div class="day"><div class="day-h">Mercredi <span>23 sept</span></div><div class="day-b">
+        <div class="evt e-ok"><time>09:00 – 11:00</time><b>Chantier Morel</b> — pose PAC, j. 2/3</div>
+        <div class="evt e-slot">17 h – 19 h réservé urgences</div>
+      </div></div>
+      <div class="day"><div class="day-h">Jeudi <span>24 sept</span></div><div class="day-b">
+        <div class="evt e-ok"><time>09:00 – 11:00</time><b>Chantier Morel</b> — pose PAC, j. 3/3</div>
+        <div class="evt e-ok"><time>14:00 – 15:00</time><b>M. Weber</b> — devis SDB, Nogent</div>
+      </div></div>
+      <div class="day"><div class="day-h">Vendredi <span>25 sept</span></div><div class="day-b">
+        <div class="evt e-slot">Journée libre — l'assistant propose ces créneaux en priorité</div>
+      </div></div>
+      <div class="day"><div class="day-h">Samedi <span>26 sept · 9 h – 13 h</span></div><div class="day-b">
+        <div class="evt e-ok"><time>09:00 – 10:00</time><b>M. Diallo</b> — entretien chaudière</div>
+      </div></div>
+    </div>
+  </section>
+
+  <!-- ============ VUE : STATS ============ -->
+  <section class="view" id="v-stats">
+    <div class="filters"><span class="eyebrow">Période</span><button class="fbtn on">Ce mois</button><button class="fbtn">3 mois</button><button class="fbtn">12 mois</button><button class="fbtn">Tout</button></div>
+
+    <div class="grid g2">
+      <div class="card"><div class="card-h"><h3>Du premier appel au chantier</h3><span class="sub">septembre</span></div>
+        <div class="card-b funnel">
+          <div class="frow"><span>Appels traités</span><div><div class="bar" style="width:100%"></div></div><span class="v num">127</span></div>
+          <div class="frow"><span>Prospects qualifiés</span><div><div class="bar" style="width:70%;opacity:.85"></div></div><span class="v num">89<small>70 %</small></span></div>
+          <div class="frow"><span>RDV pris</span><div><div class="bar" style="width:50%;opacity:.7"></div></div><span class="v num">64<small>72 %</small></span></div>
+          <div class="frow"><span>RDV honorés</span><div><div class="bar" style="width:46%;opacity:.55"></div></div><span class="v num">58<small>91 %</small></span></div>
+          <div class="frow"><span>Chantiers signés</span><div><div class="bar" style="width:19%;background:var(--chart-2);opacity:1"></div></div><span class="v num">24<small>18 750 €</small></span></div>
+        </div>
+      </div>
+      <div class="card"><div class="card-h"><h3>CA récupéré par mois</h3><span class="sub">euros confirmés par vous</span></div>
+        <div class="card-b chart-wrap">
+          <svg viewBox="0 0 460 210" width="100%" role="img" aria-label="CA récupéré par mois, de mai à septembre, culminant à 4850 euros en septembre">
+            <g stroke="var(--chart-grid)" stroke-width="1"><line x1="40" y1="170" x2="450" y2="170"/><line x1="40" y1="110" x2="450" y2="110"/><line x1="40" y1="50" x2="450" y2="50"/></g>
+            <g fill="var(--faint)" font-size="10" text-anchor="end"><text x="34" y="173">0</text><text x="34" y="113">2,5 k</text><text x="34" y="53">5 k</text></g>
+            <g class="bars" fill="var(--chart-2)">
+              <rect x="55"  y="141" width="52" height="29" rx="4" data-t="Mai — 1 200 €"/>
+              <rect x="137" y="112" width="52" height="58" rx="4" data-t="Juin — 2 400 €"/>
+              <rect x="219" y="96"  width="52" height="74" rx="4" data-t="Juillet — 3 100 €"/>
+              <rect x="301" y="69"  width="52" height="101" rx="4" data-t="Août — 4 200 €"/>
+              <rect x="383" y="54"  width="52" height="116" rx="4" data-t="Septembre — 4 850 €"/>
+            </g>
+            <text x="409" y="44" font-size="12" font-weight="700" fill="var(--ink)" text-anchor="middle" class="num">4 850 €</text>
+            <g fill="var(--muted)" font-size="11" text-anchor="middle"><text x="81" y="188">mai</text><text x="163" y="188">juin</text><text x="245" y="188">juil</text><text x="327" y="188">août</text><text x="409" y="188">sept</text></g>
+          </svg>
+        </div>
+      </div>
+    </div>
+
+    <div class="grid g2">
+      <div class="card"><div class="card-h"><h3>Appels par semaine</h3><span class="sub">12 dernières semaines</span></div>
+        <div class="card-b chart-wrap">
+          <svg viewBox="0 0 460 190" width="100%" role="img" aria-label="Appels par semaine sur 12 semaines, en hausse de 19 à 34">
+            <g stroke="var(--chart-grid)" stroke-width="1"><line x1="36" y1="150" x2="452" y2="150"/><line x1="36" y1="95" x2="452" y2="95"/><line x1="36" y1="40" x2="452" y2="40"/></g>
+            <g fill="var(--faint)" font-size="10" text-anchor="end"><text x="30" y="153">0</text><text x="30" y="98">20</text><text x="30" y="43">40</text></g>
+            <path d="M46 98 84 103 122 92 160 95 198 84 236 87 274 76 312 70 350 73 388 62 426 59 446 56 L446 150 46 150 Z" fill="var(--chart-1)" opacity=".12"/>
+            <path d="M46 98 84 103 122 92 160 95 198 84 236 87 274 76 312 70 350 73 388 62 426 59 446 56" fill="none" stroke="var(--chart-1)" stroke-width="2" stroke-linejoin="round"/>
+            <g class="pts" fill="var(--chart-1)">
+              <circle cx="46" cy="98" r="4" data-t="Sem. 27 — 19 appels"/><circle cx="122" cy="92" r="4" data-t="Sem. 29 — 21 appels"/><circle cx="198" cy="84" r="4" data-t="Sem. 31 — 24 appels"/><circle cx="274" cy="76" r="4" data-t="Sem. 33 — 27 appels"/><circle cx="350" cy="73" r="4" data-t="Sem. 35 — 28 appels"/><circle cx="446" cy="56" r="5" stroke="var(--surface)" stroke-width="2" data-t="Sem. 38 — 34 appels"/>
+            </g>
+            <text x="446" y="42" font-size="12" font-weight="700" fill="var(--ink)" text-anchor="end" class="num">34</text>
+            <g fill="var(--muted)" font-size="11"><text x="46" y="170">juil.</text><text x="236" y="170" text-anchor="middle">août</text><text x="446" y="170" text-anchor="end">sept.</text></g>
+          </svg>
+        </div>
+      </div>
+      <div class="card"><div class="card-h"><h3>Demandes par prestation</h3><span class="sub">septembre</span></div>
+        <div class="card-b">
+          <div class="hbar"><span>Fuites</span><div><div class="t" style="width:100%"></div></div><span class="v num">34</span></div>
+          <div class="hbar"><span>Chaudières</span><div><div class="t" style="width:82%"></div></div><span class="v num">28</span></div>
+          <div class="hbar"><span>Entretiens</span><div><div class="t" style="width:65%"></div></div><span class="v num">22</span></div>
+          <div class="hbar"><span>WC / évacuation</span><div><div class="t" style="width:53%"></div></div><span class="v num">18</span></div>
+          <div class="hbar"><span>Devis PAC / SDB</span><div><div class="t" style="width:44%"></div></div><span class="v num">15</span></div>
+          <div class="hbar"><span>Autres</span><div><div class="t" style="width:29%;opacity:.5"></div></div><span class="v num">10</span></div>
+        </div>
+      </div>
+    </div>
+
+    <div class="grid g4">
+      <div class="card stat"><div class="card-b"><span class="num">100 %</span><span class="lbl">Appels pris en charge</span></div></div>
+      <div class="card stat"><div class="card-b"><span class="num">2:24</span><span class="lbl">Durée moyenne d'appel</span></div></div>
+      <div class="card stat"><div class="card-b"><span class="num">5 %</span><span class="lbl">RDV non honorés</span><span class="delta">– 3 pts grâce aux rappels SMS</span></div></div>
+      <div class="card stat"><div class="card-b"><span class="num">42 min</span><span class="lbl">Délai moyen de validation</span></div></div>
+    </div>
+  </section>
+
+  <!-- ============ VUE : ASSISTANT IA ============ -->
+  <section class="view" id="v-ia">
+    <div class="card"><div class="card-b numline">
+      <div><div class="eyebrow">Votre numéro Nelyo</div><div class="n num">09 70 26 14 88</div></div>
+      <span class="pill p-ok">Renvoi d'appel actif — vérifié il y a 2 j</span>
+      <span class="pill p-marine">Annonce IA conforme (AI Act)</span>
+      <span style="margin-left:auto;display:flex;align-items:center;gap:10px;font-weight:600;font-size:13.5px">Assistant actif <span class="switch"></span></span>
+    </div></div>
+
+    <div class="grid g2">
+      <div class="card"><div class="card-h"><h3>Prestations couvertes</h3><button class="btn" style="margin-left:auto">Modifier</button></div>
+        <div class="card-b" style="display:flex;gap:8px;flex-wrap:wrap">
+          <span class="chip">Fuites</span><span class="chip">Chaudières</span><span class="chip">Chauffe-eau</span><span class="chip">WC / évacuation</span><span class="chip">Robinetterie</span><span class="chip">Entretien annuel</span><span class="chip">Devis PAC</span><span class="chip">Devis salle de bain</span>
+          <span class="chip x">✕ Colonnes d'immeuble</span><span class="chip x">✕ Gaz — installation neuve</span>
+        </div>
+      </div>
+      <div class="card"><div class="card-h"><h3>Zone d'intervention</h3><button class="btn" style="margin-left:auto">Modifier</button></div>
+        <div class="card-b" style="display:flex;gap:8px;flex-wrap:wrap">
+          <span class="chip">Nogent-sur-Marne</span><span class="chip">Le Perreux</span><span class="chip">Vincennes</span><span class="chip">Saint-Maur</span><span class="chip">Thiais</span>
+          <span class="chip x">Créteil (limitrophe)</span><span class="chip x">Neuilly-Plaisance (limitrophe)</span>
+        </div>
+      </div>
+      <div class="card"><div class="card-h"><h3>Rendez-vous &amp; urgences</h3><button class="btn" style="margin-left:auto">Modifier</button></div>
+        <div class="card-b"><dl class="kv">
+          <dt>Horaires de RDV</dt><dd>Lun–ven 8 h – 18 h · Sam 9 h – 13 h</dd>
+          <dt>Fenêtre urgences</dt><dd>17 h – 19 h · 2 max / jour</dd>
+          <dt>RDV max pris par l'IA / jour</dt><dd>4</dd>
+          <dt>Délai de validation</dt><dd>4 h — 1 h si urgence</dd>
+          <dt>Validation automatique</dt><dd>Jamais — vous validez tout</dd>
+        </dl></div>
+      </div>
+      <div class="card"><div class="card-h"><h3>Tarifs que l'assistant peut annoncer</h3><button class="btn" style="margin-left:auto">Modifier</button></div>
+        <div class="card-b" style="display:flex;flex-direction:column;gap:10px;font-size:13.5px">
+          <div>💧 <b>Déplacement + diagnostic — 90 € TTC</b><div style="color:var(--muted)">« …déduits si vous faites les travaux. »</div></div>
+          <div>🔥 <b>Entretien annuel chaudière — 120 € TTC</b></div>
+          <div style="color:var(--faint);font-size:12.5px;border-top:1px solid var(--line);padding-top:10px">Pour tout le reste, l'assistant ne donne jamais de prix : « ça dépendra de ce que Julien constatera sur place ».</div>
+        </div>
+      </div>
+    </div>
+
+    <div class="card"><div class="card-h"><h3>Message d'accueil</h3><button class="btn" style="margin-left:auto">Personnaliser</button></div>
+      <div class="card-b"><div class="accueil-msg">« Bonjour, vous êtes bien chez Dupont Chauffage. Je suis son assistant vocal — Julien est en intervention, mais je peux tout organiser avec vous. Que se passe-t-il ? »</div>
+      <p style="margin:10px 0 0;font-size:12.5px;color:var(--faint)">L'annonce « assistant vocal » est obligatoire (réglementation IA européenne) — elle est vérifiée automatiquement à chaque modification.</p></div>
+    </div>
+  </section>
+
+  <!-- ============ VUE : FACTURATION ============ -->
+  <section class="view" id="v-factu">
+    <div class="grid g3">
+      <div class="card"><div class="card-h"><h3>Votre abonnement</h3><span class="pill p-ok">Actif</span></div>
+        <div class="card-b">
+          <div class="plan"><span style="font-weight:600">Nelyo Pro</span><span class="price num">149 €<small> HT / mois</small></span></div>
+          <ul class="incl"><li>Appels entrants illimités</li><li>1 numéro dédié inclus</li><li>200 SMS / mois inclus</li><li>Validation &amp; agenda illimités</li></ul>
+          <p style="font-size:12.5px;color:var(--muted);margin:12px 0 0">Ce mois-ci, Nelyo vous a rapporté <b style="color:var(--ok)">32 fois</b> son prix.</p>
+        </div>
+      </div>
+      <div class="card"><div class="card-h"><h3>Consommation</h3><span class="sub">sept. · renouvelle le 1er oct.</span></div>
+        <div class="card-b" style="display:flex;flex-direction:column;gap:16px">
+          <div class="conso"><div style="display:flex;justify-content:space-between"><span>SMS envoyés</span><b class="num">143 / 200</b></div><div class="gauge"><i style="width:71%"></i></div></div>
+          <div class="conso"><div style="display:flex;justify-content:space-between"><span>Minutes d'appel</span><b class="num">312 min</b></div><div class="gauge"><i style="width:52%;background:var(--chart-2)"></i></div><span style="color:var(--faint);font-size:12px">Incluses sans limite — affiché à titre indicatif</span></div>
+          <div class="conso"><div style="display:flex;justify-content:space-between"><span>Prochaine facture</span><b class="num">178,80 € TTC</b></div><span style="color:var(--faint);font-size:12px">Prélèvement le 1er octobre</span></div>
+        </div>
+      </div>
+      <div class="card"><div class="card-h"><h3>Moyen de paiement</h3><button class="btn" style="margin-left:auto">Changer</button></div>
+        <div class="card-b" style="display:flex;flex-direction:column;gap:12px;font-size:13.5px">
+          <div style="display:flex;align-items:center;gap:12px"><span class="chip" style="font-weight:700">VISA</span><span>•••• 4421 <span style="color:var(--faint)">— exp. 07/28</span></span></div>
+          <div style="color:var(--muted);font-size:12.5px">Facturé à : Dupont Chauffage — 12 rue des Héros, 94130 Nogent-sur-Marne · SIRET 841 220 375 00019</div>
+        </div>
+      </div>
+    </div>
+    <div class="card">
+      <div class="card-h"><h3>Historique des factures</h3></div>
+      <div style="overflow-x:auto"><table class="calls">
+        <thead><tr><th>Date</th><th>N°</th><th>Période</th><th>Montant TTC</th><th>Statut</th><th></th></tr></thead>
+        <tbody>
+          <tr><td class="num">01/09/2026</td><td class="num">NLY-2026-0912</td><td>Septembre 2026</td><td class="num">178,80 €</td><td><span class="pill p-ok">Payée</span></td><td><button class="btn">PDF</button></td></tr>
+          <tr><td class="num">01/08/2026</td><td class="num">NLY-2026-0838</td><td>Août 2026</td><td class="num">178,80 €</td><td><span class="pill p-ok">Payée</span></td><td><button class="btn">PDF</button></td></tr>
+          <tr><td class="num">01/07/2026</td><td class="num">NLY-2026-0761</td><td>Juillet 2026</td><td class="num">178,80 €</td><td><span class="pill p-ok">Payée</span></td><td><button class="btn">PDF</button></td></tr>
+        </tbody>
+      </table></div>
+    </div>
+  </section>
+
+  <p style="text-align:center;color:var(--faint);font-size:12px;margin:8px 0 0">Maquette Nelyo — données fictives, à des fins de conception.</p>
+  </div><!-- /content -->
+</div><!-- /main -->
+</div><!-- /app -->
+
+<!-- barre mobile -->
+<div class="mobilebar" id="mnav">
+  <button class="on" data-v="accueil"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M3 11 12 4l9 7M5 10v10h14V10"/></svg>Accueil</button>
+  <button data-v="appels"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M5 4h4l2 5-2.5 1.5a12 12 0 0 0 5 5L15 13l5 2v4a2 2 0 0 1-2 2A16 16 0 0 1 3 6a2 2 0 0 1 2-2z"/></svg>Appels</button>
+  <button data-v="agenda"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="3" y="5" width="18" height="16" rx="2"/><path d="M8 3v4M16 3v4M3 10h18"/></svg>Agenda</button>
+  <button data-v="stats"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M4 20V10M10 20V4M16 20v-7"/></svg>Stats</button>
+  <button data-v="ia"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="3"/><path d="M12 2v3M12 19v3M2 12h3M19 12h3"/></svg>IA</button>
+  <button data-v="factu"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="3" y="6" width="18" height="13" rx="2"/><path d="M3 10h18"/></svg>Factures</button>
+</div>
+
+<div class="tip" id="tip"></div>
+
+<script>
+const TITRES={accueil:"Aujourd'hui",appels:"Appels",agenda:"Agenda",stats:"Statistiques",ia:"Assistant IA",factu:"Facturation"};
+function go(v){
+  document.querySelectorAll("section.view").forEach(s=>s.classList.toggle("on",s.id==="v-"+v));
+  document.querySelectorAll("[data-v]").forEach(b=>b.classList.toggle("on",b.dataset.v===v));
+  document.getElementById("pagetitle").textContent=TITRES[v];
+  window.scrollTo({top:0});
+}
+document.querySelectorAll("[data-v]").forEach(b=>b.addEventListener("click",()=>go(b.dataset.v)));
+/* tooltips graphiques */
+const tip=document.getElementById("tip");
+document.querySelectorAll("[data-t]").forEach(el=>{
+  el.addEventListener("mousemove",e=>{tip.textContent=el.dataset.t;tip.style.opacity=1;tip.style.left=(e.clientX+12)+"px";tip.style.top=(e.clientY-30)+"px";});
+  el.addEventListener("mouseleave",()=>tip.style.opacity=0);
+});
+</script>

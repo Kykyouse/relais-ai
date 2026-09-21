@@ -150,6 +150,11 @@ class Lead:
     # grandeur**, et c'est le début : « appel de 14h32 » désigne le moment où le téléphone
     # a sonné, pas celui où l'agent a raccroché.
     debut_a: dt.datetime | None = None
+    # FIN de l'appel — donc sa DURÉE, avec `debut_a`. Lue par la même jointure.
+    # La maquette affiche la durée dans la liste des appels, et c'est une donnée
+    # utile en soi : un appel de 22 secondes et un appel de quatre minutes ne
+    # racontent pas la même chose, même à catégorie et score égaux.
+    fin_a: dt.datetime | None = None
 
 
 class Depot(Protocol):
@@ -424,7 +429,9 @@ class DepotMemoire:
         """
         return Lead(id=d["id"], appel_id=d["appel_id"], artisan_id=d["artisan_id"],
                     donnees=d["donnees"],
-                    debut_a=temps.depuis_iso(self._appels[d["appel_id"]]["debut_a"]))
+                    debut_a=temps.depuis_iso(self._appels[d["appel_id"]]["debut_a"]),
+                    fin_a=(temps.depuis_iso(self._appels[d["appel_id"]]["fin_a"])
+                           if self._appels[d["appel_id"]]["fin_a"] else None))
 
     def leads(self, artisan_id: str, limite: int = 50) -> list[Lead]:
         """Les appels d'un artisan, le plus récent d'abord.

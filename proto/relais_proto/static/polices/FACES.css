@@ -1,0 +1,5 @@
+/* Polices AUTO-HÉBERGÉES (SIL OFL). Ce sont des polices VARIABLES : un seul
+   fichier par famille couvre toutes les graisses — Google en servait trois copies
+   identiques, une par graisse demandée. La plage `font-weight` le déclare. */
+@font-face{font-family:'Instrument Sans';font-style:normal;font-weight:400 600;font-display:swap;src:url(/static/polices/instrument-sans.woff2) format('woff2')}
+@font-face{font-family:'Bricolage Grotesque';font-style:normal;font-weight:500 700;font-display:swap;src:url(/static/polices/bricolage-grotesque.woff2) format('woff2')}

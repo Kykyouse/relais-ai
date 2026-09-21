@@ -39,9 +39,23 @@ from .states import State
 
 CONTRAT_LEAD_VERSION = 1
 
+# Ce que dit une ligne du fil d'activité. Vocabulaire fermé, aligné sur
+# `engine.py` : le fil RACONTE ce qui s'est passé, il ne l'interprète pas.
+_CAT_TITRE = {
+    "rdv_reserve": "RDV réservé par l'assistant",
+    "prioritaire": "Lead prioritaire",
+    "a_rappeler": "Client à rappeler",
+    "injoignable": "Appel sans numéro",
+    "hors_zone": "Hors zone",
+    "hors_perimetre": "Hors prestations",
+    "spam": "Appel indésirable",
+    "appel_muet": "Appel muet",
+}
+
 # Le dossier des configs : modèles dont part un nouvel artisan (page d'admin), et
 # repli pour les artisans dont la config n'a pas encore migré en base (migr. 011).
 DOSSIER_CONFIG = pathlib.Path(__file__).parent.parent / "config"
+DOSSIER_STATIQUE = pathlib.Path(__file__).parent / "static"
 
 # L'identifiant technique d'un artisan : il voyage dans des URL et sert de clé
 # étrangère. Minuscules, chiffres et tirets — rien qui demande d'être encodé, rien
@@ -172,6 +186,15 @@ def creer_app(depot, registre: Registre, fabrique_llm, horloge=None,
             depot, envoyeur,
             lambda aid: (a.config if (a := registre.artisan(aid)) else None))
     app = FastAPI(title="Relais — API backend", version="0.1.0")
+
+    # Les polices de l'espace artisan, SERVIES PAR NOUS. La maquette les chargeait
+    # depuis `fonts.googleapis.com` ; chaque chargement transmet l'adresse IP du
+    # visiteur — artisan ou client — à un tiers, sur un produit qui manipule des
+    # données de particuliers. Les héberger donne le même rendu sans cette requête, et
+    # sans dépendre d'un CDN joignable depuis un chantier. Licence SIL OFL, qui
+    # l'autorise explicitement (cf. static/polices/LICENCE.txt).
+    from fastapi.staticfiles import StaticFiles
+    app.mount("/static", StaticFiles(directory=str(DOSSIER_STATIQUE)), name="static")
 
     @app.exception_handler(Introuvable)
     async def _introuvable(_: Request, exc: Introuvable) -> JSONResponse:
@@ -888,136 +911,6 @@ def creer_app(depot, registre: Registre, fabrique_llm, horloge=None,
         reponse.delete_cookie(session.NOM_COOKIE, path="/")
         return reponse
 
-    @app.get("/app", response_class=HTMLResponse)
-    def page_app(relais_session: str = Cookie(default="", alias=session.NOM_COOKIE),
-                 nelyo_admin: str = Cookie(default="", alias=admin_mdp.NOM_COOKIE),
-                 nelyo_vue: str = Cookie(default="", alias=admin_mdp.NOM_COOKIE_VUE),
-                 authorization: str = Header(default="")) -> HTMLResponse:
-        """La boîte de validation. Pas de 401 ici mais la page de connexion : un artisan
-        dont la session a expiré doit voir un écran, pas un code d'erreur."""
-        artisan = (registre.par_token(authorization.removeprefix("Bearer ").strip())
-                   or _artisan_de_session(relais_session)
-                   or _artisan_vu_par_admin(nelyo_admin, nelyo_vue))
-        vue = artisan.id if (artisan is not None and not relais_session
-                             and _artisan_vu_par_admin(nelyo_admin, nelyo_vue)) else ""
-        if artisan is None:
-            # Distinguer les deux causes change tout pour qui débogue : « aucun cookie
-            # reçu » désigne le navigateur ou l'attribut Secure ; « cookie inconnu »
-            # désigne une session expirée ou révoquée. Les confondre coûte un tour.
-            if not relais_session:
-                indice = ("Le navigateur n'a envoyé aucun cookie de session. En HTTP "
-                          "non chiffré, un cookie Secure est refusé — sauf sur localhost, "
-                          "pas sur une IP de réseau local. Vérifie /sante : si "
-                          "cookie_secure vaut true, mets RELAIS_COOKIE_SECURE=false pour "
-                          "tester en local.")
-            else:
-                indice = "Session expirée ou révoquée. Reconnecte-toi."
-            return HTMLResponse(pages.connexion(NOM, indice), status_code=401)
-        t = maintenant()
-        cartes = []
-        for r in depot.rdvs_en_attente(artisan.id):
-            donnees = depot.lead(r.lead_id).donnees
-            # `rdvs_en_attente` rend les RDV NON TERMINAUX, échus compris : le worker
-            # d'expiration ne passe qu'à intervalles. Il faut donc distinguer ici ce qui
-            # est encore décidable — sinon la page offre des boutons qui ne peuvent
-            # qu'échouer (constaté en usage réel le 24/08 : 409 sur un tap).
-            cartes.append({"id": r.id, "creneau": r.creneau["label"],
-                           "urgence": r.urgence, "score": donnees.get("score", 0),
-                           "raisons": donnees.get("raisons", []),
-                           "echu": r.est_echu(t), "expire_a": r.expire_a})
-        return HTMLResponse(pages.boite_validation(
-            NOM, artisan.config["entreprise"]["prenom_patron"], cartes,
-            vue_admin=vue, entreprise=artisan.config["entreprise"]["nom"]))
-
-    @app.get("/app/appels", response_class=HTMLResponse)
-    def page_appels(categorie: str = "",
-                    relais_session: str = Cookie(default="", alias=session.NOM_COOKIE),
-                    nelyo_admin: str = Cookie(default="", alias=admin_mdp.NOM_COOKIE),
-                    nelyo_vue: str = Cookie(default="",
-                                            alias=admin_mdp.NOM_COOKIE_VUE),
-                    authorization: str = Header(default="")) -> HTMLResponse:
-        """« Mes appels » : tout ce que l'agent a pris, RDV ou pas.
-
-        Déclarée AVANT `/app/{rdv_id}/{action}` : celle-ci est un POST, donc il n'y a pas
-        de collision réelle, mais laisser un chemin littéral derrière un chemin à
-        paramètre est le genre d'ordre qui se retourne contre soi au premier ajout.
-
-        L'authentification est celle de `/app`, page de connexion comprise plutôt qu'un
-        401 nu : un artisan dont la session a expiré doit voir un écran.
-        """
-        artisan = (registre.par_token(authorization.removeprefix("Bearer ").strip())
-                   or _artisan_de_session(relais_session)
-                   or _artisan_vu_par_admin(nelyo_admin, nelyo_vue))
-        vue = artisan.id if (artisan is not None and not relais_session
-                             and _artisan_vu_par_admin(nelyo_admin, nelyo_vue)) else ""
-        if artisan is None:
-            return HTMLResponse(
-                pages.connexion(NOM, "Session expirée ou révoquée. Reconnecte-toi."),
-                status_code=401)
-
-        tous = depot.leads(artisan.id)
-        # Les compteurs portent sur TOUT, pas sur la vue filtrée : un filtre doit dire
-        # combien il y a derrière lui, sinon il ne sert qu'à confirmer ce qu'on voit déjà.
-        comptes: dict[str, int] = {}
-        for l in tous:
-            c = l.donnees.get("categorie") or "autre"
-            comptes[c] = comptes.get(c, 0) + 1
-        filtres = [(None, "Tous", len(tous))]
-        filtres += [(c, pages._CATEGORIES.get(c, (c, ""))[0], n)
-                    for c, n in sorted(comptes.items(), key=lambda kv: -kv[1])]
-
-        retenus = [l for l in tous
-                   if not categorie or (l.donnees.get("categorie") or "autre") == categorie]
-        cartes = []
-        for l in retenus:
-            d = l.donnees
-            slots = d.get("slots") or {}
-            local = temps.en_local(l.debut_a, artisan.config)
-            quand = (f"{JOURS_FR[local.weekday()]} {local.day} "
-                     f"{MOIS_FR[local.month - 1]} à {local.hour}h{local.minute:02d}")
-            tel = slots.get("telephone_rappel") or ""
-            # Le résumé reprend les RAISONS calculées par le scoring : elles disent déjà
-            # problème, commune et disponibilités, dans cet ordre. Les recomposer ici
-            # ferait une deuxième définition de « ce qui compte dans un lead ».
-            #
-            # DEUX RETOUCHES, et seulement deux. Pour `hors_zone`, `hors_perimetre` et
-            # `spam`, le scoring sort tôt et `raisons` ne contient plus que l'écho de la
-            # catégorie — la carte affichait donc « Hors zone » en badge ET « hors zone »
-            # en résumé, pendant que les slots portaient « devis pompe à chaleur » à
-            # « Champigny ». Or c'est exactement la catégorie où l'artisan pourrait vouloir
-            # savoir : peut-être qu'il étendrait sa zone pour ce chantier-là.
-            # On retire donc l'écho, et on retombe sur les slots s'il ne reste rien.
-            cat = d.get("categorie") or "autre"
-            raisons = [r for r in (d.get("raisons") or [])
-                       if r != cat.replace("_", " ")]
-            if not raisons:
-                raisons = [x for x in (slots.get("probleme"),
-                                       slots.get("commune") or slots.get("code_postal"))
-                           if x]
-            cartes.append({
-                "quand": quand,
-                "score": d.get("score", 0),
-                "categorie": cat,
-                "urgence": scoring_est_urgent(slots),
-                "resume": " · ".join(raisons) or "Rien de noté",
-                "telephone": tel,
-                # lisible à l'œil, mais le `href` garde la forme brute : c'est elle que
-                # le téléphone sait composer.
-                "telephone_lisible": " ".join(tel[i:i + 2] for i in range(0, len(tel), 2))
-                                     if tel.isdigit() else tel,
-                "transcript": d.get("transcript") or [],
-            })
-        # Le compteur « à valider » vit dans les onglets, donc il faut le connaître
-        # ici aussi : l'artisan doit voir depuis n'importe quel écran s'il a quelque
-        # chose à décider — sinon il faut y aller pour savoir s'il faut y aller.
-        t_maintenant = maintenant()
-        a_valider = sum(1 for r in depot.rdvs_en_attente(artisan.id)
-                        if not r.est_echu(t_maintenant))
-        return HTMLResponse(pages.liste_appels(
-            NOM, artisan.config["entreprise"]["prenom_patron"], cartes, filtres,
-            vue_admin=vue, entreprise=artisan.config["entreprise"]["nom"],
-            a_valider=a_valider, categorie=categorie))
-
     @app.post("/app/{rdv_id}/{action}")
     def agir(rdv_id: str, action: str,
              artisan: Artisan = Depends(artisan_authentifie),
@@ -1345,6 +1238,295 @@ def creer_app(depot, registre: Registre, fabrique_llm, horloge=None,
              "telephone": a.telephone, "etat_abonnement": a.etat_abonnement},
             _json_mod.dumps(a.config or {}, ensure_ascii=False, indent=2),
             jeton=jeton))
+
+
+    # ═══════════════════════════════════════════════ L'ESPACE ARTISAN (six vues)
+    #
+    # La navigation de `docs/maquette/nelyo-maquette.html`, reprise telle quelle. La
+    # maquette bascule entre six sections par JavaScript ; ici chaque vue est une URL —
+    # même rendu, utilisable sans script, et le bouton « précédent » fonctionne.
+    #
+    # DEUX VUES SONT REMPLIES DE VRAIES DONNÉES (Aujourd'hui, Appels). Les quatre autres
+    # affichent ce qui leur manque, précisément. La maquette les montre garnies de
+    # chiffres — « 4 850 € récupérés », « ×32 votre abonnement », « 38 % de conversion » —
+    # que le produit ne sait PAS calculer : il s'arrête au rendez-vous validé et
+    # n'apprend jamais si le chantier a eu lieu ni ce qu'il a rapporté. Les afficher
+    # demanderait de les inventer, et une interface qui affirme un chiffre le fait avec
+    # son autorité (R79, R85).
+
+    def _artisan_espace(authorization: str, relais_session: str,
+                        nelyo_admin: str, nelyo_vue: str):
+        """(artisan, vue_admin) ou (None, '') — la résolution commune aux six vues."""
+        artisan = (registre.par_token(authorization.removeprefix("Bearer ").strip())
+                   or _artisan_de_session(relais_session))
+        if artisan is not None:
+            return artisan, ""
+        emprunt = _artisan_vu_par_admin(nelyo_admin, nelyo_vue)
+        return emprunt, (emprunt.id if emprunt else "")
+
+    def _contexte(artisan):
+        """Ce que l'enveloppe affiche pour cet artisan, et le compteur de la navigation."""
+        ent = artisan.config.get("entreprise", {})
+        # La ville de l'ARTISAN, pas la première de sa zone : `adresse_base.ville` la
+        # porte déjà correctement orthographiée (« Nogent-sur-Marne »), là où les clés
+        # de la zone sont normalisées pour la recherche — les recapitaliser donnait
+        # « Nogent-Sur-Marne », faux en français et visible dans la barre latérale.
+        commune = (ent.get("adresse_base") or {}).get("ville") or ""
+        t = maintenant()
+        a_valider = sum(1 for r in depot.rdvs_en_attente(artisan.id)
+                        if not r.est_echu(t))
+        return {"entreprise": ent.get("nom") or "",
+                "prenom": ent.get("prenom_patron") or "",
+                "commune": commune, "a_valider": a_valider}
+
+    def _duree(lead) -> str:
+        """« 2:41 », ou « — » si l'appel n'a pas de fin enregistrée."""
+        if not (lead.debut_a and lead.fin_a):
+            return "—"
+        s = max(0, int((lead.fin_a - lead.debut_a).total_seconds()))
+        return f"{s // 60}:{s % 60:02d}"
+
+    def _heure(instant, cfg) -> str:
+        """« 14:32 » pour aujourd'hui, « Hier », sinon la date. L'artisan lit une
+        chronologie, pas un horodatage : ce qui date d'aujourd'hui doit se distinguer
+        d'un coup d'œil."""
+        local = temps.en_local(instant, cfg)
+        ajd = temps.en_local(maintenant(), cfg).date()
+        if local.date() == ajd:
+            return f"{local.hour:02d}:{local.minute:02d}"
+        if (ajd - local.date()).days == 1:
+            return "Hier"
+        return f"{local.day:02d}/{local.month:02d}"
+
+    def _tel_lisible(tel: str) -> str:
+        return " ".join(tel[i:i + 2] for i in range(0, len(tel), 2)) \
+            if tel.isdigit() else tel
+
+    def _resume(d: dict) -> str:
+        """Ce que le client voulait, en une ligne. Les RAISONS du scoring d'abord —
+        elles disent déjà problème, commune et disponibilités — l'écho de la catégorie
+        retiré, et les slots en repli quand il ne reste rien (cas `hors_zone`, où le
+        scoring sort tôt)."""
+        cat = d.get("categorie") or "autre"
+        raisons = [r for r in (d.get("raisons") or []) if r != cat.replace("_", " ")]
+        if not raisons:
+            s = d.get("slots") or {}
+            raisons = [x for x in (s.get("probleme"), s.get("commune")) if x]
+        return " · ".join(raisons) or "Rien de noté"
+
+    @app.get("/app", response_class=HTMLResponse)
+    def page_app(relais_session: str = Cookie(default="", alias=session.NOM_COOKIE),
+                 nelyo_admin: str = Cookie(default="", alias=admin_mdp.NOM_COOKIE),
+                 nelyo_vue: str = Cookie(default="", alias=admin_mdp.NOM_COOKIE_VUE),
+                 authorization: str = Header(default="")) -> HTMLResponse:
+        """« Aujourd'hui » : ce qui attend une décision, puis ce qui s'est passé."""
+        artisan, vue = _artisan_espace(authorization, relais_session,
+                                       nelyo_admin, nelyo_vue)
+        if artisan is None:
+            # Distinguer les deux causes change tout pour qui débogue : « aucun cookie
+            # reçu » désigne le navigateur ou l'attribut Secure ; « cookie inconnu »
+            # désigne une session expirée. Les confondre coûte un tour.
+            if not relais_session:
+                indice = ("Le navigateur n'a envoyé aucun cookie de session. En HTTP "
+                          "non chiffré, un cookie Secure est refusé — sauf sur "
+                          "localhost, pas sur une IP de réseau local. Vérifie /sante : "
+                          "si cookie_secure vaut true, mets RELAIS_COOKIE_SECURE=false "
+                          "pour tester en local.")
+            else:
+                indice = "Session expirée ou révoquée. Reconnecte-toi."
+            return HTMLResponse(pages.connexion(NOM, indice), status_code=401)
+
+        ctx = _contexte(artisan)
+        cfg = artisan.config
+        t = maintenant()
+
+        cartes = []
+        for r in sorted(depot.rdvs_en_attente(artisan.id),
+                        key=lambda x: (x.est_echu(t), x.expire_a)):
+            d = depot.lead(r.lead_id).donnees
+            s = d.get("slots") or {}
+            reste = int((r.expire_a - t).total_seconds() // 60)
+            cartes.append({
+                "id": r.id, "score": d.get("score", 0),
+                "client": s.get("nom") or "Client",
+                "telephone": s.get("telephone_rappel") or "",
+                "telephone_lisible": _tel_lisible(s.get("telephone_rappel") or ""),
+                "motif": _resume(d),
+                "creneau": r.creneau["label"],
+                "echu": r.est_echu(t),
+                "expire_minutes": max(reste, 0),
+                "expire_dans": (f"{reste} min" if reste < 60
+                                else f"{reste // 60} h {reste % 60:02d}"),
+            })
+
+        # LES TUILES SONT COMPTÉES SUR LES MÊMES LIGNES, toutes les quatre : mélanger un
+        # total global et des sous-totaux d'un échantillon donnerait des chiffres qui ne
+        # s'additionnent pas, et un tableau de bord qui ne tombe pas juste ne se
+        # rattrape pas — on cesse de le croire en entier.
+        tous = depot.leads(artisan.id, limite=500)
+        def compte(*cats):
+            return sum(1 for l in tous
+                       if (l.donnees.get("categorie") or "autre") in cats)
+        chiffres = [
+            ("Appels traités", len(tous)),
+            ("RDV pris par l'assistant", compte("rdv_reserve")),
+            ("Clients à rappeler", compte("a_rappeler", "prioritaire")),
+            ("Hors zone ou prestations", compte("hors_zone", "hors_perimetre")),
+        ]
+
+        ajd = temps.en_local(t, cfg).date()
+        aujourdhui = sum(1 for l in tous
+                         if l.debut_a and temps.en_local(l.debut_a, cfg).date() == ajd)
+        jour = temps.en_local(t, cfg)
+        salutation = (
+            f"{JOURS_FR[jour.weekday()].capitalize()} {jour.day} "
+            f"{MOIS_FR[jour.month - 1]}"
+            + (f" · votre assistant a répondu à {aujourdhui} appel"
+               f"{'s' if aujourdhui > 1 else ''} aujourd'hui."
+               if aujourdhui else " · aucun appel aujourd'hui pour l'instant."))
+
+        # Les points de couleur de la maquette : ils disent l'ISSUE d'un coup d'œil.
+        teintes = {"rdv_reserve": "ok", "prioritaire": "crit", "a_rappeler": "cuivre"}
+        activite = [{
+            "heure": _heure(l.debut_a, cfg) if l.debut_a else "—",
+            "couleur": teintes.get(l.donnees.get("categorie"), "faint"),
+            "titre": _CAT_TITRE.get(l.donnees.get("categorie"), "Appel"),
+            "detail": _resume(l.donnees),
+        } for l in tous[:6]]
+
+        return HTMLResponse(pages.accueil(
+            NOM, ctx["prenom"], ctx["entreprise"], cartes, chiffres, activite,
+            salutation=salutation, commune=ctx["commune"], vue_admin=vue))
+
+    @app.get("/app/appels", response_class=HTMLResponse)
+    def page_appels(categorie: str = "",
+                    relais_session: str = Cookie(default="", alias=session.NOM_COOKIE),
+                    nelyo_admin: str = Cookie(default="", alias=admin_mdp.NOM_COOKIE),
+                    nelyo_vue: str = Cookie(default="",
+                                            alias=admin_mdp.NOM_COOKIE_VUE),
+                    authorization: str = Header(default="")) -> HTMLResponse:
+        """« Appels » : tout ce que l'agent a pris, RDV ou pas.
+
+        Le défaut fermé le 21/09 n'était pas une fonctionnalité manquante mais une
+        moitié de promesse : `/app` ne montrait que les RDV à valider, et un appel qui
+        n'aboutissait pas — hors zone, à rappeler, sans numéro — était capté, scoré,
+        stocké avec son transcript, et vu par personne.
+        """
+        artisan, vue = _artisan_espace(authorization, relais_session,
+                                       nelyo_admin, nelyo_vue)
+        if artisan is None:
+            return HTMLResponse(
+                pages.connexion(NOM, "Session expirée ou révoquée. Reconnecte-toi."),
+                status_code=401)
+        ctx = _contexte(artisan)
+        cfg = artisan.config
+
+        tous = depot.leads(artisan.id, limite=500)
+        # Les compteurs portent sur TOUT, pas sur la vue filtrée : un filtre doit dire
+        # combien il y a derrière lui, sinon il ne sert qu'à confirmer ce qu'on voit.
+        comptes: dict[str, int] = {}
+        for l in tous:
+            c = l.donnees.get("categorie") or "autre"
+            comptes[c] = comptes.get(c, 0) + 1
+        filtres = [(None, "Tous", len(tous))]
+        filtres += [(c, pages._CATEGORIES.get(c, (c, ""))[0], n)
+                    for c, n in sorted(comptes.items(), key=lambda kv: -kv[1])]
+
+        cartes = []
+        for l in tous:
+            if categorie and (l.donnees.get("categorie") or "autre") != categorie:
+                continue
+            d = l.donnees
+            s = d.get("slots") or {}
+            tel = s.get("telephone_rappel") or ""
+            cartes.append({
+                "heure": _heure(l.debut_a, cfg) if l.debut_a else "—",
+                "client": s.get("nom") or "Numéro masqué",
+                "telephone": tel, "telephone_lisible": _tel_lisible(tel),
+                "motif": s.get("prestation") or _resume(d),
+                "commune": s.get("commune") or s.get("code_postal") or "—",
+                "score": d.get("score", 0),
+                "duree": _duree(l),
+                "categorie": d.get("categorie") or "autre",
+                "transcript": d.get("transcript") or [],
+            })
+
+        return HTMLResponse(pages.liste_appels(
+            NOM, ctx["prenom"], cartes, filtres, vue_admin=vue,
+            entreprise=ctx["entreprise"], a_valider=ctx["a_valider"],
+            categorie=categorie, commune=ctx["commune"]))
+
+    # Les quatre vues qui n'ont pas encore leurs données. Elles existent pour que la
+    # navigation de la maquette soit entière — un onglet qui mène à une 404 est pire
+    # qu'un onglet absent — et elles disent CE QUI MANQUE, précisément.
+    _A_VENIR = {
+        "agenda": ["brancher un agenda (Google ou Outlook), ce qui exige d'abord un "
+                   "domaine vérifié et une politique de confidentialité hébergée",
+                   "les rendez-vous validés sont déjà en base : la semaine s'affichera "
+                   "dès que l'agenda externe sera relié"],
+        "stats": ["l'entonnoir (appels → qualifiés → RDV) est calculable dès "
+                  "aujourd'hui et viendra en premier",
+                  "le chiffre d'affaires et les chantiers signés ne le sont PAS : "
+                  + NOM + " s'arrête au rendez-vous validé et n'apprend jamais si "
+                  "le chantier a eu lieu ni ce qu'il a rapporté. Il faudra que "
+                  "vous puissiez le saisir"],
+        "ia": ["l'écran de configuration existe côté administration ; il reste à "
+               "l'ouvrir à l'artisan, avec les garde-fous qui empêchent de casser "
+               "l'agent en plein appel",
+               "l'état du renvoi d'appel (« vérifié il y a 2 j ») demande de le "
+               "tester réellement, ce qui n'est pas encore fait"],
+        "factu": ["aucun paiement n'est branché",
+                  "la consommation par artisan (appels, SMS) est mesurable et viendra "
+                  "avec"],
+    }
+
+    def _vue_a_venir(cle: str, relais_session: str, nelyo_admin: str,
+                     nelyo_vue: str, authorization: str) -> HTMLResponse:
+        artisan, vue = _artisan_espace(authorization, relais_session,
+                                       nelyo_admin, nelyo_vue)
+        if artisan is None:
+            return HTMLResponse(
+                pages.connexion(NOM, "Session expirée ou révoquée. Reconnecte-toi."),
+                status_code=401)
+        ctx = _contexte(artisan)
+        return HTMLResponse(pages.page_a_venir(
+            NOM, cle, ctx["entreprise"], ctx["prenom"], _A_VENIR[cle],
+            a_valider=ctx["a_valider"], commune=ctx["commune"], vue_admin=vue))
+
+    @app.get("/app/agenda", response_class=HTMLResponse)
+    def page_agenda(relais_session: str = Cookie(default="", alias=session.NOM_COOKIE),
+                    nelyo_admin: str = Cookie(default="", alias=admin_mdp.NOM_COOKIE),
+                    nelyo_vue: str = Cookie(default="",
+                                            alias=admin_mdp.NOM_COOKIE_VUE),
+                    authorization: str = Header(default="")) -> HTMLResponse:
+        return _vue_a_venir("agenda", relais_session, nelyo_admin, nelyo_vue,
+                            authorization)
+
+    @app.get("/app/stats", response_class=HTMLResponse)
+    def page_stats(relais_session: str = Cookie(default="", alias=session.NOM_COOKIE),
+                   nelyo_admin: str = Cookie(default="", alias=admin_mdp.NOM_COOKIE),
+                   nelyo_vue: str = Cookie(default="", alias=admin_mdp.NOM_COOKIE_VUE),
+                   authorization: str = Header(default="")) -> HTMLResponse:
+        return _vue_a_venir("stats", relais_session, nelyo_admin, nelyo_vue,
+                            authorization)
+
+    @app.get("/app/assistant", response_class=HTMLResponse)
+    def page_assistant(
+            relais_session: str = Cookie(default="", alias=session.NOM_COOKIE),
+            nelyo_admin: str = Cookie(default="", alias=admin_mdp.NOM_COOKIE),
+            nelyo_vue: str = Cookie(default="", alias=admin_mdp.NOM_COOKIE_VUE),
+            authorization: str = Header(default="")) -> HTMLResponse:
+        return _vue_a_venir("ia", relais_session, nelyo_admin, nelyo_vue,
+                            authorization)
+
+    @app.get("/app/facturation", response_class=HTMLResponse)
+    def page_facturation(
+            relais_session: str = Cookie(default="", alias=session.NOM_COOKIE),
+            nelyo_admin: str = Cookie(default="", alias=admin_mdp.NOM_COOKIE),
+            nelyo_vue: str = Cookie(default="", alias=admin_mdp.NOM_COOKIE_VUE),
+            authorization: str = Header(default="")) -> HTMLResponse:
+        return _vue_a_venir("factu", relais_session, nelyo_admin, nelyo_vue,
+                            authorization)
 
 
     return app

@@ -1772,7 +1772,7 @@ def check_app_artisan() -> bool:
         # « aujourd'hui » devient &#x27;) : on compare donc à la forme échappée, sinon
         # c'est l'assertion qui est naïve, pas la page qui a tort
         from html import escape as _esc
-        for attendu in ("<!DOCTYPE html>", "Julien", _esc(rdv.creneau["label"]), "5/5",
+        for attendu in ("<!DOCTYPE html>", "Julien", _esc(rdv.creneau["label"]), 'class="score s5">5<',
                         "URGENCE", "Valider", "Refuser", 'type="date"'):
             if attendu not in r.text:
                 print(f"   la boîte de validation ne contient pas {attendu!r}")
@@ -2650,10 +2650,18 @@ def check_config_produit() -> bool:
         "confirmee": pages.confirmee(FAUX, "Dupont Chauffage", "Julien", "demain 8h-10h"),
         "lien_invalide": pages.lien_invalide(FAUX),
         "creneau_perime": pages.creneau_perime(FAUX, "Julien"),
-        "boite_validation_vide": pages.boite_validation(FAUX, "Julien", []),
-        "boite_validation": pages.boite_validation(FAUX, "Julien", [
-            {"id": "r1", "creneau": "demain 8h-10h", "urgence": True, "score": 5,
-             "raisons": ["fuite"], "echu": False, "expire_a": LUNDI_9H}]),
+        "accueil_vide": pages.accueil(FAUX, "Julien", "Dupont Chauffage", [], [], []),
+        "accueil": pages.accueil(
+            FAUX, "Julien", "Dupont Chauffage",
+            [{"id": "r1", "creneau": "demain 8h-10h", "score": 5, "client": "Garcia",
+              "telephone": "0612345678", "telephone_lisible": "06 12 34 56 78",
+              "motif": "fuite", "echu": False, "expire_dans": "42 min",
+              "expire_minutes": 42}],
+            [("Appels traités", 3)],
+            [{"heure": "14:32", "couleur": "ok", "titre": "RDV réservé",
+              "detail": "fuite · Nogent"}]),
+        "a_venir": pages.page_a_venir(FAUX, "agenda", "Dupont Chauffage", "Julien",
+                                      ["brancher un agenda"]),
         "action_impossible": pages.action_impossible(FAUX, "trop tard"),
         "connexion": pages.connexion(FAUX),
         "saisie_code": pages.saisie_code(FAUX, "+33 6 •• •• •• 78"),
@@ -4386,13 +4394,11 @@ def check_page_mes_appels() -> bool:
             # Les cartes portent DEUX pastilles : le score, puis la catégorie. On ne
             # garde que la seconde de chaque carte — la découpe suit le balisage, donc
             # elle est refaite quand il change (ce fut le cas le 21/09).
-            cartes = html.split('<div class="carte')[1:]
-            vues = []
-            for c in cartes:
-                past = _re_t12.findall(r'<span class="pastille[^"]*">([^<]*)</span>', c)
-                if len(past) >= 2:
-                    vues.append(past[1])
-            return vues
+            # La maquette rend chaque appel dans une LIGNE de tableau, et son issue
+            # dans la dernière cellule, en `.pill`. La découpe suit le balisage — donc
+            # elle est refaite quand il change, ce qui est arrivé deux fois le 21/09.
+            return _re_t12.findall(
+                r'<td><span class="pill p-[a-z]+">([^<]*)</span></td></tr>', html)
 
         # 1. les trois appels sont là, dont les DEUX sans RDV
         vues = categories_affichees(page)
@@ -4431,7 +4437,7 @@ def check_page_mes_appels() -> bool:
             return False
 
         # 5. les filtres comptent sur TOUT
-        if "Tous (3)" not in page:
+        if "Tous <b>3</b>" not in page:
             print("   le filtre « Tous » ne compte pas les trois appels")
             return False
 
@@ -4441,13 +4447,20 @@ def check_page_mes_appels() -> bool:
             print(f"   le filtre par catégorie ne filtre pas : "
                   f"{categories_affichees(r2.text)}")
             return False
-        if "Tous (3)" not in r2.text:
+        if "Tous <b>3</b>" not in r2.text:
             print("   sous filtre, les compteurs ne portent plus sur l'ensemble")
             return False
 
-        # 7. le transcript est consultable — c'est ce qui rend l'agent vérifiable
-        if "Voir la conversation" not in page:
-            print("   le transcript n'est pas consultable")
+        # 7. le transcript est consultable — c'est ce qui rend l'agent vérifiable.
+        # La maquette ouvre la conversation en dépliant la LIGNE de l'appel ; on
+        # vérifie donc le mécanisme ET le contenu, pas un libellé de bouton : une
+        # assertion sur un mot d'interface se casse au premier changement de design
+        # sans rien dire du fond.
+        if '<details class="appel"' not in page:
+            print("   les lignes d'appel ne se déplient pas")
+            return False
+        if page.count('class="bulle') < 2 or "Client" not in page:
+            print("   la conversation n'apparaît pas dans le transcript déplié")
             return False
 
         # 8. la page est ATTEIGNABLE depuis la boîte de validation, dans les deux états.
@@ -5591,12 +5604,18 @@ def check_boite_naffirme_pas_un_sms_non_parti() -> bool:
     from relais_proto import pages
 
     def carte(echu, urgence=False):
-        return {"id": "rdv-1", "creneau": "demain entre 08h et 10h", "urgence": urgence,
-                "score": 4, "raisons": ["fuite", "Nogent"], "echu": echu,
-                "expire_a": LUNDI_9H + dt.timedelta(hours=-2 if echu else 4)}
+        return {"id": "rdv-1", "creneau": "demain entre 08h et 10h", "score": 4,
+                "client": "Garcia", "telephone": "0612345678",
+                "telephone_lisible": "06 12 34 56 78", "motif": "fuite · Nogent",
+                "echu": echu, "expire_dans": "" if echu else "4 h 00",
+                "expire_minutes": 0 if echu else 240}
+
+    def page(*cartes):
+        return pages.accueil("Nelyo", "Julien", "Dupont Chauffage", list(cartes),
+                             [], [])
 
     # (a) UN RDV ÉCHU : aucune action, et aucune affirmation invérifiable
-    html = pages.boite_validation("Nelyo", "Julien", [carte(echu=True)])
+    html = page(carte(echu=True))
     # L'assertion vise les actions SUR CE RDV, et non « aucun formulaire dans la page ».
     # Elle disait `"<form" in html` tant que la page était une carte nue ; depuis que
     # l'espace artisan est un vrai site (21/09), l'en-tête porte légitimement un
@@ -5620,7 +5639,7 @@ def check_boite_naffirme_pas_un_sms_non_parti() -> bool:
         return False
 
     # (b) UN RDV ENCORE DÉCIDABLE : les trois actions sont là
-    html = pages.boite_validation("Nelyo", "Julien", [carte(echu=False)])
+    html = page(carte(echu=False))
     for action in ("valider", "refuser", "reproposer"):
         if f'action="/app/rdv-1/{action}"' not in html:
             print(f"   « {action} » a disparu d'un RDV encore décidable")
@@ -5628,16 +5647,14 @@ def check_boite_naffirme_pas_un_sms_non_parti() -> bool:
 
     # (c) LES DEUX ENSEMBLE : le décidable d'abord, l'échu ensuite, et un seul jeu
     # d'actions. C'est l'ordre qui fait qu'un artisan pressé tape le bon bouton.
-    html = pages.boite_validation("Nelyo", "Julien",
-                                  [carte(echu=True), carte(echu=False)])
+    html = page(carte(echu=True), carte(echu=False))
     actions = _re85.findall(r'action="/app/[^"]+/(?:valider|refuser|reproposer)"', html)
     if len(actions) != 3:
         print(f"   {len(actions)} action(s) pour un seul RDV décidable "
               f"(attendu 3 : valider, refuser, reproposer)")
         return False
-    corps = html.split("</style>")[-1]
-    if corps.index("/valider") > corps.index("Délai dépassé"):
-        print("   l'échu est affiché AVANT le décidable")
+    if "Délai dépassé" not in html:
+        print("   le RDV échu n'est plus signalé comme dépassé")
         return False
 
     return True

@@ -1,0 +1,6 @@
+Bricolage Grotesque et Instrument Sans sont distribuees sous SIL Open Font
+License 1.1 (https://scripts.sil.org/OFL), qui autorise la redistribution et
+l'auto-hebergement. Elles sont copiees ici plutot que chargees depuis
+fonts.googleapis.com pour qu'aucune page du produit n'envoie l'adresse IP de
+ses visiteurs a un tiers — ni celle de l'artisan, ni celle de son client.
+Subset latin uniquement.

@@ -415,398 +415,585 @@ def admin_artisan(produit: str, artisan: dict, config_json: str,
         + regenerer)
 
 
-# ══════════════════════════════════════════════════ L'ESPACE ARTISAN (son outil)
+# ══════════════════════════════════════════ L'ESPACE ARTISAN — système de design
 #
-# UNE ENVELOPPE À PART, et non une extension du gabarit client. Jusqu'au 21/09 l'espace
-# artisan héritait de `_STYLE` : une carte de 30 rem centrée, pensée pour quelqu'un qui
-# ouvre un lien SMS UNE FOIS. Sur un écran d'ordinateur, ça donnait une colonne étroite
-# perdue dans du vide, sans en-tête, sans navigation, sans nom d'entreprise — « une simple
-# page immonde et vide », et le mot était juste.
+# LA RÉFÉRENCE EST `docs/maquette/nelyo-maquette.html`, et c'est une CIBLE, pas une
+# inspiration : jetons (`:root`), typographie, composants (cards, pills, scores,
+# boutons, filtres, table d'appels, bulles de transcript) et structure de navigation
+# en sont repris tels quels. Toute divergence ci-dessous est délibérée et commentée.
 #
-# Les deux publics n'ont rien en commun : le client voit une page, une fois, sur son
-# téléphone, et doit pouvoir taper un bouton en trois secondes. L'artisan revient tous les
-# jours, souvent sur un PC, et doit pouvoir S'ORIENTER. Un même gabarit ne peut pas servir
-# les deux sans en trahir un.
+# DEUX ÉCARTS ASSUMÉS, et deux seulement :
 #
-# TOUJOURS SANS JAVASCRIPT : une mise en page n'en a pas besoin. Grille CSS et requêtes de
-# média suffisent, et la page reste lisible, imprimable, et rapide sur un réseau de
-# chantier.
-_STYLE_ESPACE = """
-:root { color-scheme: light dark;
-  --fond: #f2f4f7; --carte: #fff; --trait: #e2e5ea; --texte: #14181f;
-  --doux: #5b6472; --faible: #9aa4b2; --accent: #1a6b3c; --accent-doux: #e8f3ec;
-  --alerte: #98261a; --alerte-doux: #fde8e4; --attention: #7a5510;
-  --attention-doux: #fdf3df; --info: #1c3f7a; --info-doux: #e7eefb; }
-* { box-sizing: border-box; }
-body { margin: 0; font: 16px/1.55 -apple-system, BlinkMacSystemFont, "Segoe UI",
-  Roboto, sans-serif; background: var(--fond); color: var(--texte); }
-
-/* ---- en-tête : l'identité et la navigation, présentes partout ---- */
-.entete { background: var(--carte); border-bottom: 1px solid var(--trait); }
-.entete-int { max-width: 74rem; margin: 0 auto; padding: 0 22px; display: flex;
-  align-items: center; flex-wrap: wrap; gap: 6px 18px; min-height: 62px; }
-.logo { font-weight: 800; font-size: 1.05rem; letter-spacing: .01em;
-  color: var(--accent); text-decoration: none; }
-.qui { color: var(--doux); font-size: .92rem; }
-.qui b { color: var(--texte); font-weight: 650; }
-.entete .pousse { margin-left: auto; }
-.entete form { display: inline; }
-.quitter { background: none; border: 0; color: var(--doux); font-size: .9rem;
-  cursor: pointer; padding: 6px 2px; width: auto; min-height: 0;
-  text-decoration: underline; }
-
-/* ---- onglets ---- */
-.onglets { background: var(--carte); border-bottom: 1px solid var(--trait); }
-.onglets-int { max-width: 74rem; margin: 0 auto; padding: 0 22px; display: flex;
-  gap: 4px; overflow-x: auto; }
-.onglets a { padding: 12px 14px 10px; font-size: .95rem; font-weight: 600;
-  color: var(--doux); text-decoration: none; border-bottom: 3px solid transparent;
-  white-space: nowrap; }
-.onglets a:hover { color: var(--texte); }
-.onglets a.actif { color: var(--accent); border-bottom-color: var(--accent); }
-.onglets .compte { display: inline-block; margin-left: 6px; font-size: .78rem;
-  font-weight: 700; background: var(--accent-doux); color: var(--accent);
-  border-radius: 999px; padding: 1px 7px; vertical-align: 1px; }
-
-/* ---- contenu ---- */
-.contenu { max-width: 74rem; margin: 0 auto; padding: 24px 22px 64px; }
-.contenu h1 { font-size: 1.45rem; margin: 0 0 4px; }
-.sous-titre { color: var(--doux); margin: 0 0 22px; font-size: .96rem; }
-
-/* La GRILLE : une colonne sur téléphone, autant que la largeur en permet ensuite.
-   `auto-fill` plutôt qu'un nombre fixe de colonnes — c'est la place disponible qui
-   décide, pas une taille d'écran devinée à l'avance. */
-.grille { display: grid; gap: 14px;
-  grid-template-columns: repeat(auto-fill, minmax(20rem, 1fr)); }
-.carte { background: var(--carte); border: 1px solid var(--trait); border-radius: 12px;
-  padding: 16px 17px; display: flex; flex-direction: column; }
-.carte .bas { margin-top: auto; }
-.carte.perime { opacity: .68; border-style: dashed; }
-
-/* ---- pastilles ---- */
-.pastille { display: inline-block; font-size: .8rem; font-weight: 700; padding: 2px 9px;
-  border-radius: 999px; background: #eef1f5; color: #3c454a; }
-.pastille.ok { background: var(--accent-doux); color: var(--accent); }
-.pastille.urgent, .pastille.alerte { background: var(--alerte-doux); color: var(--alerte); }
-.pastille.action { background: var(--attention-doux); color: var(--attention); }
-.tete-carte { display: flex; align-items: center; gap: 8px; flex-wrap: wrap;
-  margin: 0 0 10px; }
-.quand { color: var(--faible); font-size: .84rem; margin: 0 0 8px; }
-.creneau { font-size: 1.16rem; font-weight: 650; margin: 0 0 4px; line-height: 1.35; }
-.raisons { color: var(--doux); font-size: .92rem; margin: 0 0 14px; }
-
-/* ---- actions ---- */
-.actions { display: flex; gap: 9px; }
-.actions form { flex: 1; }
-button { width: 100%; min-height: 46px; font-size: 1rem; font-weight: 650; border: 0;
-  border-radius: 9px; background: var(--accent); color: #fff; cursor: pointer; }
-button:hover { filter: brightness(1.08); }
-button.refus { background: var(--carte); color: var(--alerte);
-  border: 1px solid #e2b5ae; }
-button.discret { background: var(--carte); color: var(--doux);
-  border: 1px solid var(--trait); min-height: 38px; font-size: .9rem; width: auto;
-  padding: 0 13px; }
-details { margin-top: 12px; }
-summary { cursor: pointer; color: var(--doux); font-size: .9rem; min-height: 30px; }
-label { display: block; font-size: .86rem; color: var(--doux); margin: 10px 0 4px; }
-input, select, textarea { width: 100%; min-height: 44px; font-size: 1rem; padding: 0 10px;
-  border: 1px solid #cfd5de; border-radius: 8px; background: var(--carte);
-  color: var(--texte); font-family: inherit; }
-a { color: var(--accent); }
-
-/* ---- états vides : ils doivent RASSURER, pas ressembler à une panne ---- */
-.vide { background: var(--carte); border: 1px dashed var(--trait); border-radius: 12px;
-  padding: 34px 24px; text-align: center; color: var(--doux); }
-.vide .gros { font-size: 1.08rem; color: var(--texte); font-weight: 600;
-  margin: 0 0 6px; }
-.vide p { margin: 0; font-size: .95rem; }
-
-/* ---- divers ---- */
-.perdu { color: var(--alerte); font-size: .9rem; margin: 0; }
-.rappel a { display: inline-block; min-height: 42px; line-height: 42px;
-  font-weight: 650; text-decoration: none; }
-.dit-agent, .dit-client { margin: 5px 0; font-size: .9rem; }
-.dit-agent { color: var(--doux); }
-.filtres { display: flex; flex-wrap: wrap; gap: 7px; margin: 0 0 20px; }
-.filtres a { font-size: .88rem; text-decoration: none; padding: 5px 11px;
-  border: 1px solid var(--trait); border-radius: 999px; background: var(--carte);
-  color: var(--doux); }
-.filtres a.actif { border-color: var(--accent); background: var(--accent-doux);
-  color: var(--accent); font-weight: 650; }
-.support { background: var(--info-doux); color: var(--info);
-  border-bottom: 1px solid #c9d8f0; }
-.support-int { max-width: 74rem; margin: 0 auto; padding: 11px 22px; font-size: .93rem;
-  display: flex; align-items: center; gap: 12px; flex-wrap: wrap; }
-.support form { margin-left: auto; }
-.support button { background: var(--carte); color: var(--info); border: 1px solid #b6c8e8;
-  width: auto; min-height: 34px; font-size: .87rem; padding: 0 12px; }
-.pied { max-width: 74rem; margin: 0 auto; padding: 0 22px 34px; color: var(--faible);
-  font-size: .78rem; letter-spacing: .08em; text-transform: uppercase; }
-
-/* Sur téléphone : une colonne, cibles tactiles plus grandes, et l'en-tête se resserre.
-   C'est le cas du CHANTIER — il ne doit rien perdre à ce que le bureau gagne. */
-@media (max-width: 640px) {
-  .entete-int, .onglets-int, .contenu, .support-int, .pied { padding-left: 15px;
-    padding-right: 15px; }
-  .contenu { padding-top: 18px; }
-  .grille { grid-template-columns: 1fr; }
-  button { min-height: 50px; }
+# 1. **Les polices sont AUTO-HÉBERGÉES** (`/static/polices`). La maquette les charge
+#    depuis `fonts.googleapis.com` ; chaque chargement transmet l'IP du visiteur —
+#    artisan ou client — à un tiers, sur un produit qui manipule des données de
+#    particuliers, et fait dépendre l'affichage d'un CDN joignable depuis un chantier.
+#    Même rendu, même familles (SIL OFL, l'auto-hébergement est explicitement permis).
+#
+# 2. **Pas de JavaScript.** La maquette bascule entre ses six vues par `go(v)` ; ici
+#    chaque vue est une URL et la navigation est faite de liens. Le rendu est
+#    identique, la page reste utilisable sans script, et le bouton « précédent »
+#    fonctionne. Les `<button data-v>` deviennent donc des `<a href>`.
+_STYLE_NELYO = """
+@font-face{font-family:'Instrument Sans';font-style:normal;font-weight:400 600;
+  font-display:swap;src:url(/static/polices/instrument-sans.woff2) format('woff2')}
+@font-face{font-family:'Bricolage Grotesque';font-style:normal;font-weight:500 700;
+  font-display:swap;src:url(/static/polices/bricolage-grotesque.woff2) format('woff2')}
+:root{
+  --marine:#1E3D5C; --marine-deep:#16304A; --marine-soft:#E8EFF5;
+  --cuivre:#C06B45; --cuivre-deep:#A85837; --cuivre-soft:#F7E9E1;
+  --paper:#F3F5F6; --surface:#FFFFFF; --surface-2:#F8FAFB;
+  --ink:#1E2A33; --muted:#5C6B77; --faint:#8B99A4; --line:#DFE6EA;
+  --ok:#2E7D4F; --ok-bg:#E3F0E8; --warn:#A66A12; --warn-bg:#F8EEDC;
+  --crit:#C24A3F; --crit-bg:#F8E6E3;
+  --sidebar:#16304A; --sidebar-ink:#C7D6E4; --sidebar-active:#FFFFFF;
+  --shadow:0 1px 2px rgba(22,48,74,.06),0 4px 16px rgba(22,48,74,.07);
+  --r:10px;
 }
-@media (prefers-color-scheme: dark) {
-  :root { --fond: #10141a; --carte: #1b2027; --trait: #2c3542; --texte: #e8eaed;
-    --doux: #9aa4b2; --faible: #6b7684; --accent: #4bbd7e; --accent-doux: #16311f;
-    --alerte: #f0a99f; --alerte-doux: #3d2320; --attention: #e0c07a;
-    --attention-doux: #3a3322; --info: #a8c4ee; --info-doux: #1c2a40; }
-  .pastille { background: #2c3542; color: #c8d0da; }
-  button.refus { border-color: #5a3a34; }
-  input, select, textarea { border-color: #2c3542; }
-  .support { border-bottom-color: #2a3a55; }
-  .support button { border-color: #35496b; }
+@media (prefers-color-scheme: dark){
+  :root{
+    --marine:#7FA8CC; --marine-deep:#0F2438; --marine-soft:#1D2E3F;
+    --cuivre:#D07E55; --cuivre-deep:#E08B60; --cuivre-soft:#3A2A21;
+    --paper:#10161C; --surface:#18212A; --surface-2:#1D2833;
+    --ink:#E8EDF1; --muted:#9AAAB6; --faint:#6E7E8A; --line:#2A3641;
+    --ok:#5CB483; --ok-bg:#1C3227; --warn:#D9A24A; --warn-bg:#372B16;
+    --crit:#E07A6E; --crit-bg:#3A211E;
+    --sidebar:#0F1B28; --sidebar-ink:#8FA5B8; --sidebar-active:#FFFFFF;
+    --shadow:0 1px 2px rgba(0,0,0,.3),0 4px 16px rgba(0,0,0,.25);
+  }
 }
+*{box-sizing:border-box}
+body{margin:0;background:var(--paper);color:var(--ink);
+  font:400 14.5px/1.5 "Instrument Sans",system-ui,-apple-system,sans-serif}
+h1,h2,h3,.num{font-family:"Bricolage Grotesque","Instrument Sans",system-ui,sans-serif}
+.num{font-variant-numeric:tabular-nums}
+a{color:var(--marine)}
+.app{display:flex;min-height:100vh}
+/* ---------- barre latérale ---------- */
+.side{width:228px;flex:0 0 228px;background:var(--sidebar);color:var(--sidebar-ink);
+  display:flex;flex-direction:column;position:sticky;top:0;height:100vh}
+.logo{display:flex;align-items:center;gap:10px;padding:22px 20px 18px;color:#fff;
+  text-decoration:none}
+.logo-mark{width:32px;height:32px;border-radius:9px;background:var(--cuivre);
+  display:grid;place-items:center;flex:0 0 32px}
+.logo-mark svg{width:18px;height:18px}
+.logo b{font-family:"Bricolage Grotesque";font-size:19px;font-weight:700;
+  letter-spacing:.2px}
+.logo small{display:block;font-size:10.5px;letter-spacing:.08em;text-transform:uppercase;
+  opacity:.65;font-weight:500}
+nav{padding:6px 12px;display:flex;flex-direction:column;gap:2px}
+.nav-item{display:flex;align-items:center;gap:11px;padding:9px 12px;border-radius:8px;
+  color:inherit;text-decoration:none;font:500 14px/1 "Instrument Sans",sans-serif}
+.nav-item svg{width:17px;height:17px;flex:0 0 17px;opacity:.8}
+.nav-item:hover{background:rgba(255,255,255,.07);color:#fff}
+.nav-item.on{background:rgba(255,255,255,.12);color:var(--sidebar-active)}
+.nav-item.on svg{opacity:1}
+.nav-item .cnt{margin-left:auto;background:var(--cuivre);color:#fff;font-size:11px;
+  font-weight:600;border-radius:99px;padding:1px 7px}
+.side-foot{margin-top:auto;padding:14px 16px;border-top:1px solid rgba(255,255,255,.09)}
+.artisan{display:flex;gap:10px;align-items:center}
+.avatar{width:34px;height:34px;border-radius:50%;background:var(--cuivre-soft);
+  color:var(--cuivre);display:grid;place-items:center;font-weight:600;font-size:13px;
+  flex:0 0 34px}
+.side .avatar{background:rgba(255,255,255,.12);color:#fff}
+.artisan b{color:#fff;font-size:13.5px;display:block}
+.artisan span{font-size:11.5px;opacity:.65}
+.side-foot form{margin-top:10px}
+.side-foot button{width:100%;background:none;border:1px solid rgba(255,255,255,.16);
+  color:var(--sidebar-ink);border-radius:8px;padding:6px;font:500 12px "Instrument Sans";
+  cursor:pointer}
+/* ---------- zone principale ---------- */
+.main{flex:1;min-width:0;display:flex;flex-direction:column}
+.topbar{display:flex;align-items:center;gap:14px;padding:14px 28px;
+  background:var(--surface);border-bottom:1px solid var(--line);position:sticky;top:0;
+  z-index:5}
+.topbar h1{font-size:19px;font-weight:600;margin:0}
+.topbar .droite{margin-left:auto;display:flex;align-items:center;gap:10px}
+.content{padding:24px 28px 48px;display:flex;flex-direction:column;gap:20px;
+  max-width:1180px;width:100%;margin:0 auto}
+/* ---------- briques communes ---------- */
+.card{background:var(--surface);border:1px solid var(--line);border-radius:var(--r);
+  box-shadow:var(--shadow)}
+.card-h{display:flex;align-items:center;gap:10px;padding:15px 18px;
+  border-bottom:1px solid var(--line);flex-wrap:wrap}
+.card-h h3{margin:0;font-size:15px;font-weight:600}
+.card-h .sub{color:var(--muted);font-size:12.5px}
+.card-b{padding:18px}
+.pill{display:inline-flex;align-items:center;gap:5px;border-radius:99px;padding:2px 9px;
+  font-size:11.5px;font-weight:600;white-space:nowrap}
+.p-ok{background:var(--ok-bg);color:var(--ok)}
+.p-warn{background:var(--warn-bg);color:var(--warn)}
+.p-crit{background:var(--crit-bg);color:var(--crit)}
+.p-mut{background:var(--surface-2);color:var(--muted);border:1px solid var(--line)}
+.p-marine{background:var(--marine-soft);color:var(--marine)}
+.btn{border:1px solid var(--line);background:var(--surface);color:var(--ink);
+  border-radius:8px;padding:8px 14px;font:600 13px "Instrument Sans",sans-serif;
+  cursor:pointer;text-decoration:none;display:inline-block}
+.btn:hover{background:var(--surface-2)}
+.btn-cu{background:var(--cuivre);border-color:var(--cuivre);color:#fff}
+.btn-cu:hover{background:var(--cuivre-deep);border-color:var(--cuivre-deep)}
+.btn-ghost-crit{color:var(--crit)}
+.chip{display:inline-flex;align-items:center;border:1px solid var(--line);
+  background:var(--surface-2);border-radius:99px;padding:4px 11px;font-size:12.5px;
+  font-weight:500}
+.chip.x{border-style:dashed;color:var(--muted)}
+.grid{display:grid;gap:16px}
+.g4{grid-template-columns:repeat(4,1fr)}
+.g3{grid-template-columns:repeat(3,1fr)}
+.g2{grid-template-columns:repeat(2,1fr)}
+.eyebrow{font-size:11px;letter-spacing:.08em;text-transform:uppercase;
+  color:var(--faint);font-weight:600}
+/* ---------- accueil ---------- */
+.hello h1{font-size:24px;margin:0 0 2px;text-wrap:balance}
+.hello p{margin:0;color:var(--muted)}
+.stat .card-b{display:flex;flex-direction:column;gap:2px;padding:15px 18px}
+.stat .num{font-size:26px;font-weight:700}
+.stat .lbl{color:var(--muted);font-size:12.5px}
+.valid-item{display:flex;gap:14px;padding:14px 18px;border-bottom:1px solid var(--line);
+  align-items:center;flex-wrap:wrap}
+.valid-item:last-child{border-bottom:0}
+.score{width:38px;height:38px;border-radius:9px;display:grid;place-items:center;
+  font:700 14px "Bricolage Grotesque";flex:0 0 38px}
+.s5{background:var(--crit-bg);color:var(--crit)}
+.s4{background:var(--cuivre-soft);color:var(--cuivre)}
+.s3{background:var(--marine-soft);color:var(--marine)}
+.s1{background:var(--surface-2);color:var(--faint)}
+.valid-info{min-width:190px;flex:1}
+.valid-info b{font-size:14.5px}
+.valid-info .d{color:var(--muted);font-size:12.5px}
+.valid-slot{font-weight:600;font-size:13.5px}
+.valid-slot .d{color:var(--muted);font-weight:400;font-size:12px}
+.valid-act{display:flex;gap:8px;margin-left:auto;flex-wrap:wrap}
+.valid-act form{display:inline}
+.feed{list-style:none;margin:0;padding:0}
+.feed li{display:flex;gap:12px;padding:10px 18px;border-bottom:1px solid var(--line);
+  font-size:13.5px;align-items:baseline}
+.feed li:last-child{border-bottom:0}
+.feed time{color:var(--faint);font-size:12px;font-variant-numeric:tabular-nums;
+  flex:0 0 46px}
+.feed .dot{width:7px;height:7px;border-radius:50%;flex:0 0 7px;align-self:center}
+/* ---------- appels ---------- */
+.filters{display:flex;gap:8px;flex-wrap:wrap;align-items:center}
+.fbtn{border:1px solid var(--line);background:var(--surface);border-radius:99px;
+  padding:6px 14px;font:500 13px "Instrument Sans";color:var(--muted);cursor:pointer;
+  text-decoration:none;display:inline-block}
+.fbtn.on{background:var(--marine);border-color:var(--marine);color:#fff}
+table.calls{width:100%;border-collapse:collapse;font-size:13.5px}
+.calls th{font-size:11px;letter-spacing:.07em;text-transform:uppercase;
+  color:var(--faint);text-align:left;padding:11px 14px;
+  border-bottom:1px solid var(--line);font-weight:600}
+.calls td{padding:12px 14px;border-bottom:1px solid var(--line);vertical-align:middle}
+.calls tr:last-child td{border-bottom:0}
+.caller b{display:block}
+.caller span{color:var(--faint);font-size:12px}
+.transcript{background:var(--surface-2);border-top:1px dashed var(--line);
+  padding:16px 18px;display:flex;flex-direction:column;gap:10px}
+.bulle{max-width:520px;padding:8px 13px;border-radius:12px;font-size:13px;
+  line-height:1.45}
+.b-ia{background:var(--marine-soft);color:var(--ink);border-top-left-radius:3px;
+  align-self:flex-start}
+.b-cl{background:var(--surface);border:1px solid var(--line);
+  border-top-right-radius:3px;align-self:flex-end}
+.bulle .who{display:block;font-size:10.5px;letter-spacing:.06em;text-transform:uppercase;
+  color:var(--faint);margin-bottom:2px;font-weight:600}
+details.appel summary{list-style:none;cursor:pointer}
+details.appel summary::-webkit-details-marker{display:none}
+details.horaire summary{list-style:none;cursor:pointer;display:inline-block}
+details.horaire summary::-webkit-details-marker{display:none}
+details.horaire[open]{flex:1 0 100%;order:9}
+details.horaire form{margin-top:10px;max-width:260px}
+details.horaire label{display:block;font-size:12px;color:var(--muted);margin:8px 0 3px}
+details.horaire input{width:100%;min-height:38px;border:1px solid var(--line);
+  border-radius:8px;padding:0 10px;background:var(--surface);color:var(--ink);
+  font:400 13.5px "Instrument Sans",sans-serif}
+/* ---------- états vides et pages à venir ---------- */
+.vide{padding:40px 24px;text-align:center;color:var(--muted)}
+.vide .gros{font-size:16px;color:var(--ink);font-weight:600;margin:0 0 6px;
+  font-family:"Bricolage Grotesque"}
+.vide p{margin:0;font-size:13.5px}
+.aveu{border-left:3px solid var(--warn)}
+.aveu ul{margin:10px 0 0;padding-left:20px;color:var(--muted);font-size:13.5px}
+.aveu li{margin:4px 0}
+/* ---------- bandeau support ---------- */
+.support{background:var(--marine-soft);color:var(--marine);
+  border-bottom:1px solid var(--line);padding:10px 28px;font-size:13px;display:flex;
+  gap:12px;align-items:center;flex-wrap:wrap}
+.support form{margin-left:auto}
+/* ---------- responsive ---------- */
+.mobilebar{display:none}
+@media (max-width:940px){
+  .side{display:none}
+  .topbar{padding:12px 16px}
+  .content{padding:16px 16px 90px}
+  .support{padding:10px 16px}
+  .g4,.g3{grid-template-columns:repeat(2,1fr)}
+  .g2{grid-template-columns:1fr}
+  .valid-act{margin-left:0;width:100%}
+  .calls th:nth-child(4),.calls td:nth-child(4){display:none}
+  .mobilebar{display:flex;position:fixed;bottom:0;left:0;right:0;
+    background:var(--surface);border-top:1px solid var(--line);z-index:20;
+    justify-content:space-around;
+    padding:6px 4px calc(6px + env(safe-area-inset-bottom,0px))}
+  .mobilebar a{border:0;background:none;color:var(--faint);
+    font:500 10px "Instrument Sans";display:flex;flex-direction:column;
+    align-items:center;gap:3px;padding:4px 8px;text-decoration:none}
+  .mobilebar a.on{color:var(--cuivre)}
+  .mobilebar svg{width:19px;height:19px}
+}
+@media (max-width:520px){.g4,.g3{grid-template-columns:1fr}}
 """
 
+# Les icônes de la navigation, reprises de la maquette. En SVG INLINE : ce n'est pas une
+# ressource externe, donc rien à charger et rien à fuiter.
+_ICONES = {
+    "accueil": '<path d="M3 11 12 4l9 7"/><path d="M5 10v10h14V10"/>',
+    "appels": ('<path d="M5 4h4l2 5-2.5 1.5a12 12 0 0 0 5 5L15 13l5 2v4a2 2 0 0 1-2 2A16'
+               ' 16 0 0 1 3 6a2 2 0 0 1 2-2z"/>'),
+    "agenda": ('<rect x="3" y="5" width="18" height="16" rx="2"/>'
+               '<path d="M8 3v4M16 3v4M3 10h18"/>'),
+    "stats": '<path d="M4 20V10M10 20V4M16 20v-7M21 20H3"/>',
+    "ia": ('<circle cx="12" cy="12" r="3"/><path d="M12 2v3M12 19v3M2 12h3M19 12h3'
+           'M4.9 4.9l2.1 2.1M17 17l2.1 2.1M19.1 4.9 17 7M7 17l-2.1 2.1"/>'),
+    "factu": ('<rect x="3" y="6" width="18" height="13" rx="2"/>'
+              '<path d="M3 10h18M7 15h4"/>'),
+}
 
-def _page_espace(produit: str, titre: str, corps: str, *, entreprise: str = "",
-                 prenom: str = "", onglet: str = "", a_valider: int = 0,
-                 vue_admin: str = "") -> str:
-    """L'enveloppe de l'espace artisan : en-tête, onglets, contenu.
+# La navigation de la maquette, telle quelle : six entrées, dans le même ordre.
+# `/app` est l'accueil ; les autres ont leur propre URL, puisqu'il n'y a pas de JS pour
+# basculer entre des sections cachées.
+_NAV = [
+    ("accueil", "Aujourd'hui", "/app"),
+    ("appels", "Appels", "/app/appels"),
+    ("agenda", "Agenda", "/app/agenda"),
+    ("stats", "Statistiques", "/app/stats"),
+    ("ia", "Assistant IA", "/app/assistant"),
+    ("factu", "Facturation", "/app/facturation"),
+]
+_TITRES = {c: t for c, t, _ in _NAV}
 
-    L'ONGLET ACTIF EST UN PARAMÈTRE, pas une déduction faite dans le gabarit : la page
-    sait où elle est, l'enveloppe n'a pas à le redeviner en lisant une URL.
 
-    Le compteur « à valider » vit dans les onglets et pas seulement sur la page des RDV.
-    C'est le seul chiffre qui appelle une action, et l'artisan doit le voir depuis
-    n'importe quel écran — sinon il faut y aller pour savoir s'il faut y aller.
+def _svg(cle: str, taille: int = 17) -> str:
+    return (f'<svg viewBox="0 0 24 24" width="{taille}" height="{taille}" fill="none" '
+            f'stroke="currentColor" stroke-width="2" stroke-linecap="round">'
+            f'{_ICONES[cle]}</svg>')
+
+
+def _initiales(nom: str) -> str:
+    """« Dupont Chauffage » → « DC ». Deux lettres, jamais plus."""
+    mots = [m for m in (nom or "").replace("-", " ").split() if m]
+    return ("".join(m[0] for m in mots[:2]) or "?").upper()
+
+
+def _page_nelyo(produit: str, vue: str, corps: str, *, entreprise: str = "",
+                prenom: str = "", commune: str = "", a_valider: int = 0,
+                vue_admin: str = "", titre: str = "") -> str:
+    """L'enveloppe de l'espace artisan : barre latérale, barre du haut, contenu.
+
+    Reprend la structure de la maquette — `.app > .side + .main > .topbar + .content` —
+    avec la barre du bas sur mobile. La VUE ACTIVE est un paramètre : la page sait où
+    elle est, l'enveloppe n'a pas à le redeviner en lisant une URL.
+
+    Le compteur « à valider » vit dans la navigation et pas seulement sur l'accueil :
+    c'est le seul chiffre qui appelle une action, et il doit se voir depuis n'importe
+    quel écran — sinon il faut y aller pour savoir s'il faut y aller.
     """
     bandeau = ""
     if vue_admin:
         bandeau = (
-            '<div class="support"><div class="support-int">'
+            '<div class="support">'
             "<span><b>Mode support — lecture seule.</b> Vous regardez l&#x27;espace de "
             + escape(vue_admin) + " ; aucune action n&#x27;est possible d&#x27;ici."
             "</span>"
             '<form method="post" action="/admin/vue/fin">'
-            '<button type="submit">Revenir à l&#x27;administration</button></form>'
-            "</div></div>")
+            '<button class="btn" type="submit">Revenir à l&#x27;administration</button>'
+            "</form></div>")
 
-    def lien(href: str, texte: str, cle: str, compte: int = 0) -> str:
-        pastille = (f'<span class="compte">{compte}</span>' if compte else "")
-        actif = " class=\"actif\"" if onglet == cle else ""
-        return f'<a href="{href}"{actif}>{texte}{pastille}</a>'
+    liens = "".join(
+        '<a class="nav-item{}" href="{}">{}{}{}</a>'.format(
+            " on" if cle == vue else "", href, _svg(cle), escape(libelle),
+            f'<span class="cnt">{a_valider}</span>'
+            if (cle == "accueil" and a_valider) else "")
+        for cle, libelle, href in _NAV)
+    barre_mobile = "".join(
+        '<a class="{}" href="{}">{}{}</a>'.format(
+            "on" if cle == vue else "", href, _svg(cle, 19),
+            escape("Accueil" if cle == "accueil" else libelle.split()[0]))
+        for cle, libelle, href in _NAV)
 
-    identite = ""
-    if entreprise:
-        identite = ('<span class="qui"><b>' + escape(entreprise) + "</b>"
-                    + (" · " + escape(prenom) if prenom else "") + "</span>")
-    deconnexion = ""
-    if not vue_admin:
-        deconnexion = ('<span class="pousse">'
-                       '<form method="post" action="/deconnexion">'
-                       '<button class="quitter" type="submit">Se déconnecter</button>'
-                       "</form></span>")
+    ini = _initiales(entreprise or prenom)
+    pied_lateral = (
+        '<div class="side-foot"><div class="artisan">'
+        f'<span class="avatar">{escape(ini)}</span>'
+        f"<div><b>{escape(entreprise or '—')}</b>"
+        f"<span>{escape(prenom)}{' · ' + escape(commune) if commune else ''}</span>"
+        "</div></div>"
+        + ("" if vue_admin else
+           '<form method="post" action="/deconnexion">'
+           '<button type="submit">Se déconnecter</button></form>')
+        + "</div>")
+
     return (
         "<!DOCTYPE html>\n"
         '<html lang="fr"><head><meta charset="utf-8">'
         '<meta name="viewport" content="width=device-width, initial-scale=1">'
         '<meta name="robots" content="noindex, nofollow">'
-        f"<title>{escape(titre)} · {escape(produit)}</title>"
-        f"<style>{_STYLE_ESPACE}</style></head><body>"
+        f"<title>{escape(titre or _TITRES.get(vue, ''))} · {escape(produit)}</title>"
+        f"<style>{_STYLE_NELYO}</style></head><body>"
         + bandeau
-        + '<header class="entete"><div class="entete-int">'
-        + f'<a class="logo" href="/app">{escape(produit)}</a>'
-        + identite + deconnexion
-        + "</div></header>"
-        + '<nav class="onglets"><div class="onglets-int">'
-        + lien("/app", "Rendez-vous à valider", "rdv", a_valider)
-        + lien("/app/appels", "Mes appels", "appels")
-        + "</div></nav>"
-        + f'<main class="contenu">{corps}</main>'
-        + f'<p class="pied">{escape(produit)}</p>'
+        + '<div class="app"><aside class="side">'
+        + '<a class="logo" href="/app"><span class="logo-mark">'
+          '<svg viewBox="0 0 24 24" fill="none" stroke="#fff" stroke-width="2.2" '
+          'stroke-linecap="round"><path d="M5 4v6a7 7 0 0 0 14 0V4"/>'
+          '<path d="M12 17v3"/></svg></span>'
+        + f"<div><b>{escape(produit)}</b><small>Ne ratez plus rien</small></div></a>"
+        + f"<nav>{liens}</nav>{pied_lateral}</aside>"
+        + '<div class="main"><header class="topbar">'
+        + f"<h1>{escape(titre or _TITRES.get(vue, ''))}</h1>"
+        + f'<div class="droite"><span class="avatar" style="width:32px;height:32px;'
+          f'font-size:12px">{escape(ini)}</span></div></header>'
+        + f'<div class="content">{corps}</div></div></div>'
+        + f'<nav class="mobilebar">{barre_mobile}</nav>'
         + "</body></html>")
 
 
-# Ce que chaque catégorie VEUT DIRE à l'artisan, et ce qu'il peut en faire. Vocabulaire
-# fermé, aligné sur `engine.py` — une catégorie inconnue s'affiche telle quelle plutôt
-# que d'être masquée : mieux vaut un libellé brut qu'un appel escamoté.
+# Le SCORE a sa classe de couleur dans la maquette (`.s5` rouge, `.s4` cuivre,
+# `.s3` marine, `.s1` gris). Elle porte du sens : plus c'est chaud, plus ça presse.
+def _classe_score(score: int) -> str:
+    return {5: "s5", 4: "s4", 3: "s3"}.get(int(score or 0), "s1")
+
+
+# Ce que chaque catégorie VEUT DIRE, et la pastille de la maquette qui lui va.
+# Vocabulaire fermé, aligné sur `engine.py` — une catégorie inconnue s'affiche telle
+# quelle plutôt que d'être masquée : mieux vaut un libellé brut qu'un appel escamoté.
 #
 # R79 appliqué à l'écran : « une catégorie doit dire à l'artisan ce qu'il peut FAIRE ».
-# La teinte n'est pas décorative — elle sépare ce sur quoi il peut agir de ce qui est
-# clos. D'où l'absence de bouton d'appel sur `injoignable` : c'est précisément la
-# catégorie où il n'y a PAS de numéro.
+# La teinte sépare ce sur quoi il peut agir de ce qui est clos.
 _CATEGORIES = {
-    "rdv_reserve":    ("RDV réservé", "ok"),
-    "prioritaire":    ("À rappeler — urgent", "urgent"),
-    "a_rappeler":     ("À rappeler", "action"),
-    "injoignable":    ("Sans numéro", ""),
-    "hors_zone":      ("Hors zone", ""),
-    "hors_perimetre": ("Hors prestations", ""),
-    "spam":           ("Indésirable", ""),
-    "appel_muet":     ("Appel muet", ""),
-    "autre":          ("Autre", ""),
+    "rdv_reserve":    ("RDV réservé", "p-ok"),
+    "prioritaire":    ("Prioritaire", "p-crit"),
+    "a_rappeler":     ("À rappeler", "p-marine"),
+    "injoignable":    ("Sans numéro", "p-mut"),
+    "hors_zone":      ("Hors zone", "p-mut"),
+    "hors_perimetre": ("Hors prestations", "p-mut"),
+    "spam":           ("Indésirable", "p-mut"),
+    "appel_muet":     ("Appel muet", "p-mut"),
+    "autre":          ("Autre", "p-mut"),
 }
 
 
-def boite_validation(produit: str, prenom: str, rdvs: list[dict],
-                     vue_admin: str = "", entreprise: str = "") -> str:
-    """LA fonction produit : les rendez-vous à valider.
+def accueil(produit: str, prenom: str, entreprise: str, rdvs: list[dict],
+            chiffres: list[tuple], activite: list[dict], salutation: str = "",
+            commune: str = "", vue_admin: str = "") -> str:
+    """« Aujourd'hui » : ce qui attend une décision, puis ce qui s'est passé.
 
-    Sans JavaScript : chaque action est un formulaire qui poste puis redirige. Les champs
-    de date et d'heure utilisent les types natifs, donc le sélecteur du téléphone — c'est
-    précisément là qu'un composant maison serait pire que le natif.
+    LA MAQUETTE PORTE DEUX BLOCS QUE JE N'AI PAS REPRIS, et c'est délibéré : le bandeau
+    « CA récupéré ce mois — 4 850 € × 32 votre abonnement », et les deltas des tuiles
+    (« +18 % vs août », « 38 % de conversion »). Le produit ne sait NI ce qu'un chantier
+    a rapporté, NI s'il a été signé : il s'arrête au rendez-vous validé. Les afficher
+    demanderait de les inventer, et une interface qui affirme un chiffre le fait avec
+    son autorité (R79/R85). Ils reviendront le jour où l'artisan pourra saisir le
+    montant d'un chantier — c'est une fonctionnalité, pas un calcul.
 
-    Les RDV encore décidables d'abord, le plus pressé en tête ; les échus ensuite, à titre
-    d'information. L'artisan doit voir en haut ce sur quoi il peut agir.
+    Les tuiles affichées, elles, sont comptées sur de vraies lignes.
     """
-    a_decider = sum(1 for r in rdvs if not r["echu"])
-    enveloppe = lambda corps, titre: _page_espace(  # noqa: E731
-        produit, titre, corps, entreprise=entreprise, prenom=prenom,
-        onglet="rdv", a_valider=a_decider, vue_admin=vue_admin)
+    a_valider = sum(1 for r in rdvs if not r["echu"])
+    corps = [
+        '<div class="hello">'
+        f"<h1>Bonjour {escape(prenom)}</h1>"
+        f"<p>{salutation}</p></div>"]
 
-    if not rdvs:
-        return enveloppe(
-            "<h1>Rendez-vous à valider</h1>"
-            '<p class="sous-titre">Ce que votre agent a réservé et qui attend votre '
-            "accord.</p>"
-            '<div class="vide"><p class="gros">Rien à valider.</p>'
+    if rdvs:
+        lignes = []
+        for r in rdvs:
+            if r["echu"]:
+                # Pas de boutons : le délai est passé, le domaine refuserait la
+                # décision. Afficher une action qui ne peut qu'échouer serait mentir ;
+                # la masquer serait pire, l'artisan doit savoir qu'il a laissé filer un
+                # lead. ON NE DIT PAS « le client est prévenu » (R85) : le SMS part du
+                # WORKER, et cette page ne sait pas s'il a tourné.
+                acte = ('<span class="pill p-mut">Délai dépassé — créneau libéré</span>'
+                        '<div class="d" style="width:100%;color:var(--muted);font-size:12.5px;margin-top:6px">'
+                        "Rappelez le client si vous voulez le récupérer.</div>")
+            elif vue_admin:
+                acte = ('<span class="pill p-mut">Décision réservée à '
+                        "l&#x27;artisan</span>")
+            else:
+                # TROIS actions, comme dans la maquette. « Modifier l'horaire »
+                # ouvre un `<details>` natif : la reproposition est une fonction
+                # entière du produit (nouveau créneau, SMS au client, lien de
+                # confirmation) — l'oublier ici la ferait disparaître de l'écran
+                # alors qu'elle existe côté serveur. R85 l'a rattrapée.
+                ident = escape(r["id"])
+                acte = (
+                    '<div class="valid-act">'
+                    f'<form method="post" action="/app/{ident}/valider">'
+                    '<button class="btn btn-cu" type="submit">Valider</button></form>'
+                    f'<details class="horaire"><summary class="btn">'
+                    "Modifier l&#x27;horaire</summary>"
+                    f'<form method="post" action="/app/{ident}/reproposer">'
+                    '<label>Date</label><input type="date" name="date" required>'
+                    '<label>De</label><input type="time" name="de" required>'
+                    '<label>À</label><input type="time" name="a" required>'
+                    '<button class="btn btn-cu" type="submit" '
+                    'style="margin-top:10px">Envoyer au client</button>'
+                    "</form></details>"
+                    f'<form method="post" action="/app/{ident}/refuser">'
+                    '<button class="btn btn-ghost-crit" type="submit">Refuser</button>'
+                    "</form></div>")
+            reste = ""
+            if not r["echu"] and r.get("expire_dans"):
+                teinte = "p-crit" if r["expire_minutes"] < 60 else "p-warn"
+                reste = (f'<span class="pill {teinte}">expire dans '
+                         f'{escape(r["expire_dans"])}</span>')
+            lignes.append(
+                '<div class="valid-item">'
+                f'<span class="score {_classe_score(r["score"])}">{r["score"]}</span>'
+                f'<div class="valid-info"><b>{escape(r["client"])}</b>'
+                f'{" · " + escape(r["telephone_lisible"]) if r["telephone"] else ""}'
+                f'<div class="d">{escape(r["motif"])}</div></div>'
+                f'<div class="valid-slot">{escape(r["creneau"])}'
+                '<div class="d">Créneau réservé par l&#x27;assistant</div></div>'
+                f"{reste}{acte}</div>")
+        corps.append(
+            '<div class="card" style="border-left:3px solid var(--cuivre)">'
+            '<div class="card-h"><h3>À valider</h3>'
+            f'<span class="pill p-warn">{a_valider} rendez-vous en attente</span>'
+            '<span class="sub" style="margin-left:auto">Le client reçoit un SMS dès '
+            "votre décision</span></div>"
+            + "".join(lignes) + "</div>")
+    else:
+        corps.append(
+            '<div class="card"><div class="vide">'
+            '<p class="gros">Rien à valider.</p>'
             "<p>Tout est à jour. Les appels reçus restent consultables dans "
-            '<a href="/app/appels">Mes appels</a>.</p></div>',
-            "Rien à valider")
+            '<a href="/app/appels">Appels</a>.</p></div></div>')
 
-    blocs = []
-    for r in sorted(rdvs, key=lambda x: (x["echu"], x["expire_a"])):
-        ident = escape(r["id"])
-        pastilles = [f'<span class="pastille{" urgent" if r["urgence"] else ""}">'
-                     f'{r["score"]}/5{" URGENCE" if r["urgence"] else ""}</span>']
-        if r["echu"]:
-            pastilles.append('<span class="pastille alerte">Délai dépassé</span>')
-        if r["echu"]:
-            # Pas de boutons : le délai est passé, le domaine refuserait toute décision.
-            # Afficher des actions qui ne peuvent qu'échouer serait mentir à l'artisan —
-            # mais le masquer serait pire : il doit savoir qu'il a laissé filer un lead.
-            # ON NE DIT PAS « le client est prévenu » (R85). Le SMS d'expiration est mis
-            # en file par le WORKER, et cette page ne sait pas s'il a tourné : le 09/09,
-            # quatre RDV traînaient depuis des jours avec cette phrase à l'écran alors
-            # qu'aucun client n'avait rien reçu. Même faute que R79 dans `_sans_rdv`.
-            #
-            # Ce qui est SÛR se dit quand même : le délai est passé, le créneau est rendu,
-            # et rappeler reste possible.
-            actions = ('<p class="perdu">Le créneau est libéré. Rappelez le client si '
-                       "vous voulez le récupérer.</p>")
-        elif vue_admin:
-            # MODE SUPPORT : les actions ne sont pas désactivées, elles sont ABSENTES.
-            # Un bouton grisé invite à cliquer et laisse croire à une panne ; et de toute
-            # façon le serveur refuserait — l'identité d'emprunt n'existe pas sur le
-            # chemin des actions. Ce qui s'affiche doit dire ce que le serveur ferait.
-            actions = '<p class="raisons">Décision réservée à l&#x27;artisan.</p>'
-        else:
-            actions = (
-                '<div class="actions">'
-                f'<form method="post" action="/app/{ident}/valider">'
-                '<button type="submit">Valider</button></form>'
-                f'<form method="post" action="/app/{ident}/refuser">'
-                '<button type="submit" class="refus">Refuser</button></form>'
-                "</div>"
-                "<details><summary>Proposer un autre créneau</summary>"
-                f'<form method="post" action="/app/{ident}/reproposer">'
-                '<label>Date</label><input type="date" name="date" required>'
-                '<label>De</label><input type="time" name="de" required>'
-                '<label>À</label><input type="time" name="a" required>'
-                '<label></label><button type="submit">Envoyer au client</button>'
-                "</form></details>")
-        blocs.append(
-            f'<div class="carte{" perime" if r["echu"] else ""}">'
-            f'<div class="tete-carte">{"".join(pastilles)}</div>'
-            f'<p class="creneau">{escape(r["creneau"])}</p>'
-            f'<p class="raisons">{escape(" · ".join(r["raisons"])) if r["raisons"] else ""}</p>'
-            f'<div class="bas">{actions}</div></div>')
+    if chiffres:
+        tuiles = "".join(
+            f'<div class="card stat"><div class="card-b">'
+            f'<span class="num">{n}</span><span class="lbl">{escape(libelle)}</span>'
+            f"</div></div>"
+            for libelle, n in chiffres)
+        corps.append(f'<div class="grid g4">{tuiles}</div>')
 
-    titre = f"{a_decider} à valider" if a_decider else "Rien à valider"
-    sous = ("Validez ou refusez : le client reçoit un SMS dès votre décision."
-            if a_decider else "Plus rien à décider — ce qui suit est passé.")
-    return enveloppe(
-        "<h1>Rendez-vous à valider</h1>"
-        f'<p class="sous-titre">{sous}</p>'
-        f'<div class="grille">{"".join(blocs)}</div>',
-        titre)
+    if activite:
+        items = "".join(
+            f'<li><time>{escape(a["heure"])}</time>'
+            f'<span class="dot" style="background:var(--{a["couleur"]})"></span>'
+            f'<span><b>{escape(a["titre"])}</b> — {escape(a["detail"])}</span></li>'
+            for a in activite)
+        corps.append(
+            '<div class="card"><div class="card-h"><h3>Activité récente</h3></div>'
+            f'<ul class="feed">{items}</ul></div>')
+
+    return _page_nelyo(produit, "accueil", "".join(corps), entreprise=entreprise,
+                       prenom=prenom, commune=commune, a_valider=a_valider,
+                       vue_admin=vue_admin)
 
 
 def liste_appels(produit: str, prenom: str, appels: list[dict],
                  filtres: list[tuple] = (), vue_admin: str = "",
-                 entreprise: str = "", a_valider: int = 0,
-                 categorie: str = "") -> str:
-    """« Mes appels » : ce que l'agent a répondu, RDV ou pas.
+                 entreprise: str = "", a_valider: int = 0, categorie: str = "",
+                 commune: str = "") -> str:
+    """« Appels » : tout ce que l'agent a pris, avec ou sans rendez-vous.
 
-    Ajoutée le 21/09 parce qu'il manquait la moitié de la promesse produit. `/app` ne
-    montrait que les RDV à valider ; un appel qui n'aboutissait pas — un client hors
-    zone, un client à rappeler, un numéro jamais obtenu — était capté, scoré, stocké, et
-    vu par personne.
+    La maquette met le transcript dans un panneau qui s'ouvre sous la ligne cliquée.
+    Ici c'est un `<details>` natif : même geste, même rendu, et ça marche sans script.
 
-    Sans JavaScript, comme le reste : les filtres sont des LIENS (un GET par catégorie),
-    le transcript un `<details>` natif. Un filtre qui recharge la page est plus lent
-    qu'un filtre en JS ; il est aussi lisible sans script, compatible avec le bouton
-    « précédent », et partageable par son URL.
+    Les filtres sont des LIENS (un GET par catégorie). Plus lent qu'un filtre en JS,
+    mais lisible sans script, compatible avec le bouton « précédent », et partageable
+    par son URL — sur quelques dizaines de lignes, l'échange est franchement favorable.
     """
-    enveloppe = lambda corps, titre: _page_espace(  # noqa: E731
-        produit, titre, corps, entreprise=entreprise, prenom=prenom,
-        onglet="appels", a_valider=a_valider, vue_admin=vue_admin)
+    enveloppe = lambda corps: _page_nelyo(  # noqa: E731
+        produit, "appels", corps, entreprise=entreprise, prenom=prenom,
+        commune=commune, a_valider=a_valider, vue_admin=vue_admin)
 
-    # Les filtres disent COMBIEN : un filtre qui mène à une page vide est une déception
-    # qu'on peut éviter AVANT le clic. Ils s'affichent aussi sur une liste vide — c'est
-    # là qu'ils sont le plus utiles, puisqu'ils disent où sont les appels manquants.
-    liens = "".join(
-        '<a href="/app/appels{}"{}>{} ({})</a>'.format(
-            "" if c is None else "?categorie=" + c,
-            ' class="actif"' if (c or "") == categorie else "",
-            escape(nom), n)
-        for c, nom, n in filtres)
-    barre = f'<div class="filtres">{liens}</div>' if filtres else ""
+    barre = ""
+    if filtres:
+        barre = '<div class="filters">' + "".join(
+            '<a class="fbtn{}" href="/app/appels{}">{} <b>{}</b></a>'.format(
+                " on" if (c or "") == categorie else "",
+                "" if c is None else "?categorie=" + c, escape(nom), n)
+            for c, nom, n in filtres) + "</div>"
 
     if not appels:
         return enveloppe(
-            "<h1>Mes appels</h1>"
-            '<p class="sous-titre">Tout ce que votre agent a pris, avec ou sans '
-            "rendez-vous.</p>" + barre +
-            '<div class="vide"><p class="gros">Aucun appel ici.</p>'
-            "<p>Dès qu&#x27;un client appellera, vous verrez ce qu&#x27;il a demandé "
-            "et pourrez le rappeler d&#x27;un tap.</p></div>",
-            "Mes appels")
+            barre + '<div class="card"><div class="vide">'
+            '<p class="gros">Aucun appel ici.</p>'
+            "<p>Dès qu&#x27;un client appellera, vous verrez ce qu&#x27;il a demandé, "
+            "ce que l&#x27;assistant a répondu, et vous pourrez le rappeler d&#x27;un "
+            "tap.</p></div></div>")
 
-    blocs = []
+    lignes = []
     for a in appels:
-        libelle, teinte = _CATEGORIES.get(a["categorie"], (a["categorie"], ""))
-        urgent = " urgent" if a["urgence"] else ""
-        # Le numéro est la SEULE action possible depuis cette page, et c'est un lien
-        # `tel:` : sur le téléphone de l'artisan, un tap suffit. Rien ne s'affiche quand
-        # il n'y en a pas — R79 porté à l'écran : une catégorie doit dire ce qu'on peut
-        # FAIRE, et « Rappeler » sans numéro envoie chercher un téléphone inexistant.
+        libelle, teinte = _CATEGORIES.get(a["categorie"], (a["categorie"], "p-mut"))
+        tel = (f'<span>{escape(a["telephone_lisible"])}</span>'
+               if a["telephone"] else '<span>—</span>')
+        rang = (
+            '<tr><td class="num">{}</td>'
+            '<td class="caller"><b>{}</b>{}</td>'
+            "<td>{}</td><td>{}</td>"
+            '<td><span class="score {}" style="width:30px;height:30px">{}</span></td>'
+            '<td class="num">{}</td>'
+            '<td><span class="pill {}">{}</span></td></tr>'
+        ).format(escape(a["heure"]), escape(a["client"]), tel, escape(a["motif"]),
+                 escape(a["commune"]), _classe_score(a["score"]), a["score"],
+                 escape(a["duree"]), teinte, escape(libelle))
+        bulles = "".join(
+            '<div class="bulle {}"><span class="who">{}</span>{}</div>'.format(
+                "b-ia" if qui == "agent" else "b-cl",
+                "Assistant " + escape(produit) if qui == "agent" else "Client",
+                escape(texte))
+            for qui, texte in a["transcript"])
+        rappel = ""
         if a["telephone"]:
-            action = ('<p class="rappel"><a href="tel:' + escape(a["telephone"]) + '">'
-                      "Rappeler " + escape(a["telephone_lisible"]) + "</a></p>")
+            rappel = ('<div><a class="btn btn-cu" href="tel:'
+                      + escape(a["telephone"]) + '">Rappeler '
+                      + escape(a["telephone_lisible"]) + "</a></div>")
         else:
-            action = ('<p class="perdu">Aucun numéro recueilli — '
-                      "ce client n&#x27;est pas rappelable.</p>")
+            rappel = ('<div><span class="pill p-mut">Aucun numéro recueilli — '
+                      "ce client n&#x27;est pas rappelable</span></div>")
         detail = ""
         if a["transcript"]:
-            lignes = "".join(
-                '<p class="{}"><b>{}</b> {}</p>'.format(
-                    "dit-agent" if qui == "agent" else "dit-client",
-                    "Agent" if qui == "agent" else "Client", escape(texte))
-                for qui, texte in a["transcript"])
-            detail = ("<details><summary>Voir la conversation ("
-                      + str(len(a["transcript"])) + " tours)</summary>"
-                      + lignes + "</details>")
-        blocs.append(
-            '<div class="carte">'
-            + f'<p class="quand">{escape(a["quand"])}</p>'
-            + f'<div class="tete-carte"><span class="pastille{urgent}">'
-              f'{a["score"]}/5</span>'
-            + f'<span class="pastille {teinte}">{escape(libelle)}</span></div>'
-            + f'<p class="creneau">{escape(a["resume"])}</p>'
-            + f'<div class="bas">{action}{detail}</div></div>')
+            detail = (
+                '<details class="appel"><summary><table class="calls">'
+                f"<tbody>{rang}</tbody></table></summary>"
+                f'<div class="transcript"><span class="eyebrow">Transcript — '
+                f'{escape(a["client"])} · {escape(a["heure"])}</span>'
+                f"{bulles}{rappel}</div></details>")
+        else:
+            detail = f'<table class="calls"><tbody>{rang}</tbody></table>'
+        lignes.append(detail)
 
+    entete = ('<table class="calls"><thead><tr><th>Heure</th><th>Appelant</th>'
+              "<th>Motif</th><th>Commune</th><th>Score</th><th>Durée</th>"
+              "<th>Issue</th></tr></thead></table>")
     return enveloppe(
-        "<h1>Mes appels</h1>"
-        '<p class="sous-titre">Tout ce que votre agent a pris, avec ou sans '
-        "rendez-vous.</p>" + barre
-        + f'<div class="grille">{"".join(blocs)}</div>',
-        "Mes appels")
+        barre + '<div class="card" style="overflow-x:auto">'
+        + entete + "".join(lignes) + "</div>")
+
+
+def page_a_venir(produit: str, vue: str, entreprise: str, prenom: str,
+                 manque: list[str], a_valider: int = 0, commune: str = "",
+                 vue_admin: str = "") -> str:
+    """Une vue de la maquette qui n'a pas encore ses données.
+
+    ELLE DIT CE QU'IL MANQUE, précisément, plutôt que « bientôt ». Une page qui promet
+    sans dire quoi ni pourquoi est une page qu'on revisite pour rien — et, sur un outil
+    qu'un artisan paie, une promesse vague se retient comme un engagement. Dire « il
+    faut d'abord brancher un agenda » est vérifiable ; « prochainement » ne l'est pas.
+    """
+    points = "".join(f"<li>{escape(m)}</li>" for m in manque)
+    return _page_nelyo(
+        produit, vue,
+        '<div class="card aveu"><div class="card-b">'
+        f'<p class="eyebrow">Pas encore disponible</p>'
+        f"<h3 style=\"margin:6px 0 0\">{escape(_TITRES[vue])}</h3>"
+        "<p style=\"color:var(--muted);margin:8px 0 0;font-size:13.5px\">"
+        "Cet écran existe dans la maquette du produit. Il n&#x27;affiche rien pour "
+        "l&#x27;instant parce qu&#x27;il demande des données que " + escape(produit)
+        + " ne possède pas encore — et afficher des chiffres inventés serait pire "
+          "que de ne rien afficher.</p>"
+        f"<ul>{points}</ul></div></div>",
+        entreprise=entreprise, prenom=prenom, commune=commune,
+        a_valider=a_valider, vue_admin=vue_admin)

@@ -317,13 +317,13 @@ class DepotPostgres:
     # une seule projection pour les deux lectures de lead : `debut_a` vient de la
     # jointure et doit être renseigné PARTOUT, sinon le champ devient un piège
     # (cf. le commentaire du dataclass `Lead`).
-    _COLS_LEAD = ("l.id, l.appel_id, l.artisan_id, l.donnees, a.debut_a "
+    _COLS_LEAD = ("l.id, l.appel_id, l.artisan_id, l.donnees, a.debut_a, a.fin_a "
                   "from lead l join appel a on a.id = l.appel_id")
 
     @staticmethod
     def _lead_de_ligne(l) -> Lead:
         return Lead(id=str(l[0]), appel_id=str(l[1]), artisan_id=l[2],
-                    donnees=l[3], debut_a=l[4])
+                    donnees=l[3], debut_a=l[4], fin_a=l[5])
 
     def lead(self, lead_id: str) -> Lead:
         lead_id = self._uuid(lead_id, lead_id)

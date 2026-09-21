@@ -148,6 +148,9 @@ def verifier(fabrique, cfg: dict) -> list[str]:
            "cloturer_appel : l'appel ne pointe pas sur son lead")
     exiger(_json_natif(depot.lead(lead.id).donnees) == _json_natif(donnees),
            "lead : les données ne font pas l'aller-retour")
+    exiger(depot.lead(lead.id).fin_a == LUNDI_9H,
+           f"lead : fin_a (donc la durée de l'appel) n'est pas rendue "
+           f"({depot.lead(lead.id).fin_a!r})")
     exiger(depot.lead(lead.id).debut_a == LUNDI_9H,
            f"lead : debut_a doit TOUJOURS être renseigné, par jointure "
            f"({depot.lead(lead.id).debut_a!r}) — un champ parfois vide est un piège")
