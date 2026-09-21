@@ -16,14 +16,14 @@ Le produit s'appelle **NELYO** et **il tourne en ligne** :
 <https://nelyo-api.onrender.com>, cron compris, sur une base de production séparée.
 Depuis le 21/09 **un artisan s'inscrit sans commit ni redéploiement** : sa config vit en
 base et s'édite dans `/admin`. La compréhension est au LLM sous contrat fermé, mesurée à
-**68/70** au banc d'extraction et **57/57** en éval réelle ×3 ; **100 tests** de
+**68/70** au banc d'extraction et **57/57** en éval réelle ×3 ; **102 tests** de
 non-régression. Il reste **un seul mur** : aucun numéro n'est joignable depuis la France.
 
 ## Ce qui tourne (rejoué le 21/09)
 
 ```bash
 cd proto
-python run_scenario.py                              # 100 tests, ~3 s — sans clé NI BASE (R93)
+python run_scenario.py                              # 102 tests, ~3 s — sans clé NI BASE (R93)
 python run_extract_eval.py [--mock] [--only …]      # banc d'EXTRACTION : 68/70, p50 1131 ms
 python run_llm_eval.py [--mock] [--n 3]             # éval appelant-simulé (19 personas)
 python run_depot_pg.py [--migrer]                   # contrat du port contre Supabase
@@ -84,7 +84,9 @@ pause** (DNS qui ne résout plus, pooler qui répond `tenant/user not found`). B
 | **Entrée téléphonique depuis la France** | ❌ | **numéro Vapi gratuit = appels nationaux US** (R81) |
 | **Onboarding : page d'admin, config éditable** | ✅ **21/09** | T13 + 2 mutations, et parcours réel en production |
 | **Config en base + instantané sur l'appel** | ✅ **21/09** | migrations 011/012, vérifiées contre la prod |
-| **Tableau de bord, facturation, agenda, site** | ❌ | rien de commencé |
+| **Mode support : l'admin voit l'espace d'un artisan** | ✅ **21/09** | T14 + 2 mutations ; lecture seule STRUCTURELLE |
+| **Espace artisan : vrai site, pas une carte client** | 🟡 **21/09** | en-tête, onglets, grille responsive — Geoffrey fait un mockup pour la suite |
+| **Tableau de bord, facturation, agenda, site vitrine** | ❌ | rien de commencé |
 | Éval LLM réelle, 19 personas × 3 | ✅ 57/57 le 09/09 | à rejouer après R94 |
 
 ## Le fait structurant de la période (01–02/09) : le curseur a bougé
@@ -173,6 +175,14 @@ correcte, trois lignes au-dessus du code qui la contredisait.
   se lister à la main — une liste écrite à la main vieillit en silence.
 - **L'ADMIN est un sujet distinct de l'artisan** : sa table, sa session, son cookie, son
   mot de passe. Ce n'est pas un client du produit, c'est celui qui le tient.
+- **Le mode support est en LECTURE SEULE, et structurellement** (T14) : l'identité
+  d'emprunt n'entre pas dans `artisan_authentifie`. Le refus ne vient pas d'une
+  vérification qu'on pourrait oublier d'écrire, mais de ce que cette identité n'existe
+  pas sur le chemin des actions. Agir un jour sera une décision séparée, avec ses
+  propres garanties (qui est notifié, comment l'historique l'enregistre).
+- **L'ESPACE ARTISAN N'EST PAS LA PAGE CLIENT** (21/09). Le client voit une page, une
+  fois, sur un téléphone ; l'artisan revient tous les jours, souvent sur un PC, et doit
+  pouvoir s'orienter. Deux enveloppes distinctes — un gabarit partagé en trahit un.
 
 ## Dettes et décisions ouvertes
 
@@ -230,6 +240,71 @@ Le mode d'emploi des sondes et le détail de la récolte du 25/08 sont dans les 
 datées ; l'en-tête de `vapi.py` porte le format de fil SSE. **Les lire avant de toucher au
 chantier voix.**
 
+
+---
+
+## 21/09 (suite) — Le mode support, et ce que vingt minutes d'usage ont trouvé
+
+**T14 — l'admin regarde l'espace d'un artisan, en lecture seule.** « est-ce que l'admin
+pourrait faire du "log as" artisans pour vérifier son site et ses status ? ». Lecture
+seule tranché : valider un RDV envoie un vrai SMS à un vrai client, un acte irréversible
+pris au nom de quelqu'un d'autre n'a pas sa place dans un outil de diagnostic.
+
+Deux propriétés, et la seconde est la seule qui protège. Le cookie de vue **ne vaut rien
+seul** — la session d'admin est revérifiée à chaque requête, sinon poser `nelyo_vue=art-x`
+à la main suffirait à devenir cet artisan. Et la lecture seule est **structurelle** :
+l'identité d'emprunt n'entre pas dans `artisan_authentifie`, donc le refus ne vient pas
+d'une vérification qu'on pourrait oublier. Les boutons retirés sont du confort.
+
+Au passage, une leçon payée le jour même : la route de sortie était `/app/vue/fin`, et
+`/app/{rdv_id}/{action}` la capturait. J'avais écrit le commentaire « laisser un chemin
+littéral derrière un chemin à paramètre se retourne contre soi » quelques heures plus tôt,
+et je suis tombé dedans quand même.
+
+### R96/R97 — ce que la page d'admin a laissé passer en vingt minutes
+
+Geoffrey ouvre `/admin`, crée un artisan, et produit aussitôt deux défauts que ni moi ni
+les tests n'avions vus.
+
+**Le mobile en double.** Il saisit son propre numéro alors que `demo-nelyo` le portait
+déjà. Rien ne l'interdisait — le mobile n'est délibérément pas unique. Mais
+`artisan_par_telephone` rendait le premier par ordre d'identifiant : sa connexion par SMS
+ouvrait l'espace de l'un des deux **au hasard**. Et la règle était ÉCRITE : la migration
+011 dit « la connexion devra lever l'ambiguïté plutôt que de choisir au hasard ». Écrite,
+pas appliquée — même famille que R94. Corrigé des deux côtés : le registre refuse de
+trancher, et le formulaire refuse de créer l'ambiguïté. Empêcher qu'elle existe vaut mieux
+que bien la gérer.
+
+**L'identifiant « Nexus artisan »**, avec majuscule et espace, alors qu'il voyage dans des
+URL et sert de clé étrangère. Refusé à la saisie désormais.
+
+**La leçon dépasse les deux correctifs** : T13 vérifiait soigneusement la validation de la
+CONFIG — la partie que je savais dangereuse — et laissait les champs d'identité sans
+aucune contrainte. Vingt minutes d'usage réel ont trouvé ce que deux mutations n'avaient
+pas cherché. *Un formulaire est éprouvé par ce que les gens y tapent, pas par ce que son
+auteur imagine qu'ils y taperont.*
+
+### L'espace artisan cesse d'être une carte de page client
+
+« qu'on fasse un vrai site internet pour les artisans plutôt que cette simple page immonde
+et vide, au moins quand ils sont sur pc ». Le mot était juste, et la cause structurelle :
+`_STYLE_APP` ÉTENDAIT `_STYLE`, le gabarit CLIENT — une carte de 30 rem centrée, pensée
+pour quelqu'un qui ouvre un lien SMS une fois. Sur un écran d'ordinateur, une colonne
+étroite perdue dans du vide.
+
+Les deux publics n'ont rien en commun, et c'est désormais une décision verrouillée. Une
+enveloppe à part : en-tête avec l'entreprise et le patron, onglets portant le nombre de RDV
+à valider, grille en `auto-fill`, états vides qui rassurent. Toujours sans JavaScript — une
+mise en page n'en a pas besoin.
+
+**Trois tests ont échoué, aucun défaut produit**, tous couplés au balisage. Le plus
+instructif : le test de cloisonnement mêlait dans UNE condition la vérification de fond
+(« Martin ne voit pas le créneau de Dupont ») et un libellé d'état vide. Elles sont
+séparées — un test de cloisonnement ne doit pouvoir échouer ni réussir pour une question
+de vocabulaire. R85 a été rendu plus précis, pas relâché.
+
+Geoffrey part faire un mockup pour la suite de l'espace : « j'pense que je vais faire un
+mock up quand même pour avoir une vision plus adéquate de ce je veux ».
 
 ---
 
