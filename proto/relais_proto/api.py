@@ -197,6 +197,26 @@ def creer_app(depot, registre: Registre, fabrique_llm, horloge=None,
             raise HTTPException(401, "authentification artisan requise")
         return artisan
 
+    def _artisan_vu_par_admin(jeton_admin: str, vue: str):
+        """L'artisan que l'admin REGARDE, ou `None`. Mode support, lecture seule.
+
+        **Le cookie de vue ne vaut rien seul.** La session d'admin est revérifiée à
+        chaque requête : sans elle, poser `nelyo_vue=art-x` à la main suffirait à devenir
+        cet artisan. Le cookie ne porte donc aucune autorité — il désigne, il n'autorise
+        pas.
+
+        ET CETTE FONCTION N'EST PAS APPELÉE PAR `artisan_authentifie`, la dépendance des
+        ACTIONS. C'est ainsi que la lecture seule est obtenue : non par une vérification
+        qu'on peut oublier d'écrire, mais parce que l'identité d'emprunt n'existe pas sur
+        le chemin qui valide, refuse ou repropose. Cacher les boutons est du confort ;
+        ceci est la protection.
+        """
+        if not vue or not jeton_admin:
+            return None
+        if _admin_de_session(jeton_admin) is None:
+            return None
+        return registre.artisan(vue)
+
     def _secret_webhook_present(entetes: dict) -> bool:
         """Le secret webhook, par l'en-tête dédié OU par `Authorization`.
 
@@ -864,11 +884,16 @@ def creer_app(depot, registre: Registre, fabrique_llm, horloge=None,
 
     @app.get("/app", response_class=HTMLResponse)
     def page_app(relais_session: str = Cookie(default="", alias=session.NOM_COOKIE),
+                 nelyo_admin: str = Cookie(default="", alias=admin_mdp.NOM_COOKIE),
+                 nelyo_vue: str = Cookie(default="", alias=admin_mdp.NOM_COOKIE_VUE),
                  authorization: str = Header(default="")) -> HTMLResponse:
         """La boîte de validation. Pas de 401 ici mais la page de connexion : un artisan
         dont la session a expiré doit voir un écran, pas un code d'erreur."""
         artisan = (registre.par_token(authorization.removeprefix("Bearer ").strip())
-                   or _artisan_de_session(relais_session))
+                   or _artisan_de_session(relais_session)
+                   or _artisan_vu_par_admin(nelyo_admin, nelyo_vue))
+        vue = artisan.id if (artisan is not None and not relais_session
+                             and _artisan_vu_par_admin(nelyo_admin, nelyo_vue)) else ""
         if artisan is None:
             # Distinguer les deux causes change tout pour qui débogue : « aucun cookie
             # reçu » désigne le navigateur ou l'attribut Secure ; « cookie inconnu »
@@ -895,11 +920,15 @@ def creer_app(depot, registre: Registre, fabrique_llm, horloge=None,
                            "raisons": donnees.get("raisons", []),
                            "echu": r.est_echu(t), "expire_a": r.expire_a})
         return HTMLResponse(pages.boite_validation(
-            NOM, artisan.config["entreprise"]["prenom_patron"], cartes))
+            NOM, artisan.config["entreprise"]["prenom_patron"], cartes,
+            vue_admin=vue))
 
     @app.get("/app/appels", response_class=HTMLResponse)
     def page_appels(categorie: str = "",
                     relais_session: str = Cookie(default="", alias=session.NOM_COOKIE),
+                    nelyo_admin: str = Cookie(default="", alias=admin_mdp.NOM_COOKIE),
+                    nelyo_vue: str = Cookie(default="",
+                                            alias=admin_mdp.NOM_COOKIE_VUE),
                     authorization: str = Header(default="")) -> HTMLResponse:
         """« Mes appels » : tout ce que l'agent a pris, RDV ou pas.
 
@@ -911,7 +940,10 @@ def creer_app(depot, registre: Registre, fabrique_llm, horloge=None,
         401 nu : un artisan dont la session a expiré doit voir un écran.
         """
         artisan = (registre.par_token(authorization.removeprefix("Bearer ").strip())
-                   or _artisan_de_session(relais_session))
+                   or _artisan_de_session(relais_session)
+                   or _artisan_vu_par_admin(nelyo_admin, nelyo_vue))
+        vue = artisan.id if (artisan is not None and not relais_session
+                             and _artisan_vu_par_admin(nelyo_admin, nelyo_vue)) else ""
         if artisan is None:
             return HTMLResponse(
                 pages.connexion(NOM, "Session expirée ou révoquée. Reconnecte-toi."),
@@ -970,7 +1002,8 @@ def creer_app(depot, registre: Registre, fabrique_llm, horloge=None,
                 "transcript": d.get("transcript") or [],
             })
         return HTMLResponse(pages.liste_appels(
-            NOM, artisan.config["entreprise"]["prenom_patron"], cartes, filtres))
+            NOM, artisan.config["entreprise"]["prenom_patron"], cartes, filtres,
+            vue_admin=vue))
 
     @app.post("/app/{rdv_id}/{action}")
     def agir(rdv_id: str, action: str,
@@ -1218,6 +1251,43 @@ def creer_app(depot, registre: Registre, fabrique_llm, horloge=None,
             {"id": artisan_id, "nom": nom, "numero_relais": numero_relais,
              "telephone": telephone, "etat_abonnement": etat_abonnement,
              "config": config}, existant, nelyo_admin, nouveau=False)
+
+    @app.post("/admin/artisan/{artisan_id}/voir")
+    def admin_voir_comme(
+            artisan_id: str,
+            nelyo_admin: str = Cookie(default="", alias=admin_mdp.NOM_COOKIE)):
+        """Entrer dans l'espace d'un artisan, en lecture seule.
+
+        Le cookie posé ici ne porte QUE l'identifiant, et il est inerte sans la session
+        d'admin — c'est elle l'autorité, revérifiée à chaque requête.
+        """
+        if _exige_admin(nelyo_admin) is None:
+            return HTMLResponse(pages.admin_connexion(NOM), status_code=401)
+        if depot.artisan_par_id(artisan_id) is None:
+            raise HTTPException(404, "artisan inconnu")
+        reponse = RedirectResponse("/app", status_code=303)
+        attributs = session.attributs_cookie(cookie_secure)
+        attributs["max_age"] = admin_mdp.DUREE_JOURS * 24 * 3600
+        reponse.set_cookie(admin_mdp.NOM_COOKIE_VUE, artisan_id, **attributs)
+        return reponse
+
+    @app.post("/admin/vue/fin")
+    def admin_quitter_vue():
+        """Sortir du mode support.
+
+        SOUS `/admin` ET NON `/app/vue/fin`, et c'est une leçon payée le jour même :
+        `/app/{rdv_id}/{action}` est déclaré avant, et il capturait `/app/vue/fin` comme
+        un RDV « vue » et une action « fin » — donc 401 par la dépendance artisan, sur
+        une route censée n'en exiger aucune. Un chemin littéral derrière un chemin à
+        paramètre se fait manger ; j'avais écrit ce commentaire quelques heures plus tôt
+        au-dessus de `/app/appels`, et je suis quand même tombé dedans.
+
+        Aucune authentification exigée : effacer un cookie qui ne donne aucun droit ne
+        peut nuire à personne, et l'exiger empêcherait d'en sortir quand la session
+        d'admin vient d'expirer."""
+        reponse = RedirectResponse("/admin", status_code=303)
+        reponse.delete_cookie(admin_mdp.NOM_COOKIE_VUE, path="/")
+        return reponse
 
     @app.post("/admin/artisan/{artisan_id}/jeton", response_class=HTMLResponse)
     def admin_regenerer_jeton(

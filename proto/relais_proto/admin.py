@@ -56,6 +56,14 @@ def _maxmem(n: int, r: int) -> int:
 LONGUEUR_MINIMALE = 12
 
 NOM_COOKIE = "nelyo_admin"
+
+# Le cookie du mode SUPPORT : « je regarde l'espace de cet artisan ».
+#
+# Il ne porte qu'un identifiant d'artisan, en clair, et **il ne vaut rien seul** : la
+# résolution exige une session d'admin valide à CHAQUE requête. Sans cette règle, poser
+# un cookie à la main suffirait à devenir n'importe quel artisan — c'est-à-dire que le
+# mode support serait une élévation de privilège offerte à tout visiteur.
+NOM_COOKIE_VUE = "nelyo_vue"
 # Plus court que les 90 jours d'un artisan, et délibérément. L'artisan valide des RDV
 # plusieurs fois par jour depuis son téléphone ; l'admin ouvre l'outil rarement, et son
 # cookie ouvre l'accès à tous les clients. Une session qui peut tout faire doit se

@@ -3693,6 +3693,159 @@ def _appel_sans_rdv(depot, nom_scenario: str, maintenant: dt.datetime):
     return depot.cloturer_appel(appel.id, build_lead(convo), maintenant)
 
 
+def check_mode_support() -> bool:
+    """T14 : l'admin regarde l'espace d'un artisan, et NE PEUT RIEN Y FAIRE.
+
+    Demandé le 21/09 : « est-ce que l'admin pourrait faire du "log as" artisans pour
+    vérifier son site et ses status ? ». Lecture seule, tranché — valider un RDV envoie
+    un vrai SMS à un vrai client (« c'est confirmé, Julien passe demain entre 8h et
+    10h ») : un acte irréversible pris au nom de quelqu'un d'autre n'a pas sa place dans
+    un outil de diagnostic.
+
+    DEUX PROPRIÉTÉS, et la seconde est la seule qui protège vraiment :
+
+    1. **le cookie de vue ne vaut rien seul.** Il ne porte qu'un identifiant en clair ;
+       sans session d'admin valide — revérifiée à CHAQUE requête — le poser à la main
+       doit être sans effet. Sinon le mode support serait une élévation de privilège
+       offerte à n'importe quel visiteur ;
+    2. **la lecture seule est STRUCTURELLE.** L'identité d'emprunt n'entre pas dans
+       `artisan_authentifie`, la dépendance qu'utilisent les actions : le refus ne vient
+       pas d'une vérification qu'on pourrait oublier d'écrire, il vient de ce que cette
+       identité n'existe pas sur ce chemin. Les boutons absents sont du confort ; ce
+       test vise le serveur, pas le HTML.
+    """
+    try:
+        from fastapi.testclient import TestClient
+    except ImportError:
+        print("   fastapi/httpx absents : pip install -r requirements.txt")
+        return False
+
+    import json as _js
+
+    from relais_proto import admin as admin_mdp
+    from relais_proto.api import creer_app
+    from relais_proto.depot import LigneAdmin, LigneArtisan
+    from relais_proto.registre import RegistreBase, empreinte as emp
+
+    modele = _js.loads((_DOSSIER_CONFIG / "dupont.json").read_text(encoding="utf-8"))
+    depot = DepotMemoire()
+    depot.enregistrer_admin(LigneAdmin(
+        id="adm-1", identifiant="geoffrey", nom="Geoffrey",
+        mot_de_passe=admin_mdp.chiffrer("un-mot-de-passe-solide")))
+    depot.enregistrer_artisan(LigneArtisan(
+        id="art-dupont", nom_affiche="Dupont Chauffage",
+        numero_relais="+33189701234", telephone="+33612345678",
+        token_sha256=emp("tok-a"), config=modele))
+
+    registre = RegistreBase(depot, produit.charger(_DOSSIER_CONFIG), emp("secret"),
+                            _DOSSIER_CONFIG, journal=lambda m: None)
+    app = creer_app(depot, registre, MockLLM, lambda: LUNDI_9H,
+                    base_url="https://nelyo.test", cookie_secure=False)
+
+    lead, rdv = _appel_avec_rdv(depot, "T01_urgence_fuite", LUNDI_9H)
+    rdv.notifier(LUNDI_9H)
+    depot.sauver_rdv(rdv)
+
+    # (1) LE COOKIE SEUL NE VAUT RIEN. Un visiteur qui le pose à la main sans session
+    # d'admin ne doit rien voir — c'est la différence entre « désigner » et « autoriser ».
+    with TestClient(app) as pirate:
+        pirate.cookies.set(admin_mdp.NOM_COOKIE_VUE, "art-dupont")
+        r = pirate.get("/app")
+        if r.status_code != 401:
+            print(f"   le cookie de vue SEUL donne accès à /app : {r.status_code} — "
+                  f"élévation de privilège")
+            return False
+        if pirate.get("/app/appels").status_code != 401:
+            print("   le cookie de vue seul donne accès à /app/appels")
+            return False
+        # et avec un cookie d'admin INVENTÉ, pas davantage
+        pirate.cookies.set(admin_mdp.NOM_COOKIE, "jeton-invente-de-toutes-pieces")
+        if pirate.get("/app").status_code != 401:
+            print("   un cookie d'admin inventé ouvre le mode support")
+            return False
+
+    with TestClient(app) as geoffrey:
+        geoffrey.post("/admin/connexion",
+                      data={"identifiant": "geoffrey",
+                            "mot_de_passe": "un-mot-de-passe-solide"})
+        # entrer dans l'espace de l'artisan
+        r = geoffrey.post("/admin/artisan/art-dupont/voir", follow_redirects=False)
+        if r.status_code != 303 or r.headers.get("location") != "/app":
+            print(f"   « voir son espace » ne mène pas à /app : {r.status_code}")
+            return False
+        if not geoffrey.cookies.get(admin_mdp.NOM_COOKIE_VUE):
+            print("   le cookie de vue n'est pas posé")
+            return False
+        # un artisan inconnu : 404, pas un cookie posé dans le vide
+        if geoffrey.post("/admin/artisan/nexiste-pas/voir",
+                         follow_redirects=False).status_code != 404:
+            print("   on peut entrer dans l'espace d'un artisan inexistant")
+            return False
+
+        # (2) il VOIT, et le bandeau le lui dit
+        r = geoffrey.get("/app")
+        if r.status_code != 200:
+            print(f"   l'admin ne voit pas l'espace de l'artisan : {r.status_code}")
+            return False
+        for attendu in ("Mode support", "art-dupont", "/admin/vue/fin"):
+            if attendu not in r.text:
+                print(f"   le bandeau de support ne porte pas « {attendu} »")
+                return False
+        if rdv.creneau["label"].replace("'", "&#x27;") not in r.text:
+            print("   l'admin ne voit pas le RDV de l'artisan")
+            return False
+        # les actions ont DISPARU de la page
+        import re as _re
+        if _re.search(r'action="/app/[^"]+/(valider|refuser|reproposer)"', r.text):
+            print("   les boutons d'action sont affichés en mode support")
+            return False
+        # et sur « Mes appels » aussi
+        ra = geoffrey.get("/app/appels")
+        if ra.status_code != 200 or "Mode support" not in ra.text:
+            print("   « Mes appels » n'affiche pas le bandeau de support")
+            return False
+
+        # (3) LE POINT : le serveur REFUSE l'action, même forgée à la main
+        for action in ("valider", "refuser"):
+            r = geoffrey.post(f"/app/{rdv.id}/{action}", follow_redirects=False)
+            if r.status_code != 401:
+                print(f"   l'admin a pu {action} à la place de l'artisan : "
+                      f"{r.status_code} — la lecture seule ne tient pas")
+                return False
+        r = geoffrey.post(f"/app/{rdv.id}/reproposer",
+                          data={"date": "2026-09-30", "de": "08:00", "a": "10:00"},
+                          follow_redirects=False)
+        if r.status_code != 401:
+            print(f"   l'admin a pu reproposer un créneau : {r.status_code}")
+            return False
+        # le RDV n'a pas bougé
+        if depot.rdv(rdv.id).statut != rdv.statut:
+            print(f"   le RDV a changé d'état : {depot.rdv(rdv.id).statut}")
+            return False
+
+        # (4) sortir du mode support
+        r = geoffrey.post("/admin/vue/fin", follow_redirects=False)
+        if r.status_code != 303 or r.headers.get("location") != "/admin":
+            print(f"   sortir du mode support ne ramène pas à l'admin : {r.status_code}")
+            return False
+        if geoffrey.get("/app").status_code != 401:
+            print("   après être sorti, l'admin voit encore l'espace de l'artisan")
+            return False
+
+    # (5) l'artisan, lui, agit normalement : le mode support n'a rien cassé
+    with TestClient(app) as julien:
+        r = julien.post(f"/app/{rdv.id}/valider",
+                        headers={"Authorization": "Bearer tok-a"},
+                        follow_redirects=False)
+        if r.status_code != 303:
+            print(f"   l'artisan ne peut plus valider son RDV : {r.status_code}")
+            return False
+        if depot.rdv(rdv.id).statut.value != "valide":
+            print("   la validation par l'artisan n'a pas eu lieu")
+            return False
+    return True
+
+
 def check_admin() -> bool:
     """T13 : l'administration — créer un artisan SANS commit ni redéploiement.
 
@@ -11374,6 +11527,14 @@ def run() -> int:
     if check_admin():
         print("   → un artisan se crée sans commit ni redéploiement, une config "
               "invalide est refusée en bloc, et les révocations révoquent : ✅ PASS")
+    else:
+        print("   → ❌ FAIL")
+        echecs += 1
+
+    print(f"\n──── T14_mode_support ────")
+    if check_mode_support():
+        print("   → l'admin voit l'espace d'un artisan et n'y peut RIEN faire ; "
+              "le cookie de vue est inerte sans session d'admin : ✅ PASS")
     else:
         print("   → ❌ FAIL")
         echecs += 1

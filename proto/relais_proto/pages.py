@@ -135,6 +135,11 @@ label { display: block; font-size: .88rem; color: #5b6472; margin: 10px 0 4px; }
 input { width: 100%; min-height: 46px; font-size: 1rem; padding: 0 10px;
   border: 1px solid #cfd5de; border-radius: 8px; background: #fff; color: #14181f; }
 .vide { color: #5b6472; }
+.support { background: #e7eefb; color: #1c3f7a; border-radius: 8px;
+  padding: 12px 14px; margin: 0 0 18px; font-size: .94rem; line-height: 1.6; }
+.support form { display: inline; }
+.support button { width: auto; min-height: 34px; font-size: .88rem; padding: 0 12px;
+  background: #fff; color: #1c3f7a; border: 1px solid #b6c8e8; margin-left: 6px; }
 .rdv.perime { opacity: .72; border-style: dashed; }
 .perdu { color: #98261a; font-size: .92rem; margin: 0; }
 a { color: #1a6b3c; }
@@ -152,6 +157,8 @@ a { color: #1a6b3c; }
 .dit-agent { color: #5b6472; }
 .dit-client { color: #14181f; }
 @media (prefers-color-scheme: dark) {
+  .support { background: #1c2a40; color: #a8c4ee; }
+  .support button { background: #1d232c; color: #a8c4ee; border-color: #35496b; }
   .rdv { border-color: #2c3542; } .score { background: #2c3542; color: #c8d0da; }
   input { background: #14181f; color: #e8eaed; border-color: #2c3542; }
   button.refus { background: #1d232c; border-color: #5a3a34; color: #f0a99f; }
@@ -162,6 +169,24 @@ a { color: #1a6b3c; }
   .dit-client { color: #e8eaed; }
 }
 """
+
+
+def bandeau_support(artisan_id: str) -> str:
+    """Le bandeau du mode support, sur CHAQUE page regardée par un admin.
+
+    Permanent et en tête, pas discret : celui qui le lit doit être incapable de
+    confondre « ce que je vois » avec « ce que je vois chez quelqu'un d'autre ». Il dit
+    aussi POURQUOI les boutons ont disparu — une interface qui retire des commandes sans
+    l'expliquer se fait prendre pour une panne.
+    """
+    if not artisan_id:
+        return ""
+    return ('<div class="support"><b>Mode support — lecture seule.</b> '
+            "Vous regardez l&#x27;espace de " + escape(artisan_id) + " : "
+            "aucune action n&#x27;est possible d&#x27;ici. "
+            '<form class="enligne" method="post" action="/admin/vue/fin">'
+            '<button class="discret" type="submit">Revenir à l&#x27;admin</button>'
+            "</form></div>")
 
 
 def _page_app(produit: str, titre: str, corps: str) -> str:
@@ -175,7 +200,8 @@ def _page_app(produit: str, titre: str, corps: str) -> str:
         f'<body><main>{corps}<p class="marque">{escape(produit)}</p></main></body></html>')
 
 
-def boite_validation(produit: str, prenom: str, rdvs: list[dict]) -> str:
+def boite_validation(produit: str, prenom: str, rdvs: list[dict],
+                     vue_admin: str = "") -> str:
     """LA fonction produit : les rendez-vous à valider, et rien d'autre à l'écran.
 
     Sans JavaScript : chaque action est un formulaire qui poste puis redirige. Les champs
@@ -187,11 +213,12 @@ def boite_validation(produit: str, prenom: str, rdvs: list[dict]) -> str:
     # le plus besoin : un écran vide laisse croire qu'il ne s'est rien passé, alors que
     # des appels sans RDV attendent peut-être d'être rappelés.
     vers_appels = '<p class="apres"><a href="/app/appels">Tous mes appels</a></p>'
+    bandeau = bandeau_support(vue_admin)
     if not rdvs:
         return _page_app(
             produit,
             "Rien à valider",
-            f"<h1>Bonjour {escape(prenom)}</h1>"
+            bandeau + f"<h1>Bonjour {escape(prenom)}</h1>"
             '<p class="vide">Aucun rendez-vous en attente. Tout est à jour.</p>'
             + vers_appels)
 
@@ -220,6 +247,13 @@ def boite_validation(produit: str, prenom: str, rdvs: list[dict]) -> str:
             # pour décider quoi faire.
             actions = ('<p class="perdu">Délai dépassé — le créneau est libéré. '
                        "Rappelez le client si vous voulez le récupérer.</p>")
+        elif vue_admin:
+            # MODE SUPPORT : les actions ne sont pas désactivées, elles sont ABSENTES.
+            # Un bouton grisé invite à cliquer et laisse croire à une panne ; et de
+            # toute façon le serveur refuserait — l'identité d'emprunt n'existe pas sur
+            # le chemin des actions. Ce qui s'affiche ici doit dire la même chose que ce
+            # que le serveur ferait.
+            actions = ('<p class="raisons">Décision réservée à l&#x27;artisan.</p>')
         else:
             actions = (
                 '<div class="actions">'
@@ -244,7 +278,8 @@ def boite_validation(produit: str, prenom: str, rdvs: list[dict]) -> str:
     a_decider = sum(1 for r in rdvs if not r["echu"])
     titre = f"{a_decider} à valider" if a_decider else "Rien à valider"
     return _page_app(produit, titre,
-                     f"<h1>Bonjour {escape(prenom)}</h1>" + "".join(blocs) + vers_appels)
+                     bandeau + f"<h1>Bonjour {escape(prenom)}</h1>"
+                     + "".join(blocs) + vers_appels)
 
 
 # Ce que chaque catégorie VEUT DIRE à l'artisan, et ce qu'il peut en faire. Vocabulaire
@@ -269,7 +304,7 @@ _CATEGORIES = {
 
 
 def liste_appels(produit: str, prenom: str, appels: list[dict],
-                 filtres: list[tuple] = ()) -> str:
+                 filtres: list[tuple] = (), vue_admin: str = "") -> str:
     """« Mes appels » : ce que l'agent a répondu, RDV ou pas.
 
     Ajoutée le 21/09 parce qu'il manquait la moitié de la promesse produit. `/app` ne
@@ -290,7 +325,8 @@ def liste_appels(produit: str, prenom: str, appels: list[dict],
         f'<a href="/app/appels{"" if c is None else "?categorie=" + c}">'
         f"{escape(nom)} ({n})</a>"
         for c, nom, n in filtres)
-    entete = (f"<h1>Bonjour {escape(prenom)}</h1>"
+    entete = (bandeau_support(vue_admin)
+              + f"<h1>Bonjour {escape(prenom)}</h1>"
               + (f'<p class="filtres">{liens}</p>' if filtres else ""))
     retour = '<p class="apres"><a href="/app">Mes rendez-vous à valider</a></p>'
 
@@ -474,10 +510,14 @@ def admin_artisans(produit: str, nom: str, artisans: list[dict]) -> str:
             + '<td class="num">{}</td>'.format(escape(a["telephone"] or "—"))
             + "<td>{}</td>".format(escape(a["etat"]))
             + "<td>{}</td>".format(escape(a["source_config"]))
-            + '<td class="num">{}</td></tr>'.format(a["appels"])
+            + '<td class="num">{}</td>'.format(a["appels"])
+            + ('<td><form class="enligne" method="post" '
+               'action="/admin/artisan/{}/voir">'
+               '<button class="discret" type="submit">Voir son espace</button>'
+               "</form></td></tr>").format(escape(a["id"]))
             for a in artisans)
         corps = ("<table><tr><th>Artisan</th><th>Numéro Relais</th><th>Mobile</th>"
-                 "<th>Abonnement</th><th>Config</th><th>Appels</th></tr>"
+                 "<th>Abonnement</th><th>Config</th><th>Appels</th><th></th></tr>"
                  + lignes + "</table>")
     else:
         corps = ('<p class="vide">Aucun artisan. Le produit ne peut servir personne '
