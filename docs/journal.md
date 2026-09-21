@@ -206,9 +206,7 @@ correcte, trois lignes au-dessus du code qui la contredisait.
    généré et config en base.
 3. **Finir le chantier voix** : `endCallPhrases`, barge-in (`stopSpeakingPlan`), latence
    mesurée sur un appel complet à travers Render (et non plus un tunnel).
-4. **Rejouer l'éval ×3** (dette n°8), et **rejouer `run_depot_pg.py`** dès que la base de
-   dév sort de pause : le contrat du port n'a pas tourné contre Postgres depuis les
-   migrations 011 et 012.
+4. **Rejouer l'éval ×3** (dette n°8).
 5. Puis, par valeur décroissante : les petites dettes de conversation, la plateforme
    (onboarding, dashboard, facturation, agenda), `appel_muet`, le worker de rattrapage.
 
@@ -321,13 +319,23 @@ le cron l'a expiré, et l'écran principal était vide. Tout le mécanisme a par
 fonctionné — sur une donnée que j'avais fabriquée absurde. Le semoir refuse désormais de
 semer un RDV déjà échu : je n'avais aucune raison de découvrir ça devant un prospect.
 
-### Ce qui reste non vérifié
+### Le contrat contre Postgres a attrapé un défaut, le soir même
 
-Le contrat complet du port contre Postgres. La base de DÉV est en pause depuis la création
-de la prod (plan gratuit Supabase : deux projets actifs). Les nouvelles méthodes sont
-éprouvées contre `DepotMemoire` par le contrat, et contre le schéma RÉEL de la production en
-lecture — mais pas les deux ensemble. Un « Restore » côté Supabase et `run_depot_pg.py`
-tranche.
+La base de DÉV avait disparu — supprimée, pas en pause : un projet en pause garde son DNS,
+un projet supprimé le perd, et c'est ce que le diagnostic montrait. Nouvelle base
+`nelyo-dev` créée, avec au passage le piège classique de Supabase : la chaîne du POOLER est
+affichée avec `[YOUR-PASSWORD]` entre crochets, et elle avait été collée telle quelle.
+`urlparse` refusait le crochet — l'erreur ne parlait pas de mot de passe du tout.
+
+Et le contrat a immédiatement trouvé ce pour quoi il existe : **`DepotMemoire` n'a pas de
+clé étrangère et acceptait un appel rattaché à un artisan inexistant**, là où Postgres le
+refuse (`appel_artisan_fk`). Le test que je venais d'écrire passait donc en mémoire et
+tombait en réel. La laxité du double reste assumée — la plupart des tests ouvrent des
+appels sans peupler le registre — mais tout ce qui touche Postgres doit respecter la
+contrainte que la PRODUCTION porte.
+
+Après correction : contrat du port ✅, worker d'expiration sur Postgres ✅. Les six
+méthodes ajoutées et les deux migrations sont éprouvées contre les DEUX implémentations.
 
 ---
 

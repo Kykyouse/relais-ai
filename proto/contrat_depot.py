@@ -171,7 +171,19 @@ def verifier(fabrique, cfg: dict) -> list[str]:
     plus_tard = LUNDI_9H + dt.timedelta(hours=3)
     a2 = depot.ouvrir_appel("art-dupont", plus_tard)
     lead2 = depot.cloturer_appel(a2.id, donnees, plus_tard)
-    # un autre artisan, au MÊME instant : le cloisonnement doit tenir
+    # Un autre artisan, au MÊME instant : le cloisonnement doit tenir.
+    #
+    # IL DOIT ÊTRE ENREGISTRÉ D'ABORD, et c'est le contrat qui l'a appris (21/09) :
+    # `DepotMemoire` n'a pas de clé étrangère et accepte un appel rattaché à un artisan
+    # inexistant, là où Postgres le refuse (`appel_artisan_fk`, migration 008). Le test
+    # passait donc en mémoire et tombait en réel — exactement la divergence que cette
+    # suite existe pour attraper. La laxité du double est assumée (la plupart des tests
+    # ouvrent des appels sans peupler le registre), mais tout ce qui touche à Postgres
+    # doit respecter la contrainte que la PRODUCTION porte.
+    depot.enregistrer_artisan(LigneArtisan(
+        id="art-martin", nom_affiche="Martin Plomberie",
+        numero_relais="+33189705678", telephone="+33698765432",
+        config_fichier="dupont.json", token_sha256="e" * 64))
     a3 = depot.ouvrir_appel("art-martin", plus_tard)
     lead3 = depot.cloturer_appel(a3.id, donnees, plus_tard)
 
