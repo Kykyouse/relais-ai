@@ -3693,6 +3693,141 @@ def _appel_sans_rdv(depot, nom_scenario: str, maintenant: dt.datetime):
     return depot.cloturer_appel(appel.id, build_lead(convo), maintenant)
 
 
+def check_mobile_ambigu() -> bool:
+    """R96/R97 : ce que la page d'admin a laissé passer en vingt minutes.
+
+    Geoffrey ouvre `/admin` le 21/09, crée un artisan, et produit aussitôt deux défauts
+    que ni moi ni les tests n'avions vus — parce qu'aucun de nous n'avait encore rempli
+    ce formulaire comme un humain le remplit.
+
+    **R96 — le mobile en double.** Il a saisi son propre numéro comme mobile du nouvel
+    artisan, alors que `demo-nelyo` le portait déjà. Le mobile n'est pas unique (un
+    patron peut avoir deux entreprises), donc rien ne l'interdisait. Mais
+    `artisan_par_telephone` rendait le PREMIER par ordre d'identifiant : sa connexion
+    par SMS ouvrait l'espace de l'un des deux **au hasard**, sans que rien ne le signale,
+    et l'ordre pouvait changer d'un déploiement à l'autre. La migration 011 annonçait
+    pourtant la règle : « la connexion devra lever l'ambiguïté plutôt que de choisir au
+    hasard ». Elle était écrite, pas appliquée.
+
+    Deux corrections, et la seconde est la vraie : le registre REFUSE de trancher, et
+    l'admin refuse de créer l'ambiguïté. Empêcher qu'elle existe vaut mieux que bien la
+    gérer.
+
+    **R97 — l'identifiant « Nexus artisan ».** Avec une majuscule et un espace. Il
+    voyage dans des URL (`/admin/artisan/<id>/voir`) et sert de clé étrangère. Rien ne
+    l'interdisait non plus.
+
+    La leçon dépasse les deux correctifs : **un formulaire est éprouvé par ce que les
+    gens y tapent, pas par ce que son auteur imagine qu'ils y taperont.** T13 vérifiait
+    la validation de la CONFIG — la partie que je savais dangereuse — et laissait les
+    champs d'identité sans contrainte.
+    """
+    try:
+        from fastapi.testclient import TestClient
+    except ImportError:
+        print("   fastapi/httpx absents : pip install -r requirements.txt")
+        return False
+
+    import json as _js
+
+    from relais_proto import admin as admin_mdp
+    from relais_proto.api import creer_app
+    from relais_proto.depot import LigneAdmin, LigneArtisan
+    from relais_proto.envoi import EnvoyeurJournal
+    from relais_proto.registre import RegistreBase, empreinte as emp
+
+    modele = _js.loads((_DOSSIER_CONFIG / "dupont.json").read_text(encoding="utf-8"))
+    depot = DepotMemoire()
+    depot.enregistrer_admin(LigneAdmin(
+        id="adm-1", identifiant="geoffrey",
+        mot_de_passe=admin_mdp.chiffrer("un-mot-de-passe-solide")))
+    depot.enregistrer_artisan(LigneArtisan(
+        id="art-dupont", nom_affiche="Dupont", numero_relais="+33189701234",
+        telephone="+33612345678", token_sha256=emp("tok-a"), config=modele))
+
+    registre = RegistreBase(depot, produit.charger(_DOSSIER_CONFIG), emp("secret"),
+                            _DOSSIER_CONFIG, journal=lambda m: None)
+    app = creer_app(depot, registre, MockLLM, lambda: LUNDI_9H,
+                    base_url="https://nelyo.test", cookie_secure=False,
+                    envoyeur=EnvoyeurJournal())
+
+    # ---- R96, le domaine : un mobile partagé n'est pas tranché ----
+    if registre.par_telephone("0612345678") is None:
+        print("   un mobile unique devrait retrouver son artisan")
+        return False
+    depot.enregistrer_artisan(LigneArtisan(
+        id="art-jumeau", nom_affiche="Jumeau", numero_relais="+33189709999",
+        telephone="0612345678", token_sha256=emp("tok-b"), config=modele))
+    if len(depot.artisans_par_telephone("0612345678")) != 2:
+        print("   les deux artisans ne partagent pas le mobile (fixture fausse)")
+        return False
+    if registre.par_telephone("0612345678") is not None:
+        print("   un mobile partagé par DEUX artisans rend quand même quelqu'un — "
+              "la connexion par SMS ouvre un espace au hasard")
+        return False
+
+    # et la conséquence visible : /connexion n'envoie plus de code, sans rien révéler
+    with TestClient(app) as visiteur:
+        r = visiteur.post("/connexion", data={"telephone": "06 12 34 56 78"})
+        if r.status_code != 200:
+            print(f"   /connexion sur un mobile ambigu : {r.status_code}")
+            return False
+        if depot.code_connexion("art-dupont") or depot.code_connexion("art-jumeau"):
+            print("   un code a été envoyé malgré l'ambiguïté — donc à l'un des deux, "
+                  "choisi au hasard")
+            return False
+
+    # ---- R96/R97, le formulaire : l'ambiguïté ne doit pas pouvoir NAÎTRE ----
+    with TestClient(app) as geoffrey:
+        geoffrey.post("/admin/connexion",
+                      data={"identifiant": "geoffrey",
+                            "mot_de_passe": "un-mot-de-passe-solide"})
+
+        # un identifiant avec espace et majuscule : refusé
+        for mauvais in ("Nexus artisan", "ART-DUPONT", "art dupont", "art_dupont",
+                        "artisan!", "-art", "art--x"):
+            r = geoffrey.post("/admin/artisan", data={
+                "id": mauvais, "numero_relais": "+33189700111",
+                "telephone": "0600000111", "config": _js.dumps(modele)})
+            if r.status_code != 400:
+                print(f"   l'identifiant « {mauvais} » a été accepté")
+                return False
+            if depot.artisan_par_id(mauvais) is not None:
+                print(f"   « {mauvais} » a été créé malgré le refus")
+                return False
+
+        # un identifiant correct passe
+        r = geoffrey.post("/admin/artisan", data={
+            "id": "art-nexus", "nom": "Nexus", "numero_relais": "+33189700111",
+            "telephone": "0600000111", "config": _js.dumps(modele)})
+        if r.status_code != 200:
+            print(f"   un identifiant correct est refusé : {r.status_code}")
+            return False
+
+        # un mobile DÉJÀ pris par un autre : refusé, avec le coupable nommé
+        r = geoffrey.post("/admin/artisan", data={
+            "id": "art-copieur", "numero_relais": "+33189700222",
+            "telephone": "06 00 00 01 11", "config": _js.dumps(modele)})
+        if r.status_code != 400 or "art-nexus" not in r.text:
+            print("   un mobile déjà utilisé est accepté — l'ambiguïté peut naître "
+                  "depuis le formulaire")
+            return False
+        if depot.artisan_par_id("art-copieur") is not None:
+            print("   l'artisan au mobile en double a été créé")
+            return False
+
+        # mais RÉENREGISTRER le même artisan avec son propre mobile doit passer :
+        # sinon on ne pourrait plus jamais modifier une fiche sans changer son numéro.
+        r = geoffrey.post("/admin/artisan/art-nexus", data={
+            "nom": "Nexus SARL", "numero_relais": "+33189700111",
+            "telephone": "0600000111", "config": _js.dumps(modele)})
+        if r.status_code != 200:
+            print(f"   modifier un artisan sans changer son mobile est refusé : "
+                  f"{r.status_code}")
+            return False
+    return True
+
+
 def check_mode_support() -> bool:
     """T14 : l'admin regarde l'espace d'un artisan, et NE PEUT RIEN Y FAIRE.
 
@@ -11527,6 +11662,14 @@ def run() -> int:
     if check_admin():
         print("   → un artisan se crée sans commit ni redéploiement, une config "
               "invalide est refusée en bloc, et les révocations révoquent : ✅ PASS")
+    else:
+        print("   → ❌ FAIL")
+        echecs += 1
+
+    print(f"\n──── R96_mobile_ambigu_et_identifiant ────")
+    if check_mobile_ambigu():
+        print("   → un mobile partagé n'ouvre plus l'espace de l'un des deux au "
+              "hasard, et le formulaire refuse de créer l'ambiguïté : ✅ PASS")
     else:
         print("   → ❌ FAIL")
         echecs += 1

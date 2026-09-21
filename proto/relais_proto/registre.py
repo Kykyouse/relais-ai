@@ -293,7 +293,30 @@ class RegistreBase:
         return self._artisan(self._depot.artisan_par_numero_relais(numero))
 
     def par_telephone(self, numero: str) -> Artisan | None:
-        return self._artisan(self._depot.artisan_par_telephone(numero)) if numero else None
+        """L'artisan dont c'est le mobile — et `None` s'ils sont PLUSIEURS (R96).
+
+        Le mobile n'est pas unique : un même patron peut exploiter deux entreprises.
+        Tant que la recherche rendait le premier venu, une connexion par SMS ouvrait
+        l'espace de l'un des deux au hasard, sans que personne le sache — et l'ordre
+        pouvait changer d'un déploiement à l'autre. Constaté en production le 21/09,
+        vingt minutes après l'ouverture de la page d'admin : deux artisans se sont
+        retrouvés avec le même mobile parce que rien ne l'interdisait à la saisie.
+
+        Refuser est le bon comportement par défaut : c'est la règle du projet (« un
+        artisan absent du registre n'est pas deviné »). Le jour où un patron aura
+        réellement deux entreprises, la réponse sera de lui faire CHOISIR après
+        vérification du code — pas de trancher à sa place.
+        """
+        if not numero:
+            return None
+        lignes = self._depot.artisans_par_telephone(numero)
+        if len(lignes) != 1:
+            if len(lignes) > 1:
+                self._journal(
+                    f"  ⚠️  mobile ambigu : {[l.id for l in lignes]} partagent "
+                    f"le même numéro — connexion refusée plutôt que devinée")
+            return None
+        return self._artisan(lignes[0])
 
     def par_token(self, token: str) -> Artisan | None:
         """Recherche indexée, PUIS comparaison à temps constant.

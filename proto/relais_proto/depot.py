@@ -173,6 +173,12 @@ class Depot(Protocol):
 
     def artisan_par_telephone(self, numero: str) -> LigneArtisan | None: ...
 
+    # TOUS les artisans portant ce mobile. Le singulier ci-dessus en choisit un ;
+    # celui-ci existe pour que l'appelant puisse constater l'AMBIGUÏTÉ au lieu de
+    # la subir (R96) — le mobile n'est pas unique, deux entreprises peuvent avoir
+    # le même patron.
+    def artisans_par_telephone(self, numero: str) -> list[LigneArtisan]: ...
+
     def artisan_par_numero_relais(self, numero: str) -> LigneArtisan | None: ...
 
     def poser_code_connexion(self, artisan_id: str, empreinte: str,
@@ -315,11 +321,16 @@ class DepotMemoire:
                      if a.token_sha256 == empreinte), None)
 
     def artisan_par_telephone(self, numero: str) -> LigneArtisan | None:
+        lignes = self.artisans_par_telephone(numero)
+        return lignes[0] if lignes else None
+
+    def artisans_par_telephone(self, numero: str) -> list[LigneArtisan]:
         cible = normaliser_numero(numero)
         if not cible:
-            return None
-        return next((replace(a) for a in self._artisans_registre.values()
-                     if normaliser_numero(a.telephone) == cible), None)
+            return []
+        return sorted((replace(a) for a in self._artisans_registre.values()
+                       if normaliser_numero(a.telephone) == cible),
+                      key=lambda a: a.id)
 
     def artisan_par_numero_relais(self, numero: str) -> LigneArtisan | None:
         cible = normaliser_numero(numero)

@@ -209,12 +209,16 @@ class DepotPostgres:
             (empreinte,))
 
     def artisan_par_telephone(self, numero: str) -> LigneArtisan | None:
+        lignes = self.artisans_par_telephone(numero)
+        return lignes[0] if lignes else None
+
+    def artisans_par_telephone(self, numero: str) -> list[LigneArtisan]:
         cible = normaliser_numero(numero)
         if not cible:
-            return None
-        return self._un_ou_rien(
+            return []
+        return [LigneArtisan(*l) for l in self._plusieurs(
             f"select {self._COLS_ARTISAN} from artisan "
-            "where telephone_normalise = %s order by id", (cible,))
+            "where telephone_normalise = %s order by id", (cible,))]
 
     def artisan_par_numero_relais(self, numero: str) -> LigneArtisan | None:
         cible = normaliser_numero(numero)

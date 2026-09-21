@@ -14,6 +14,7 @@ from __future__ import annotations
 import datetime as dt
 import json as _json_mod
 import pathlib
+import re as _re_mod
 
 from fastapi import Cookie, Depends, FastAPI, Form, Header, HTTPException, Request
 from fastapi.responses import (HTMLResponse, JSONResponse, RedirectResponse,
@@ -41,6 +42,11 @@ CONTRAT_LEAD_VERSION = 1
 # Le dossier des configs : modèles dont part un nouvel artisan (page d'admin), et
 # repli pour les artisans dont la config n'a pas encore migré en base (migr. 011).
 DOSSIER_CONFIG = pathlib.Path(__file__).parent.parent / "config"
+
+# L'identifiant technique d'un artisan : il voyage dans des URL et sert de clé
+# étrangère. Minuscules, chiffres et tirets — rien qui demande d'être encodé, rien
+# qu'on puisse retaper de travers.
+_IDENTIFIANT_VALIDE = _re_mod.compile(r"[a-z0-9]+(?:-[a-z0-9]+)*")
 
 # Cookie de la connexion EN COURS : il ne porte que l'identifiant de l'artisan à qui un
 # code vient d'être envoyé, le temps de le taper. Ce n'est pas un secret — la sécurité
@@ -1142,8 +1148,31 @@ def creer_app(depot, registre: Registre, fabrique_llm, horloge=None,
         identifiant = (donnees.get("id") or "").strip()
         if not identifiant:
             erreurs.append("l'identifiant technique est obligatoire")
+        elif not _IDENTIFIANT_VALIDE.fullmatch(identifiant):
+            # R97 : l'identifiant voyage dans des URL (`/admin/artisan/<id>/voir`) et
+            # sert de clé étrangère. Un espace ou une majuscule y passent — « Nexus
+            # artisan » a été créé le 21/09, vingt minutes après l'ouverture de la page
+            # — mais ils fabriquent des liens fragiles et des identifiants qu'on ne peut
+            # pas retaper à l'identique. On les refuse À LA SAISIE : c'est le seul
+            # moment où la correction ne coûte rien.
+            erreurs.append(
+                f"l'identifiant « {identifiant} » doit être en minuscules, sans espace "
+                f"ni accent : lettres, chiffres et tirets (ex. « art-dupont »)")
         elif nouveau and depot.artisan_par_id(identifiant) is not None:
             erreurs.append(f"l'identifiant « {identifiant} » est déjà pris")
+
+        mobile = (donnees.get("telephone") or "").strip()
+        if mobile:
+            # R96 : deux artisans qui partagent un mobile rendent la connexion par SMS
+            # ambiguë, et le registre REFUSE désormais de trancher — donc aucun des deux
+            # ne peut plus se connecter. Le refuser ici est la vraie correction : on
+            # empêche l'ambiguïté d'exister plutôt que de la gérer après coup.
+            autres = [l.id for l in depot.artisans_par_telephone(mobile)
+                      if l.id != identifiant]
+            if autres:
+                erreurs.append(
+                    f"le mobile {mobile} est déjà celui de « {autres[0]} » — deux "
+                    f"artisans qui le partagent ne peuvent plus se connecter par SMS")
 
         try:
             brute = _json_mod.loads(donnees.get("config") or "")
