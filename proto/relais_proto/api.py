@@ -927,7 +927,7 @@ def creer_app(depot, registre: Registre, fabrique_llm, horloge=None,
                            "echu": r.est_echu(t), "expire_a": r.expire_a})
         return HTMLResponse(pages.boite_validation(
             NOM, artisan.config["entreprise"]["prenom_patron"], cartes,
-            vue_admin=vue))
+            vue_admin=vue, entreprise=artisan.config["entreprise"]["nom"]))
 
     @app.get("/app/appels", response_class=HTMLResponse)
     def page_appels(categorie: str = "",
@@ -1007,9 +1007,16 @@ def creer_app(depot, registre: Registre, fabrique_llm, horloge=None,
                                      if tel.isdigit() else tel,
                 "transcript": d.get("transcript") or [],
             })
+        # Le compteur « à valider » vit dans les onglets, donc il faut le connaître
+        # ici aussi : l'artisan doit voir depuis n'importe quel écran s'il a quelque
+        # chose à décider — sinon il faut y aller pour savoir s'il faut y aller.
+        t_maintenant = maintenant()
+        a_valider = sum(1 for r in depot.rdvs_en_attente(artisan.id)
+                        if not r.est_echu(t_maintenant))
         return HTMLResponse(pages.liste_appels(
             NOM, artisan.config["entreprise"]["prenom_patron"], cartes, filtres,
-            vue_admin=vue))
+            vue_admin=vue, entreprise=artisan.config["entreprise"]["nom"],
+            a_valider=a_valider, categorie=categorie))
 
     @app.post("/app/{rdv_id}/{action}")
     def agir(rdv_id: str, action: str,

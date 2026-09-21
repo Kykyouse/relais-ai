@@ -1794,7 +1794,7 @@ def check_app_artisan() -> bool:
         if depot.rdv(rdv.id).statut is not StatutRdv.VALIDE:
             print(f"   le RDV n'est pas validé : {depot.rdv(rdv.id).statut.value}")
             return False
-        if "Aucun rendez-vous en attente" not in julien.get("/app").text:
+        if "Rien à valider" not in julien.get("/app").text:
             print("   la boîte n'est pas vide après validation")
             return False
 
@@ -1840,8 +1840,15 @@ def check_app_artisan() -> bool:
             return False
         page = martin.get("/app").text
         from html import escape as _esc2
-        if _esc2(rdv2.creneau["label"]) in page or "Aucun rendez-vous" not in page:
-            print("   Martin voit les rendez-vous de Dupont")
+        # DEUX conditions distinctes, et la seconde n'est qu'un libellé : le
+        # cloisonnement, c'est que le créneau de Dupont n'apparaisse PAS. Le libellé de
+        # l'état vide a changé le 21/09 avec le nouvel espace ; la vérification de fond,
+        # elle, n'a pas bougé d'un iota.
+        if _esc2(rdv2.creneau["label"]) in page:
+            print("   Martin voit les rendez-vous de Dupont — CLOISONNEMENT ROMPU")
+            return False
+        if "Rien à valider" not in page:
+            print("   la boîte de Martin ne se présente pas comme vide")
             return False
 
     # (g bis) un RDV ÉCHU mais pas encore traité par le worker : il reste dans la liste
@@ -4366,6 +4373,8 @@ def check_page_mes_appels() -> bool:
         # dans la barre de filtres. Chercher la chaîne nue confondrait les deux — et un
         # test qui passe pour la mauvaise raison est pire qu'un test absent. Sur une
         # carte, le libellé est dans un `<span class="cat …">` ; c'est ce qu'on cherche.
+        import re as _re_t12
+
         def categories_affichees(html: str) -> list[str]:
             """Les catégories des CARTES, dans l'ordre où elles sont rendues.
 
@@ -4374,8 +4383,16 @@ def check_page_mes_appels() -> bool:
             passer aussi bien le test d'ordre que celui de contenu pour de mauvaises
             raisons, et un test qui passe par accident est pire qu'un test absent.
             """
-            return [bloc.split("</span>")[0].split(">", 1)[1]
-                    for bloc in html.split('<span class="cat ')[1:]]
+            # Les cartes portent DEUX pastilles : le score, puis la catégorie. On ne
+            # garde que la seconde de chaque carte — la découpe suit le balisage, donc
+            # elle est refaite quand il change (ce fut le cas le 21/09).
+            cartes = html.split('<div class="carte')[1:]
+            vues = []
+            for c in cartes:
+                past = _re_t12.findall(r'<span class="pastille[^"]*">([^<]*)</span>', c)
+                if len(past) >= 2:
+                    vues.append(past[1])
+            return vues
 
         # 1. les trois appels sont là, dont les DEUX sans RDV
         vues = categories_affichees(page)
@@ -5580,7 +5597,14 @@ def check_boite_naffirme_pas_un_sms_non_parti() -> bool:
 
     # (a) UN RDV ÉCHU : aucune action, et aucune affirmation invérifiable
     html = pages.boite_validation("Nelyo", "Julien", [carte(echu=True)])
-    if "<form" in html or "Valider" in html:
+    # L'assertion vise les actions SUR CE RDV, et non « aucun formulaire dans la page ».
+    # Elle disait `"<form" in html` tant que la page était une carte nue ; depuis que
+    # l'espace artisan est un vrai site (21/09), l'en-tête porte légitimement un
+    # formulaire de déconnexion, et le mot « Valider » figure dans le titre de l'onglet.
+    # Une approximation de balisage qui cesse de tenir doit être REMPLACÉE par ce
+    # qu'elle voulait dire, pas relâchée.
+    import re as _re85
+    if _re85.search(r'action="/app/[^"]+/(valider|refuser|reproposer)"', html):
         print("   la boîte offre une action sur un RDV échu (409 garanti au tap)")
         return False
     if "prévenu" in html or "previenu" in html or "prévenue" in html:
@@ -5597,8 +5621,8 @@ def check_boite_naffirme_pas_un_sms_non_parti() -> bool:
 
     # (b) UN RDV ENCORE DÉCIDABLE : les trois actions sont là
     html = pages.boite_validation("Nelyo", "Julien", [carte(echu=False)])
-    for action in ("Valider", "Refuser", "roposer"):
-        if action not in html:
+    for action in ("valider", "refuser", "reproposer"):
+        if f'action="/app/rdv-1/{action}"' not in html:
             print(f"   « {action} » a disparu d'un RDV encore décidable")
             return False
 
@@ -5606,12 +5630,13 @@ def check_boite_naffirme_pas_un_sms_non_parti() -> bool:
     # d'actions. C'est l'ordre qui fait qu'un artisan pressé tape le bon bouton.
     html = pages.boite_validation("Nelyo", "Julien",
                                   [carte(echu=True), carte(echu=False)])
-    if html.count("<form") != 3:
-        print(f"   {html.count('<form')} formulaires pour un seul RDV décidable "
+    actions = _re85.findall(r'action="/app/[^"]+/(?:valider|refuser|reproposer)"', html)
+    if len(actions) != 3:
+        print(f"   {len(actions)} action(s) pour un seul RDV décidable "
               f"(attendu 3 : valider, refuser, reproposer)")
         return False
     corps = html.split("</style>")[-1]
-    if corps.index("Valider") > corps.index("Délai dépassé"):
+    if corps.index("/valider") > corps.index("Délai dépassé"):
         print("   l'échu est affiché AVANT le décidable")
         return False
 

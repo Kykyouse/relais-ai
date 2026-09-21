@@ -171,24 +171,6 @@ a { color: #1a6b3c; }
 """
 
 
-def bandeau_support(artisan_id: str) -> str:
-    """Le bandeau du mode support, sur CHAQUE page regardée par un admin.
-
-    Permanent et en tête, pas discret : celui qui le lit doit être incapable de
-    confondre « ce que je vois » avec « ce que je vois chez quelqu'un d'autre ». Il dit
-    aussi POURQUOI les boutons ont disparu — une interface qui retire des commandes sans
-    l'expliquer se fait prendre pour une panne.
-    """
-    if not artisan_id:
-        return ""
-    return ('<div class="support"><b>Mode support — lecture seule.</b> '
-            "Vous regardez l&#x27;espace de " + escape(artisan_id) + " : "
-            "aucune action n&#x27;est possible d&#x27;ici. "
-            '<form class="enligne" method="post" action="/admin/vue/fin">'
-            '<button class="discret" type="submit">Revenir à l&#x27;admin</button>'
-            "</form></div>")
-
-
 def _page_app(produit: str, titre: str, corps: str) -> str:
     return (
         "<!DOCTYPE html>\n"
@@ -198,173 +180,6 @@ def _page_app(produit: str, titre: str, corps: str) -> str:
         f"<title>{escape(titre)} · {escape(produit)}</title>"
         f"<style>{_STYLE_APP}</style></head>"
         f'<body><main>{corps}<p class="marque">{escape(produit)}</p></main></body></html>')
-
-
-def boite_validation(produit: str, prenom: str, rdvs: list[dict],
-                     vue_admin: str = "") -> str:
-    """LA fonction produit : les rendez-vous à valider, et rien d'autre à l'écran.
-
-    Sans JavaScript : chaque action est un formulaire qui poste puis redirige. Les champs
-    de date et d'heure utilisent les types natifs, donc le sélecteur du téléphone — c'est
-    précisément là qu'un composant maison serait pire que le natif.
-    """
-    # Le lien vers « Mes appels », sur les DEUX sorties de cette fonction. Une page qu'on
-    # ne peut pas atteindre n'existe pas — et c'est la sortie « rien à valider » qui en a
-    # le plus besoin : un écran vide laisse croire qu'il ne s'est rien passé, alors que
-    # des appels sans RDV attendent peut-être d'être rappelés.
-    vers_appels = '<p class="apres"><a href="/app/appels">Tous mes appels</a></p>'
-    bandeau = bandeau_support(vue_admin)
-    if not rdvs:
-        return _page_app(
-            produit,
-            "Rien à valider",
-            bandeau + f"<h1>Bonjour {escape(prenom)}</h1>"
-            '<p class="vide">Aucun rendez-vous en attente. Tout est à jour.</p>'
-            + vers_appels)
-
-    # Les RDV encore décidables d'abord, le plus pressé en tête ; les échus ensuite, à
-    # titre d'information. L'artisan doit voir en haut ce sur quoi il peut agir.
-    ordonnes = sorted(rdvs, key=lambda r: (r["echu"], r["expire_a"]))
-    blocs = []
-    for r in ordonnes:
-        urgent = " urgent" if r["urgence"] else ""
-        mention = " URGENCE" if r["urgence"] else ""
-        raisons = escape(" · ".join(r["raisons"])) if r["raisons"] else ""
-        ident = escape(r["id"])
-        if r["echu"]:
-            # Pas de boutons : le délai est passé, le domaine refuserait toute décision.
-            # Afficher des actions qui ne peuvent qu'échouer serait mentir à l'artisan —
-            # mais le masquer serait pire : il doit savoir qu'il a laissé filer un lead.
-            # ON NE DIT PAS « le client est prévenu » (R85). Le SMS d'expiration est
-            # mis en file par le WORKER, et cette page ne sait pas s'il a tourné : le
-            # 09/09, quatre RDV traînaient depuis des jours avec cette phrase à l'écran
-            # alors qu'aucun client n'avait rien reçu. Même faute que R79 dans
-            # `_sans_rdv` — affirmer un acte au lieu de le constater, avec l'autorité
-            # que donne une interface.
-            #
-            # Ce qui est SÛR se dit quand même : le délai est passé, le créneau est
-            # rendu, et rappeler reste possible. C'est tout ce dont l'artisan a besoin
-            # pour décider quoi faire.
-            actions = ('<p class="perdu">Délai dépassé — le créneau est libéré. '
-                       "Rappelez le client si vous voulez le récupérer.</p>")
-        elif vue_admin:
-            # MODE SUPPORT : les actions ne sont pas désactivées, elles sont ABSENTES.
-            # Un bouton grisé invite à cliquer et laisse croire à une panne ; et de
-            # toute façon le serveur refuserait — l'identité d'emprunt n'existe pas sur
-            # le chemin des actions. Ce qui s'affiche ici doit dire la même chose que ce
-            # que le serveur ferait.
-            actions = ('<p class="raisons">Décision réservée à l&#x27;artisan.</p>')
-        else:
-            actions = (
-                '<div class="actions">'
-                f'<form method="post" action="/app/{ident}/valider">'
-                '<button type="submit">Valider</button></form>'
-                f'<form method="post" action="/app/{ident}/refuser">'
-                '<button type="submit" class="refus">Refuser</button></form>'
-                "</div>"
-                "<details><summary>Proposer un autre créneau</summary>"
-                f'<form method="post" action="/app/{ident}/reproposer">'
-                '<label>Date</label><input type="date" name="date" required>'
-                '<label>De</label><input type="time" name="de" required>'
-                '<label>À</label><input type="time" name="a" required>'
-                '<label></label><button type="submit">Envoyer au client</button>'
-                "</form></details>")
-        blocs.append(
-            f'<div class="rdv{" perime" if r["echu"] else ""}">'
-            f'<span class="score{urgent}">{r["score"]}/5{mention}</span>'
-            f'<p class="creneau">{escape(r["creneau"])}</p>'
-            f'<p class="raisons">{raisons}</p>'
-            f"{actions}</div>")
-    a_decider = sum(1 for r in rdvs if not r["echu"])
-    titre = f"{a_decider} à valider" if a_decider else "Rien à valider"
-    return _page_app(produit, titre,
-                     bandeau + f"<h1>Bonjour {escape(prenom)}</h1>"
-                     + "".join(blocs) + vers_appels)
-
-
-# Ce que chaque catégorie VEUT DIRE à l'artisan, et ce qu'il peut en faire. Vocabulaire
-# fermé, aligné sur `engine.py` — une catégorie inconnue s'affiche telle quelle plutôt que
-# d'être masquée : mieux vaut un libellé brut qu'un appel escamoté.
-#
-# R79 appliqué à l'écran : « une catégorie doit dire à l'artisan ce qu'il peut FAIRE ».
-# D'où la colonne de droite, et d'où l'absence de bouton d'appel sur `injoignable` — c'est
-# précisément la catégorie où il n'y a PAS de numéro. Afficher « Rappeler » là-dessus
-# enverrait l'artisan chercher un téléphone qui n'existe pas.
-_CATEGORIES = {
-    "rdv_reserve":    ("RDV réservé", "ok"),
-    "prioritaire":    ("À rappeler — urgent", "urgent"),
-    "a_rappeler":     ("À rappeler", "action"),
-    "injoignable":    ("Sans numéro", "mort"),
-    "hors_zone":      ("Hors zone", "mort"),
-    "hors_perimetre": ("Hors prestations", "mort"),
-    "spam":           ("Indésirable", "mort"),
-    "appel_muet":     ("Appel muet", "mort"),
-    "autre":          ("Autre", "mort"),
-}
-
-
-def liste_appels(produit: str, prenom: str, appels: list[dict],
-                 filtres: list[tuple] = (), vue_admin: str = "") -> str:
-    """« Mes appels » : ce que l'agent a répondu, RDV ou pas.
-
-    Ajoutée le 21/09 parce qu'il manquait la moitié de la promesse produit. `/app` ne
-    montrait que les RDV à valider ; un appel qui n'aboutissait pas — un client hors zone,
-    un client à rappeler, un numéro jamais obtenu — était capté, scoré, stocké, et vu par
-    personne. L'artisan ne pouvait pas savoir quels appels son agent avait pris.
-
-    Sans JavaScript, comme le reste : les filtres sont des LIENS (un GET par catégorie),
-    le transcript un `<details>` natif. Un filtre qui recharge la page est plus lent qu'un
-    filtre en JS ; il est aussi lisible sans script, indexable par le bouton « précédent »,
-    et partageable par son URL — sur une liste de quelques dizaines de lignes, l'échange
-    est franchement favorable.
-    """
-    # Les filtres disent COMBIEN : un filtre qui mène à une page vide est une déception
-    # qu'on peut éviter AVANT le clic. Ils s'affichent aussi sur une liste vide — c'est
-    # là qu'ils sont le plus utiles, puisqu'ils disent où sont les appels manquants.
-    liens = " · ".join(
-        f'<a href="/app/appels{"" if c is None else "?categorie=" + c}">'
-        f"{escape(nom)} ({n})</a>"
-        for c, nom, n in filtres)
-    entete = (bandeau_support(vue_admin)
-              + f"<h1>Bonjour {escape(prenom)}</h1>"
-              + (f'<p class="filtres">{liens}</p>' if filtres else ""))
-    retour = '<p class="apres"><a href="/app">Mes rendez-vous à valider</a></p>'
-
-    if not appels:
-        return _page_app(
-            produit, "Mes appels",
-            entete + '<p class="vide">Aucun appel ici.</p>' + retour)
-
-    blocs = []
-    for a in appels:
-        libelle, teinte = _CATEGORIES.get(a["categorie"], (a["categorie"], "mort"))
-        urgent = " urgent" if a["urgence"] else ""
-        # Le numéro est la SEULE action possible depuis cette page, et c'est un lien
-        # `tel:` : sur le téléphone de l'artisan, un tap suffit. Rien ne s'affiche quand
-        # il n'y en a pas — voir le commentaire de _CATEGORIES.
-        if a["telephone"]:
-            action = (f'<p class="rappel"><a href="tel:{escape(a["telephone"])}">'
-                      f'Rappeler {escape(a["telephone_lisible"])}</a></p>')
-        else:
-            action = ('<p class="perdu">Aucun numéro recueilli — '
-                      "ce client n'est pas rappelable.</p>")
-        detail = ""
-        if a["transcript"]:
-            lignes = "".join(
-                f'<p class="{"dit-agent" if qui == "agent" else "dit-client"}">'
-                f"<b>{'Agent' if qui == 'agent' else 'Client'}</b> {escape(texte)}</p>"
-                for qui, texte in a["transcript"])
-            detail = (f"<details><summary>Voir la conversation "
-                      f"({len(a['transcript'])} tours)</summary>{lignes}</details>")
-        blocs.append(
-            f'<div class="rdv">'
-            f'<p class="quand">{escape(a["quand"])}</p>'
-            f'<span class="score{urgent}">{a["score"]}/5</span> '
-            f'<span class="cat {teinte}">{escape(libelle)}</span>'
-            f'<p class="creneau">{escape(a["resume"])}</p>'
-            f"{action}{detail}</div>")
-
-    return _page_app(produit, "Mes appels", entete + "".join(blocs) + retour)
 
 
 def action_impossible(produit: str, raison: str) -> str:
@@ -598,3 +413,400 @@ def admin_artisan(produit: str, artisan: dict, config_json: str,
         + escape(config_json) + "</textarea>"
         + '<label></label><button type="submit">Enregistrer</button></form>'
         + regenerer)
+
+
+# ══════════════════════════════════════════════════ L'ESPACE ARTISAN (son outil)
+#
+# UNE ENVELOPPE À PART, et non une extension du gabarit client. Jusqu'au 21/09 l'espace
+# artisan héritait de `_STYLE` : une carte de 30 rem centrée, pensée pour quelqu'un qui
+# ouvre un lien SMS UNE FOIS. Sur un écran d'ordinateur, ça donnait une colonne étroite
+# perdue dans du vide, sans en-tête, sans navigation, sans nom d'entreprise — « une simple
+# page immonde et vide », et le mot était juste.
+#
+# Les deux publics n'ont rien en commun : le client voit une page, une fois, sur son
+# téléphone, et doit pouvoir taper un bouton en trois secondes. L'artisan revient tous les
+# jours, souvent sur un PC, et doit pouvoir S'ORIENTER. Un même gabarit ne peut pas servir
+# les deux sans en trahir un.
+#
+# TOUJOURS SANS JAVASCRIPT : une mise en page n'en a pas besoin. Grille CSS et requêtes de
+# média suffisent, et la page reste lisible, imprimable, et rapide sur un réseau de
+# chantier.
+_STYLE_ESPACE = """
+:root { color-scheme: light dark;
+  --fond: #f2f4f7; --carte: #fff; --trait: #e2e5ea; --texte: #14181f;
+  --doux: #5b6472; --faible: #9aa4b2; --accent: #1a6b3c; --accent-doux: #e8f3ec;
+  --alerte: #98261a; --alerte-doux: #fde8e4; --attention: #7a5510;
+  --attention-doux: #fdf3df; --info: #1c3f7a; --info-doux: #e7eefb; }
+* { box-sizing: border-box; }
+body { margin: 0; font: 16px/1.55 -apple-system, BlinkMacSystemFont, "Segoe UI",
+  Roboto, sans-serif; background: var(--fond); color: var(--texte); }
+
+/* ---- en-tête : l'identité et la navigation, présentes partout ---- */
+.entete { background: var(--carte); border-bottom: 1px solid var(--trait); }
+.entete-int { max-width: 74rem; margin: 0 auto; padding: 0 22px; display: flex;
+  align-items: center; flex-wrap: wrap; gap: 6px 18px; min-height: 62px; }
+.logo { font-weight: 800; font-size: 1.05rem; letter-spacing: .01em;
+  color: var(--accent); text-decoration: none; }
+.qui { color: var(--doux); font-size: .92rem; }
+.qui b { color: var(--texte); font-weight: 650; }
+.entete .pousse { margin-left: auto; }
+.entete form { display: inline; }
+.quitter { background: none; border: 0; color: var(--doux); font-size: .9rem;
+  cursor: pointer; padding: 6px 2px; width: auto; min-height: 0;
+  text-decoration: underline; }
+
+/* ---- onglets ---- */
+.onglets { background: var(--carte); border-bottom: 1px solid var(--trait); }
+.onglets-int { max-width: 74rem; margin: 0 auto; padding: 0 22px; display: flex;
+  gap: 4px; overflow-x: auto; }
+.onglets a { padding: 12px 14px 10px; font-size: .95rem; font-weight: 600;
+  color: var(--doux); text-decoration: none; border-bottom: 3px solid transparent;
+  white-space: nowrap; }
+.onglets a:hover { color: var(--texte); }
+.onglets a.actif { color: var(--accent); border-bottom-color: var(--accent); }
+.onglets .compte { display: inline-block; margin-left: 6px; font-size: .78rem;
+  font-weight: 700; background: var(--accent-doux); color: var(--accent);
+  border-radius: 999px; padding: 1px 7px; vertical-align: 1px; }
+
+/* ---- contenu ---- */
+.contenu { max-width: 74rem; margin: 0 auto; padding: 24px 22px 64px; }
+.contenu h1 { font-size: 1.45rem; margin: 0 0 4px; }
+.sous-titre { color: var(--doux); margin: 0 0 22px; font-size: .96rem; }
+
+/* La GRILLE : une colonne sur téléphone, autant que la largeur en permet ensuite.
+   `auto-fill` plutôt qu'un nombre fixe de colonnes — c'est la place disponible qui
+   décide, pas une taille d'écran devinée à l'avance. */
+.grille { display: grid; gap: 14px;
+  grid-template-columns: repeat(auto-fill, minmax(20rem, 1fr)); }
+.carte { background: var(--carte); border: 1px solid var(--trait); border-radius: 12px;
+  padding: 16px 17px; display: flex; flex-direction: column; }
+.carte .bas { margin-top: auto; }
+.carte.perime { opacity: .68; border-style: dashed; }
+
+/* ---- pastilles ---- */
+.pastille { display: inline-block; font-size: .8rem; font-weight: 700; padding: 2px 9px;
+  border-radius: 999px; background: #eef1f5; color: #3c454a; }
+.pastille.ok { background: var(--accent-doux); color: var(--accent); }
+.pastille.urgent, .pastille.alerte { background: var(--alerte-doux); color: var(--alerte); }
+.pastille.action { background: var(--attention-doux); color: var(--attention); }
+.tete-carte { display: flex; align-items: center; gap: 8px; flex-wrap: wrap;
+  margin: 0 0 10px; }
+.quand { color: var(--faible); font-size: .84rem; margin: 0 0 8px; }
+.creneau { font-size: 1.16rem; font-weight: 650; margin: 0 0 4px; line-height: 1.35; }
+.raisons { color: var(--doux); font-size: .92rem; margin: 0 0 14px; }
+
+/* ---- actions ---- */
+.actions { display: flex; gap: 9px; }
+.actions form { flex: 1; }
+button { width: 100%; min-height: 46px; font-size: 1rem; font-weight: 650; border: 0;
+  border-radius: 9px; background: var(--accent); color: #fff; cursor: pointer; }
+button:hover { filter: brightness(1.08); }
+button.refus { background: var(--carte); color: var(--alerte);
+  border: 1px solid #e2b5ae; }
+button.discret { background: var(--carte); color: var(--doux);
+  border: 1px solid var(--trait); min-height: 38px; font-size: .9rem; width: auto;
+  padding: 0 13px; }
+details { margin-top: 12px; }
+summary { cursor: pointer; color: var(--doux); font-size: .9rem; min-height: 30px; }
+label { display: block; font-size: .86rem; color: var(--doux); margin: 10px 0 4px; }
+input, select, textarea { width: 100%; min-height: 44px; font-size: 1rem; padding: 0 10px;
+  border: 1px solid #cfd5de; border-radius: 8px; background: var(--carte);
+  color: var(--texte); font-family: inherit; }
+a { color: var(--accent); }
+
+/* ---- états vides : ils doivent RASSURER, pas ressembler à une panne ---- */
+.vide { background: var(--carte); border: 1px dashed var(--trait); border-radius: 12px;
+  padding: 34px 24px; text-align: center; color: var(--doux); }
+.vide .gros { font-size: 1.08rem; color: var(--texte); font-weight: 600;
+  margin: 0 0 6px; }
+.vide p { margin: 0; font-size: .95rem; }
+
+/* ---- divers ---- */
+.perdu { color: var(--alerte); font-size: .9rem; margin: 0; }
+.rappel a { display: inline-block; min-height: 42px; line-height: 42px;
+  font-weight: 650; text-decoration: none; }
+.dit-agent, .dit-client { margin: 5px 0; font-size: .9rem; }
+.dit-agent { color: var(--doux); }
+.filtres { display: flex; flex-wrap: wrap; gap: 7px; margin: 0 0 20px; }
+.filtres a { font-size: .88rem; text-decoration: none; padding: 5px 11px;
+  border: 1px solid var(--trait); border-radius: 999px; background: var(--carte);
+  color: var(--doux); }
+.filtres a.actif { border-color: var(--accent); background: var(--accent-doux);
+  color: var(--accent); font-weight: 650; }
+.support { background: var(--info-doux); color: var(--info);
+  border-bottom: 1px solid #c9d8f0; }
+.support-int { max-width: 74rem; margin: 0 auto; padding: 11px 22px; font-size: .93rem;
+  display: flex; align-items: center; gap: 12px; flex-wrap: wrap; }
+.support form { margin-left: auto; }
+.support button { background: var(--carte); color: var(--info); border: 1px solid #b6c8e8;
+  width: auto; min-height: 34px; font-size: .87rem; padding: 0 12px; }
+.pied { max-width: 74rem; margin: 0 auto; padding: 0 22px 34px; color: var(--faible);
+  font-size: .78rem; letter-spacing: .08em; text-transform: uppercase; }
+
+/* Sur téléphone : une colonne, cibles tactiles plus grandes, et l'en-tête se resserre.
+   C'est le cas du CHANTIER — il ne doit rien perdre à ce que le bureau gagne. */
+@media (max-width: 640px) {
+  .entete-int, .onglets-int, .contenu, .support-int, .pied { padding-left: 15px;
+    padding-right: 15px; }
+  .contenu { padding-top: 18px; }
+  .grille { grid-template-columns: 1fr; }
+  button { min-height: 50px; }
+}
+@media (prefers-color-scheme: dark) {
+  :root { --fond: #10141a; --carte: #1b2027; --trait: #2c3542; --texte: #e8eaed;
+    --doux: #9aa4b2; --faible: #6b7684; --accent: #4bbd7e; --accent-doux: #16311f;
+    --alerte: #f0a99f; --alerte-doux: #3d2320; --attention: #e0c07a;
+    --attention-doux: #3a3322; --info: #a8c4ee; --info-doux: #1c2a40; }
+  .pastille { background: #2c3542; color: #c8d0da; }
+  button.refus { border-color: #5a3a34; }
+  input, select, textarea { border-color: #2c3542; }
+  .support { border-bottom-color: #2a3a55; }
+  .support button { border-color: #35496b; }
+}
+"""
+
+
+def _page_espace(produit: str, titre: str, corps: str, *, entreprise: str = "",
+                 prenom: str = "", onglet: str = "", a_valider: int = 0,
+                 vue_admin: str = "") -> str:
+    """L'enveloppe de l'espace artisan : en-tête, onglets, contenu.
+
+    L'ONGLET ACTIF EST UN PARAMÈTRE, pas une déduction faite dans le gabarit : la page
+    sait où elle est, l'enveloppe n'a pas à le redeviner en lisant une URL.
+
+    Le compteur « à valider » vit dans les onglets et pas seulement sur la page des RDV.
+    C'est le seul chiffre qui appelle une action, et l'artisan doit le voir depuis
+    n'importe quel écran — sinon il faut y aller pour savoir s'il faut y aller.
+    """
+    bandeau = ""
+    if vue_admin:
+        bandeau = (
+            '<div class="support"><div class="support-int">'
+            "<span><b>Mode support — lecture seule.</b> Vous regardez l&#x27;espace de "
+            + escape(vue_admin) + " ; aucune action n&#x27;est possible d&#x27;ici."
+            "</span>"
+            '<form method="post" action="/admin/vue/fin">'
+            '<button type="submit">Revenir à l&#x27;administration</button></form>'
+            "</div></div>")
+
+    def lien(href: str, texte: str, cle: str, compte: int = 0) -> str:
+        pastille = (f'<span class="compte">{compte}</span>' if compte else "")
+        actif = " class=\"actif\"" if onglet == cle else ""
+        return f'<a href="{href}"{actif}>{texte}{pastille}</a>'
+
+    identite = ""
+    if entreprise:
+        identite = ('<span class="qui"><b>' + escape(entreprise) + "</b>"
+                    + (" · " + escape(prenom) if prenom else "") + "</span>")
+    deconnexion = ""
+    if not vue_admin:
+        deconnexion = ('<span class="pousse">'
+                       '<form method="post" action="/deconnexion">'
+                       '<button class="quitter" type="submit">Se déconnecter</button>'
+                       "</form></span>")
+    return (
+        "<!DOCTYPE html>\n"
+        '<html lang="fr"><head><meta charset="utf-8">'
+        '<meta name="viewport" content="width=device-width, initial-scale=1">'
+        '<meta name="robots" content="noindex, nofollow">'
+        f"<title>{escape(titre)} · {escape(produit)}</title>"
+        f"<style>{_STYLE_ESPACE}</style></head><body>"
+        + bandeau
+        + '<header class="entete"><div class="entete-int">'
+        + f'<a class="logo" href="/app">{escape(produit)}</a>'
+        + identite + deconnexion
+        + "</div></header>"
+        + '<nav class="onglets"><div class="onglets-int">'
+        + lien("/app", "Rendez-vous à valider", "rdv", a_valider)
+        + lien("/app/appels", "Mes appels", "appels")
+        + "</div></nav>"
+        + f'<main class="contenu">{corps}</main>'
+        + f'<p class="pied">{escape(produit)}</p>'
+        + "</body></html>")
+
+
+# Ce que chaque catégorie VEUT DIRE à l'artisan, et ce qu'il peut en faire. Vocabulaire
+# fermé, aligné sur `engine.py` — une catégorie inconnue s'affiche telle quelle plutôt
+# que d'être masquée : mieux vaut un libellé brut qu'un appel escamoté.
+#
+# R79 appliqué à l'écran : « une catégorie doit dire à l'artisan ce qu'il peut FAIRE ».
+# La teinte n'est pas décorative — elle sépare ce sur quoi il peut agir de ce qui est
+# clos. D'où l'absence de bouton d'appel sur `injoignable` : c'est précisément la
+# catégorie où il n'y a PAS de numéro.
+_CATEGORIES = {
+    "rdv_reserve":    ("RDV réservé", "ok"),
+    "prioritaire":    ("À rappeler — urgent", "urgent"),
+    "a_rappeler":     ("À rappeler", "action"),
+    "injoignable":    ("Sans numéro", ""),
+    "hors_zone":      ("Hors zone", ""),
+    "hors_perimetre": ("Hors prestations", ""),
+    "spam":           ("Indésirable", ""),
+    "appel_muet":     ("Appel muet", ""),
+    "autre":          ("Autre", ""),
+}
+
+
+def boite_validation(produit: str, prenom: str, rdvs: list[dict],
+                     vue_admin: str = "", entreprise: str = "") -> str:
+    """LA fonction produit : les rendez-vous à valider.
+
+    Sans JavaScript : chaque action est un formulaire qui poste puis redirige. Les champs
+    de date et d'heure utilisent les types natifs, donc le sélecteur du téléphone — c'est
+    précisément là qu'un composant maison serait pire que le natif.
+
+    Les RDV encore décidables d'abord, le plus pressé en tête ; les échus ensuite, à titre
+    d'information. L'artisan doit voir en haut ce sur quoi il peut agir.
+    """
+    a_decider = sum(1 for r in rdvs if not r["echu"])
+    enveloppe = lambda corps, titre: _page_espace(  # noqa: E731
+        produit, titre, corps, entreprise=entreprise, prenom=prenom,
+        onglet="rdv", a_valider=a_decider, vue_admin=vue_admin)
+
+    if not rdvs:
+        return enveloppe(
+            "<h1>Rendez-vous à valider</h1>"
+            '<p class="sous-titre">Ce que votre agent a réservé et qui attend votre '
+            "accord.</p>"
+            '<div class="vide"><p class="gros">Rien à valider.</p>'
+            "<p>Tout est à jour. Les appels reçus restent consultables dans "
+            '<a href="/app/appels">Mes appels</a>.</p></div>',
+            "Rien à valider")
+
+    blocs = []
+    for r in sorted(rdvs, key=lambda x: (x["echu"], x["expire_a"])):
+        ident = escape(r["id"])
+        pastilles = [f'<span class="pastille{" urgent" if r["urgence"] else ""}">'
+                     f'{r["score"]}/5{" URGENCE" if r["urgence"] else ""}</span>']
+        if r["echu"]:
+            pastilles.append('<span class="pastille alerte">Délai dépassé</span>')
+        if r["echu"]:
+            # Pas de boutons : le délai est passé, le domaine refuserait toute décision.
+            # Afficher des actions qui ne peuvent qu'échouer serait mentir à l'artisan —
+            # mais le masquer serait pire : il doit savoir qu'il a laissé filer un lead.
+            # ON NE DIT PAS « le client est prévenu » (R85). Le SMS d'expiration est mis
+            # en file par le WORKER, et cette page ne sait pas s'il a tourné : le 09/09,
+            # quatre RDV traînaient depuis des jours avec cette phrase à l'écran alors
+            # qu'aucun client n'avait rien reçu. Même faute que R79 dans `_sans_rdv`.
+            #
+            # Ce qui est SÛR se dit quand même : le délai est passé, le créneau est rendu,
+            # et rappeler reste possible.
+            actions = ('<p class="perdu">Le créneau est libéré. Rappelez le client si '
+                       "vous voulez le récupérer.</p>")
+        elif vue_admin:
+            # MODE SUPPORT : les actions ne sont pas désactivées, elles sont ABSENTES.
+            # Un bouton grisé invite à cliquer et laisse croire à une panne ; et de toute
+            # façon le serveur refuserait — l'identité d'emprunt n'existe pas sur le
+            # chemin des actions. Ce qui s'affiche doit dire ce que le serveur ferait.
+            actions = '<p class="raisons">Décision réservée à l&#x27;artisan.</p>'
+        else:
+            actions = (
+                '<div class="actions">'
+                f'<form method="post" action="/app/{ident}/valider">'
+                '<button type="submit">Valider</button></form>'
+                f'<form method="post" action="/app/{ident}/refuser">'
+                '<button type="submit" class="refus">Refuser</button></form>'
+                "</div>"
+                "<details><summary>Proposer un autre créneau</summary>"
+                f'<form method="post" action="/app/{ident}/reproposer">'
+                '<label>Date</label><input type="date" name="date" required>'
+                '<label>De</label><input type="time" name="de" required>'
+                '<label>À</label><input type="time" name="a" required>'
+                '<label></label><button type="submit">Envoyer au client</button>'
+                "</form></details>")
+        blocs.append(
+            f'<div class="carte{" perime" if r["echu"] else ""}">'
+            f'<div class="tete-carte">{"".join(pastilles)}</div>'
+            f'<p class="creneau">{escape(r["creneau"])}</p>'
+            f'<p class="raisons">{escape(" · ".join(r["raisons"])) if r["raisons"] else ""}</p>'
+            f'<div class="bas">{actions}</div></div>')
+
+    titre = f"{a_decider} à valider" if a_decider else "Rien à valider"
+    sous = ("Validez ou refusez : le client reçoit un SMS dès votre décision."
+            if a_decider else "Plus rien à décider — ce qui suit est passé.")
+    return enveloppe(
+        "<h1>Rendez-vous à valider</h1>"
+        f'<p class="sous-titre">{sous}</p>'
+        f'<div class="grille">{"".join(blocs)}</div>',
+        titre)
+
+
+def liste_appels(produit: str, prenom: str, appels: list[dict],
+                 filtres: list[tuple] = (), vue_admin: str = "",
+                 entreprise: str = "", a_valider: int = 0,
+                 categorie: str = "") -> str:
+    """« Mes appels » : ce que l'agent a répondu, RDV ou pas.
+
+    Ajoutée le 21/09 parce qu'il manquait la moitié de la promesse produit. `/app` ne
+    montrait que les RDV à valider ; un appel qui n'aboutissait pas — un client hors
+    zone, un client à rappeler, un numéro jamais obtenu — était capté, scoré, stocké, et
+    vu par personne.
+
+    Sans JavaScript, comme le reste : les filtres sont des LIENS (un GET par catégorie),
+    le transcript un `<details>` natif. Un filtre qui recharge la page est plus lent
+    qu'un filtre en JS ; il est aussi lisible sans script, compatible avec le bouton
+    « précédent », et partageable par son URL.
+    """
+    enveloppe = lambda corps, titre: _page_espace(  # noqa: E731
+        produit, titre, corps, entreprise=entreprise, prenom=prenom,
+        onglet="appels", a_valider=a_valider, vue_admin=vue_admin)
+
+    # Les filtres disent COMBIEN : un filtre qui mène à une page vide est une déception
+    # qu'on peut éviter AVANT le clic. Ils s'affichent aussi sur une liste vide — c'est
+    # là qu'ils sont le plus utiles, puisqu'ils disent où sont les appels manquants.
+    liens = "".join(
+        '<a href="/app/appels{}"{}>{} ({})</a>'.format(
+            "" if c is None else "?categorie=" + c,
+            ' class="actif"' if (c or "") == categorie else "",
+            escape(nom), n)
+        for c, nom, n in filtres)
+    barre = f'<div class="filtres">{liens}</div>' if filtres else ""
+
+    if not appels:
+        return enveloppe(
+            "<h1>Mes appels</h1>"
+            '<p class="sous-titre">Tout ce que votre agent a pris, avec ou sans '
+            "rendez-vous.</p>" + barre +
+            '<div class="vide"><p class="gros">Aucun appel ici.</p>'
+            "<p>Dès qu&#x27;un client appellera, vous verrez ce qu&#x27;il a demandé "
+            "et pourrez le rappeler d&#x27;un tap.</p></div>",
+            "Mes appels")
+
+    blocs = []
+    for a in appels:
+        libelle, teinte = _CATEGORIES.get(a["categorie"], (a["categorie"], ""))
+        urgent = " urgent" if a["urgence"] else ""
+        # Le numéro est la SEULE action possible depuis cette page, et c'est un lien
+        # `tel:` : sur le téléphone de l'artisan, un tap suffit. Rien ne s'affiche quand
+        # il n'y en a pas — R79 porté à l'écran : une catégorie doit dire ce qu'on peut
+        # FAIRE, et « Rappeler » sans numéro envoie chercher un téléphone inexistant.
+        if a["telephone"]:
+            action = ('<p class="rappel"><a href="tel:' + escape(a["telephone"]) + '">'
+                      "Rappeler " + escape(a["telephone_lisible"]) + "</a></p>")
+        else:
+            action = ('<p class="perdu">Aucun numéro recueilli — '
+                      "ce client n&#x27;est pas rappelable.</p>")
+        detail = ""
+        if a["transcript"]:
+            lignes = "".join(
+                '<p class="{}"><b>{}</b> {}</p>'.format(
+                    "dit-agent" if qui == "agent" else "dit-client",
+                    "Agent" if qui == "agent" else "Client", escape(texte))
+                for qui, texte in a["transcript"])
+            detail = ("<details><summary>Voir la conversation ("
+                      + str(len(a["transcript"])) + " tours)</summary>"
+                      + lignes + "</details>")
+        blocs.append(
+            '<div class="carte">'
+            + f'<p class="quand">{escape(a["quand"])}</p>'
+            + f'<div class="tete-carte"><span class="pastille{urgent}">'
+              f'{a["score"]}/5</span>'
+            + f'<span class="pastille {teinte}">{escape(libelle)}</span></div>'
+            + f'<p class="creneau">{escape(a["resume"])}</p>'
+            + f'<div class="bas">{action}{detail}</div></div>')
+
+    return enveloppe(
+        "<h1>Mes appels</h1>"
+        '<p class="sous-titre">Tout ce que votre agent a pris, avec ou sans '
+        "rendez-vous.</p>" + barre
+        + f'<div class="grille">{"".join(blocs)}</div>',
+        "Mes appels")
