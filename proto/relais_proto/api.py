@@ -439,7 +439,8 @@ def creer_app(depot, registre: Registre, fabrique_llm, horloge=None,
                                  numero_appelant=_vapi.numero_appelant(corps))
             texte = convo.open()
             if appel is None:
-                depot.ouvrir_appel(artisan.id, t, appel_id=appel_id)
+                depot.ouvrir_appel(artisan.id, t, appel_id=appel_id,
+                                   config=artisan.config)
                 # premier tour de CET appel : le seul moment où l'on capture
                 _capturer_payload(corps, entetes, t, voie)
             depot.enregistrer_etat(appel_id, convo.to_dict())
@@ -550,7 +551,11 @@ def creer_app(depot, registre: Registre, fabrique_llm, horloge=None,
         convo = Conversation(artisan.config, fabrique_llm(),
                              CalendarStub(artisan.config, now=t))
         texte = convo.open()
-        appel = depot.ouvrir_appel(artisan.id, t)
+        # L'INSTANTANÉ de config (migration 011) : ce que l'agent sait est figé au
+        # moment où l'appel s'ouvre. C'est ce qui remplace l'historique git du
+        # fichier de config — et qui permet, un mois plus tard, de répondre
+        # exactement à « qu'est-ce que l'agent savait pendant CET appel ? ».
+        appel = depot.ouvrir_appel(artisan.id, t, config=artisan.config)
         depot.enregistrer_etat(appel.id, convo.to_dict())
         return TourOut(appel_id=appel.id, texte=texte, termine=False)
 

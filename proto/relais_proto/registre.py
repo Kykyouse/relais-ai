@@ -21,6 +21,7 @@ import secrets
 from dataclasses import dataclass
 
 from . import produit, temps
+from .depot import normaliser_numero
 
 
 def empreinte(secret: str) -> str:
@@ -113,8 +114,17 @@ class Registre:
         déjà géré partout (l'API rend 404, le worker le signale au lieu de deviner), mais
         il faut que quelqu'un puisse le VOIR au démarrage.
 
-        La config reste un fichier : c'est son historique git qui répond à « qu'est-ce que
-        l'agent savait le jour de cet appel ? ».
+        LA CONFIG VIENT DE LA BASE quand elle y est (migration 011), du fichier sinon.
+
+        L'ordre compte et il a changé le 21/09. Le fichier versionné répondait à
+        « qu'est-ce que l'agent savait le jour de cet appel ? » par son historique git —
+        mais il faisait payer cette réponse par un COMMIT ET UN REDÉPLOIEMENT à chaque
+        inscription d'artisan et à chaque changement de zone ou de tarif. La garantie est
+        désormais portée par `appel.config_utilisee`, figée sur la ligne d'appel : une
+        lecture exacte au lieu d'un recoupement de dates de déploiement.
+
+        Le fichier reste comme MODÈLE et comme repli — une base antérieure à la migration
+        continue de fonctionner sans être convertie.
         """
         # chargée UNE fois, et avant tout le reste : une config produit invalide (nom
         # vide, expéditeur non conforme AF2M) doit empêcher le démarrage, pas produire
@@ -127,17 +137,20 @@ class Registre:
                                f"numero_relais={ligne.numero_relais!r}, "
                                f"config={ligne.config_fichier!r})")
                 continue
-            chemin = dossier_config / ligne.config_fichier
-            if not chemin.exists():
-                ignores.append(f"{ligne.id} (config introuvable : {chemin.name})")
-                continue
+            if ligne.config is not None:
+                brute = ligne.config
+            else:
+                chemin = dossier_config / ligne.config_fichier
+                if not chemin.exists():
+                    ignores.append(f"{ligne.id} (config introuvable : {chemin.name})")
+                    continue
+                brute = json.loads(chemin.read_text(encoding="utf-8"))
             artisans.append(Artisan(
                 id=ligne.id, numero_relais=ligne.numero_relais,
                 token_sha256=ligne.token_sha256 or "",
                 telephone=ligne.telephone, etat_abonnement=ligne.etat_abonnement,
                 config_fichier=ligne.config_fichier,
-                config=produit.appliquer(
-                    json.loads(chemin.read_text(encoding="utf-8")), p)))
+                config=produit.appliquer(brute, p)))
         return cls(artisans, empreinte(secret_webhook), config_produit=p), ignores
 
     @classmethod
@@ -202,10 +215,121 @@ class Registre:
                                       empreinte(secret or ""))
 
 
-def _normaliser(numero: str) -> str:
-    """« 01 89 70 12 34 », « +33189701234 » : la plateforme vocale ne garantit pas le
-    format. On ne garde que les chiffres et un éventuel indicatif."""
-    chiffres = "".join(c for c in (numero or "") if c.isdigit())
-    if chiffres.startswith("33") and len(chiffres) == 11:
-        return "0" + chiffres[2:]
-    return chiffres
+# La normalisation a DÉMÉNAGÉ dans `depot.py` le 21/09 : la migration 011 en stocke le
+# résultat en colonne pour pouvoir l'indexer, et il ne doit exister qu'une définition de
+# « le même numéro » dans le système. L'alias reste — c'est le nom sous lequel ce module
+# la connaît, et plusieurs appelants s'en servent.
+_normaliser = normaliser_numero
+
+
+class RegistreBase:
+    """Le registre LU EN BASE, à chaque recherche. Même interface que `Registre`.
+
+    Pourquoi une seconde implémentation plutôt qu'un mode de la première : `Registre` est
+    un objet-valeur construit à partir d'une liste, et seize tests le construisent ainsi.
+    Deux implémentations d'une même interface, éprouvées par un contrat commun, est
+    exactement le motif déjà retenu pour le port `Depot` — et il vaut mieux qu'une classe
+    dont le comportement dépend de son constructeur.
+
+    CE QU'ELLE CORRIGE (21/09). `Registre.charger` lisait la table UNE FOIS au démarrage
+    de `serveur.py`. Un artisan écrit en base restait donc invisible jusqu'au
+    redéploiement suivant — constaté en semant l'artisan de démo, dont le jeton tout neuf
+    n'était reconnu par personne. Cela condamnait la page d'admin avant même de l'écrire :
+    un formulaire qui crée un artisan ne sert à rien si l'application ne le voit qu'au
+    prochain déploiement. Et un cache local aurait divergé dès le second processus.
+
+    UNE PROPRIÉTÉ EST AMÉLIORÉE AU PASSAGE, pas seulement conservée. `Registre` validait
+    le fuseau de TOUS les artisans à la construction et refusait de démarrer si l'un
+    d'eux était faux : une faute de frappe dans la config d'un client empêchait de servir
+    tous les autres. Ici la validation est par artisan, au moment de le lire : celui dont
+    la config est invalide est écarté et signalé, les autres sont servis.
+    """
+
+    def __init__(self, depot, config_produit: dict, secret_webhook_sha256: str,
+                 dossier_config: pathlib.Path, journal=print):
+        self.produit = config_produit
+        self._depot = depot
+        self._secret_webhook_sha256 = secret_webhook_sha256
+        self._dossier = dossier_config
+        self._journal = journal
+
+    # ---- conversion ----
+    def _artisan(self, ligne) -> Artisan | None:
+        """Une ligne de base en `Artisan`, ou `None` si elle n'est pas servable.
+
+        Rend `None` plutôt que de lever : un artisan mal configuré ne doit pas faire
+        tomber la requête d'un autre. Le motif est journalisé — un artisan écarté en
+        silence serait un appel qui meurt sans explication.
+        """
+        if ligne is None or not ligne.utilisable():
+            return None
+        if ligne.config is not None:
+            brute = ligne.config
+        else:
+            chemin = self._dossier / ligne.config_fichier
+            if not chemin.exists():
+                self._journal(f"  ⚠️  artisan écarté : {ligne.id} "
+                              f"(config introuvable : {chemin.name})")
+                return None
+            brute = json.loads(chemin.read_text(encoding="utf-8"))
+        cfg = produit.appliquer(brute, self.produit)
+        try:
+            temps.fuseau(cfg)
+        except Exception as exc:
+            self._journal(f"  ⚠️  artisan écarté : {ligne.id} "
+                          f"(fuseau invalide {cfg.get('fuseau')!r} — {exc})")
+            return None
+        return Artisan(id=ligne.id, numero_relais=ligne.numero_relais,
+                       token_sha256=ligne.token_sha256 or "",
+                       telephone=ligne.telephone,
+                       etat_abonnement=ligne.etat_abonnement,
+                       config_fichier=ligne.config_fichier, config=cfg)
+
+    # ---- accès ----
+    def artisan(self, artisan_id: str) -> Artisan | None:
+        return self._artisan(self._depot.artisan_par_id(artisan_id))
+
+    def par_numero_relais(self, numero: str) -> Artisan | None:
+        return self._artisan(self._depot.artisan_par_numero_relais(numero))
+
+    def par_telephone(self, numero: str) -> Artisan | None:
+        return self._artisan(self._depot.artisan_par_telephone(numero)) if numero else None
+
+    def par_token(self, token: str) -> Artisan | None:
+        """Recherche indexée, PUIS comparaison à temps constant.
+
+        `Registre` parcourait tous les artisans avec `compare_digest` pour que ni la
+        validité du jeton ni la position de son porteur ne se lisent dans le temps de
+        réponse. L'index remplace le parcours — il ne doit pas remplacer la comparaison.
+        Elle est donc refaite ici sur la ligne rendue : ce que l'index fait gagner, il ne
+        le fait pas perdre.
+        """
+        cible = empreinte(token or "")
+        if not token:
+            return None
+        ligne = self._depot.artisan_par_token(cible)
+        if ligne is None or not secrets.compare_digest(ligne.token_sha256 or "", cible):
+            return None
+        return self._artisan(ligne)
+
+    def secret_webhook_valide(self, secret: str) -> bool:
+        return secrets.compare_digest(self._secret_webhook_sha256,
+                                      empreinte(secret or ""))
+
+    # ---- diagnostic de démarrage ----
+    def inventaire(self) -> tuple[int, list[str]]:
+        """(servables, écartés) — pour l'annonce au démarrage. Un parcours complet, mais
+        UNE fois : c'est un diagnostic, pas un chemin de requête.
+
+        Il ne remplace pas la validation par artisan et ne bloque rien : il rend visible,
+        au démarrage, ce qui serait sinon découvert au premier appel d'un client.
+        """
+        ecartes = []
+        servables = 0
+        for ligne in self._depot.artisans():
+            if self._artisan(ligne) is not None:
+                servables += 1
+            else:
+                ecartes.append(f"{ligne.id} ({ligne.etat_abonnement}, "
+                               f"numero_relais={ligne.numero_relais!r})")
+        return servables, ecartes

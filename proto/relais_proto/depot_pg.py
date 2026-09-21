@@ -22,7 +22,8 @@ from __future__ import annotations
 import datetime as dt
 import uuid
 
-from .depot import Appel, CodeConnexion, Introuvable, Lead, LigneArtisan
+from .depot import (Appel, CodeConnexion, Introuvable, Lead, LigneArtisan,
+                    normaliser_numero)
 from .messages import Brouillon, MessageSortant, StatutMessage
 from .rdv import Rdv, StatutRdv, TERMINAUX
 
@@ -155,8 +156,11 @@ class DepotPostgres:
             return cur.rowcount
 
     # ---- registre des artisans ----
+    # L'ORDRE DOIT SUIVRE `LigneArtisan`, qui est construit par position (`*l`). `config`
+    # est en dernier parce que le dataclass l'y a mis — une colonne insérée au milieu
+    # décalerait silencieusement tous les champs suivants.
     _COLS_ARTISAN = ("id, nom_affiche, numero_relais, telephone, config_fichier, "
-                     "token_sha256, etat_abonnement")
+                     "token_sha256, etat_abonnement, config")
 
     def artisans(self) -> list[LigneArtisan]:
         return [LigneArtisan(*l) for l in self._plusieurs(
@@ -166,16 +170,63 @@ class DepotPostgres:
         """UPSERT : la synchronisation depuis le registre fichier rejoue cet appel à
         chaque démarrage. `etat_abonnement` est volontairement mis à jour lui aussi —
         c'est ainsi qu'une ligne « a_reprendre » créée par la migration 008 redevient un
-        artisan normal dès qu'on la reconnaît."""
+        artisan normal dès qu'on la reconnaît.
+
+        Les colonnes normalisées sont écrites ICI, jamais calculées en SQL : il ne doit
+        exister qu'une définition de « le même numéro » (cf. `normaliser_numero`). C'est
+        l'écriture qui les maintient, la migration 011 n'ayant fait que reprendre
+        l'existant une fois.
+        """
+        from psycopg.types.json import Jsonb
         self._executer(
-            f"insert into artisan ({self._COLS_ARTISAN}) values (%s,%s,%s,%s,%s,%s,%s) "
+            f"insert into artisan ({self._COLS_ARTISAN}, telephone_normalise, "
+            "numero_relais_normalise) values (%s,%s,%s,%s,%s,%s,%s,%s,%s,%s) "
             "on conflict (id) do update set nom_affiche = excluded.nom_affiche, "
             "numero_relais = excluded.numero_relais, telephone = excluded.telephone, "
             "config_fichier = excluded.config_fichier, "
             "token_sha256 = excluded.token_sha256, "
-            "etat_abonnement = excluded.etat_abonnement",
+            "etat_abonnement = excluded.etat_abonnement, "
+            "config = excluded.config, "
+            "telephone_normalise = excluded.telephone_normalise, "
+            "numero_relais_normalise = excluded.numero_relais_normalise",
             (ligne.id, ligne.nom_affiche, ligne.numero_relais, ligne.telephone,
-             ligne.config_fichier, ligne.token_sha256, ligne.etat_abonnement))
+             ligne.config_fichier, ligne.token_sha256, ligne.etat_abonnement,
+             Jsonb(ligne.config) if ligne.config is not None else None,
+             normaliser_numero(ligne.telephone) or None,
+             normaliser_numero(ligne.numero_relais) or None))
+
+    def artisan_par_id(self, artisan_id: str) -> LigneArtisan | None:
+        return self._un_ou_rien(
+            f"select {self._COLS_ARTISAN} from artisan where id = %s", (artisan_id,))
+
+    def artisan_par_token(self, empreinte: str) -> LigneArtisan | None:
+        # Une empreinte vide ne cherche rien : sans ce garde, `token_sha256 is null`
+        # ferait correspondre toutes les lignes de reprise de la migration 008.
+        if not empreinte:
+            return None
+        return self._un_ou_rien(
+            f"select {self._COLS_ARTISAN} from artisan where token_sha256 = %s",
+            (empreinte,))
+
+    def artisan_par_telephone(self, numero: str) -> LigneArtisan | None:
+        cible = normaliser_numero(numero)
+        if not cible:
+            return None
+        return self._un_ou_rien(
+            f"select {self._COLS_ARTISAN} from artisan "
+            "where telephone_normalise = %s order by id", (cible,))
+
+    def artisan_par_numero_relais(self, numero: str) -> LigneArtisan | None:
+        cible = normaliser_numero(numero)
+        if not cible:
+            return None
+        return self._un_ou_rien(
+            f"select {self._COLS_ARTISAN} from artisan "
+            "where numero_relais_normalise = %s", (cible,))
+
+    def _un_ou_rien(self, sql: str, params) -> LigneArtisan | None:
+        lignes = self._plusieurs(sql + " limit 1", params)
+        return LigneArtisan(*lignes[0]) if lignes else None
 
     # ---- codes de connexion ----
     def poser_code_connexion(self, artisan_id: str, empreinte: str,
@@ -211,15 +262,23 @@ class DepotPostgres:
 
     # ---- appels ----
     def ouvrir_appel(self, artisan_id: str, maintenant: dt.datetime,
-                     appel_id: str | None = None) -> Appel:
+                     appel_id: str | None = None,
+                     config: dict | None = None) -> Appel:
         # `appel_id` imposé : voir le port. La colonne est de type `uuid`, et
         # l'identifiant d'appel de la plateforme vocale en est un — `_uuid` refuse tout
         # ce qui n'en serait pas, plutôt que de laisser Postgres lever une erreur de cast.
+        #
+        # `config` est figée ICI et nulle part ailleurs : à l'ouverture, une fois. Écrite
+        # plus tard, elle daterait d'après l'appel et ne dirait plus ce que l'agent savait
+        # en le prenant — ce serait une donnée fausse portant le nom d'une preuve.
         appel = Appel(id=self._uuid(appel_id, appel_id) if appel_id else self._id(),
-                      artisan_id=artisan_id, debut_a=maintenant)
+                      artisan_id=artisan_id, debut_a=maintenant,
+                      config_utilisee=config)
         self._executer(
-            "insert into appel (id, artisan_id, debut_a) values (%s, %s, %s)",
-            (appel.id, artisan_id, maintenant))
+            "insert into appel (id, artisan_id, debut_a, config_utilisee) "
+            "values (%s, %s, %s, %s)",
+            (appel.id, artisan_id, maintenant,
+             _json(config) if config is not None else None))
         return appel
 
     def enregistrer_etat(self, appel_id: str, etat: dict) -> None:
@@ -231,11 +290,11 @@ class DepotPostgres:
     def appel(self, appel_id: str) -> Appel:
         appel_id = self._uuid(appel_id, appel_id)
         ligne = self._un(
-            "select id, artisan_id, debut_a, fin_a, lead_id, etat_conversation "
-            "from appel where id = %s", (appel_id,), appel_id)
+            "select id, artisan_id, debut_a, fin_a, lead_id, etat_conversation, "
+            "config_utilisee from appel where id = %s", (appel_id,), appel_id)
         return Appel(id=str(ligne[0]), artisan_id=ligne[1], debut_a=ligne[2],
                      fin_a=ligne[3], lead_id=str(ligne[4]) if ligne[4] else None,
-                     etat_conversation=ligne[5])
+                     etat_conversation=ligne[5], config_utilisee=ligne[6])
 
     def cloturer_appel(self, appel_id: str, lead_donnees: dict,
                        maintenant: dt.datetime) -> Lead:

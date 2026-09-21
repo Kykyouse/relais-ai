@@ -3693,6 +3693,108 @@ def _appel_sans_rdv(depot, nom_scenario: str, maintenant: dt.datetime):
     return depot.cloturer_appel(appel.id, build_lead(convo), maintenant)
 
 
+def check_registre_lu_en_base() -> bool:
+    """R95 : le registre lu EN BASE se comporte comme celui tenu en mémoire — et voit
+    les artisans écrits APRÈS son ouverture.
+
+    Le défaut, constaté le 20/09 en semant l'artisan de démo : `Registre.charger` lisait
+    la table une fois au démarrage de `serveur.py` et ne la relisait jamais. Le jeton
+    tout neuf de l'artisan n'était reconnu par personne, et seul un redéploiement l'a
+    rendu visible. Ça ne gênait encore personne — et ça condamnait la page d'admin avant
+    qu'elle soit écrite : un formulaire qui crée un artisan ne sert à rien si
+    l'application ne le voit qu'au déploiement suivant.
+
+    Un cache local rafraîchi après écriture aurait suffi sur UN processus et aurait
+    divergé dès le second — le genre de correctif qui marche jusqu'au jour où l'on monte
+    en charge, c'est-à-dire le pire jour.
+
+    Ce test tient trois choses :
+
+    1. **la même interface rend la même chose** que le registre en mémoire, sur les
+       quatre recherches. Deux implémentations d'un même rôle, un contrat commun — le
+       motif déjà retenu pour le port `Depot` ;
+    2. **un artisan créé après coup est trouvé immédiatement**, sans redémarrage. C'est
+       le défaut d'origine, et c'est ce que la page d'admin exige ;
+    3. **une config invalide n'écarte que son artisan.** `Registre` validait tous les
+       fuseaux à la construction et refusait de démarrer si l'un était faux : la faute de
+       frappe d'un client empêchait de servir tous les autres. Ici elle n'écarte que lui.
+    """
+    import json as _json
+    from relais_proto.depot import LigneArtisan
+    from relais_proto.registre import (Artisan, Registre, RegistreBase,
+                                       empreinte as emp)
+
+    p = produit.charger(_DOSSIER_CONFIG)
+    brute = _json.loads((_DOSSIER_CONFIG / "dupont.json").read_text(encoding="utf-8"))
+    depot = DepotMemoire()
+    depot.enregistrer_artisan(LigneArtisan(
+        id="art-dupont", nom_affiche="Dupont Chauffage",
+        numero_relais="+33189701234", telephone="+33612345678",
+        token_sha256=emp("tok-a"), config=brute))
+
+    en_base = RegistreBase(depot, p, emp("secret"), _DOSSIER_CONFIG, journal=lambda m: None)
+    en_memoire = Registre([Artisan("art-dupont", "+33189701234", emp("tok-a"),
+                                   produit.appliquer(brute, p),
+                                   telephone="+33612345678")], emp("secret"))
+
+    # (1) même comportement sur les quatre recherches, y compris les cas négatifs
+    cas = [("artisan", "art-dupont"), ("artisan", "art-inconnu"),
+           ("par_numero_relais", "0189701234"), ("par_numero_relais", "+33189701234"),
+           ("par_numero_relais", "0100000000"),
+           ("par_telephone", "06 12 34 56 78"), ("par_telephone", "0699999999"),
+           ("par_telephone", ""),
+           ("par_token", "tok-a"), ("par_token", "tok-faux"), ("par_token", "")]
+    for methode, argument in cas:
+        a = getattr(en_base, methode)(argument)
+        b = getattr(en_memoire, methode)(argument)
+        if (a is None) != (b is None) or (a is not None and a.id != b.id):
+            print(f"   {methode}({argument!r}) : base={a and a.id!r} "
+                  f"mémoire={b and b.id!r} — les deux registres divergent")
+            return False
+    if en_base.secret_webhook_valide("secret") is not True \
+            or en_base.secret_webhook_valide("faux") is not False:
+        print("   le secret du webhook n'est pas validé comme en mémoire")
+        return False
+    if (en_base.produit or {}).get("nom") != (en_memoire.produit or {}).get("nom"):
+        print("   les deux registres ne portent pas le même produit")
+        return False
+
+    # (2) LE POINT : un artisan écrit APRÈS l'ouverture du registre est vu tout de suite
+    if en_base.par_token("tok-neuf") is not None:
+        print("   un jeton inexistant est déjà reconnu")
+        return False
+    depot.enregistrer_artisan(LigneArtisan(
+        id="art-neuf", nom_affiche="Neuf SARL", numero_relais="+33189700055",
+        telephone="+33600000055", token_sha256=emp("tok-neuf"), config=brute))
+    neuf = en_base.par_token("tok-neuf")
+    if neuf is None or neuf.id != "art-neuf":
+        print("   un artisan créé après l'ouverture du registre reste invisible — "
+              "c'est exactement le défaut que RegistreBase corrige")
+        return False
+    if en_base.par_telephone("0600000055") is None:
+        print("   le nouvel artisan n'est pas joignable par son mobile")
+        return False
+
+    # (3) une config invalide n'écarte QUE son artisan
+    casse = dict(brute, fuseau="Europe/Pari")
+    depot.enregistrer_artisan(LigneArtisan(
+        id="art-casse", nom_affiche="Casse SARL", numero_relais="+33189700066",
+        telephone="+33600000066", token_sha256=emp("tok-casse"), config=casse))
+    if en_base.par_token("tok-casse") is not None:
+        print("   un artisan au fuseau invalide est servi quand même")
+        return False
+    if en_base.par_token("tok-a") is None or en_base.par_token("tok-neuf") is None:
+        print("   un artisan mal configuré empêche de servir les AUTRES — "
+              "c'est précisément ce qu'on voulait arrêter")
+        return False
+    servables, ecartes = en_base.inventaire()
+    if servables != 2 or len(ecartes) != 1:
+        print(f"   inventaire faux : {servables} servable(s), {len(ecartes)} écarté(s) "
+              f"(attendu 2 et 1)")
+        return False
+    return True
+
+
 def check_page_mes_appels() -> bool:
     """La page « Mes appels » : l'artisan voit ce que son agent a pris, RDV ou pas.
 
@@ -11044,6 +11146,15 @@ def run() -> int:
     if check_base_de_production_dit_non():
         print("   → une base déclarée production refuse le truncate elle-même, "
               "et le refus dit quoi retirer pour l'annuler : ✅ PASS")
+    else:
+        print("   → ❌ FAIL")
+        echecs += 1
+
+    print(f"\n──── R95_registre_lu_en_base ────")
+    if check_registre_lu_en_base():
+        print("   → le registre en base se comporte comme celui en mémoire, voit les "
+              "artisans créés après coup, et n'écarte que celui qui est mal configuré : "
+              "✅ PASS")
     else:
         print("   → ❌ FAIL")
         echecs += 1

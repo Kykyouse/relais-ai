@@ -35,18 +35,51 @@ class Appel:
     etat_conversation: dict | None = None
     fin_a: dt.datetime | None = None
     lead_id: str | None = None
+    # CE QUE L'AGENT SAVAIT PENDANT CET APPEL, figé à l'ouverture (migration 011).
+    # Remplace la garantie que portait l'historique git du fichier de config, et la
+    # remplace en mieux : une lecture exacte au lieu d'un recoupement entre la date de
+    # l'appel et les dates de déploiement. `None` pour les appels antérieurs — on ne
+    # reconstruit pas rétroactivement ce que l'agent savait, ce serait précisément le
+    # mensonge que cette colonne existe pour empêcher.
+    config_utilisee: dict | None = None
+
+
+def normaliser_numero(numero: str | None) -> str:
+    """« 01 89 70 12 34 », « +33189701234 » : le même numéro, une seule forme.
+
+    **Une seule définition dans tout le système**, et c'est le point. Elle vivait dans
+    `registre.py` ; elle est descendue ici le 21/09 parce que la migration 011 STOCKE son
+    résultat en colonne (`telephone_normalise`, `numero_relais_normalise`) pour pouvoir
+    l'indexer. Le jour où deux définitions coexisteraient — l'une en Python, l'autre
+    réécrite en SQL — un artisan deviendrait introuvable à la connexion, sans message
+    d'erreur, et seulement pour certaines écritures de son numéro.
+
+    La règle est étroite et volontairement bête : on ne garde que les chiffres, et un
+    « 33 » en tête d'un numéro à 11 chiffres redevient un « 0 ». Rien de plus : deviner
+    l'indicatif d'un numéro étranger n'est pas notre métier, et un numéro qu'on ne
+    reconnaît pas doit rester tel quel plutôt que d'être abîmé.
+    """
+    chiffres = "".join(c for c in (numero or "") if c.isdigit())
+    if chiffres.startswith("33") and len(chiffres) == 11:
+        return "0" + chiffres[2:]
+    return chiffres
 
 
 @dataclass
 class LigneArtisan:
-    """Le REGISTRE d'un artisan, tel qu'il vit en base (migration 008) : qui il est et par
-    quelle porte il entre. **Pas sa config** — elle reste un fichier versionné dans git
-    (`config_fichier`), parce que son historique est ce qui répond à « qu'est-ce que
-    l'agent savait le jour de cet appel ? ».
+    """Un artisan tel qu'il vit en base : qui il est, par quelle porte il entre, et
+    **ce que l'agent sait pour lui** (migration 011).
 
-    `numero_relais`, `telephone` et `config_fichier` sont facultatifs : la migration crée
-    une ligne pour chaque artisan déjà référencé par des données existantes, dont elle ne
-    connaît que l'identifiant. Ces lignes portent `etat_abonnement = "a_reprendre"`.
+    La config était un fichier versionné dans git, et c'était motivé : son historique
+    répondait à « qu'est-ce que l'agent savait le jour de cet appel ? ». Elle est passée
+    en base le 21/09 parce que cette réponse coûtait un COMMIT ET UN REDÉPLOIEMENT à
+    chaque inscription d'artisan et à chaque changement de zone ou de tarif. La garantie
+    est reprise par `Appel.config_utilisee`, figée à l'ouverture de l'appel — exacte, là
+    où git obligeait à recouper des dates de déploiement.
+
+    Tout est facultatif sauf `id` : la migration 008 crée une ligne pour chaque artisan
+    déjà référencé par des données existantes, dont elle ne connaît que l'identifiant.
+    Ces lignes portent `etat_abonnement = "a_reprendre"` et ne sont pas `utilisable()`.
     """
     id: str
     nom_affiche: str | None = None
@@ -55,11 +88,21 @@ class LigneArtisan:
     config_fichier: str | None = None
     token_sha256: str | None = None
     etat_abonnement: str = "actif"
+    # La config VIVANTE, en base depuis la migration 011. `config_fichier` reste comme
+    # repli et comme trace du modèle d'origine : une base antérieure continue de
+    # fonctionner sans conversion, et les fichiers `config/*.json` deviennent des
+    # MODÈLES dont un nouvel artisan part.
+    config: dict | None = None
 
     def utilisable(self) -> bool:
         """Un artisan qu'on peut réellement servir : il a un numéro Relais et une config.
-        Les autres sont des reprises de données, pas des clients."""
-        return bool(self.numero_relais and self.config_fichier)
+        Les autres sont des reprises de données, pas des clients.
+
+        Depuis la migration 011, « une config » veut dire l'une OU l'autre : celle de la
+        base, ou le fichier modèle. Exiger le fichier rendrait inutilisable tout artisan
+        créé depuis l'admin — c'est-à-dire tous les prochains.
+        """
+        return bool(self.numero_relais and (self.config or self.config_fichier))
 
 
 @dataclass
@@ -100,6 +143,22 @@ class Depot(Protocol):
 
     def enregistrer_artisan(self, ligne: LigneArtisan) -> None: ...
 
+    # Les trois recherches du registre. Elles descendent dans le port le 21/09 : tant que
+    # le registre tenait tous les artisans en mémoire, il indexait lui-même — mais il
+    # était alors chargé UNE FOIS au démarrage, et un artisan créé depuis l'admin restait
+    # invisible jusqu'au redéploiement suivant. La table EST le registre depuis la
+    # migration 008 ; ces méthodes achèvent de le rendre vrai.
+    #
+    # Rendent `None` plutôt que de lever : « inconnu » est un cas NORMAL ici (un numéro
+    # composé qui n'est pas le nôtre, un jeton révoqué), pas une anomalie de programmation.
+    def artisan_par_id(self, artisan_id: str) -> LigneArtisan | None: ...
+
+    def artisan_par_token(self, empreinte: str) -> LigneArtisan | None: ...
+
+    def artisan_par_telephone(self, numero: str) -> LigneArtisan | None: ...
+
+    def artisan_par_numero_relais(self, numero: str) -> LigneArtisan | None: ...
+
     def poser_code_connexion(self, artisan_id: str, empreinte: str,
                              expire_a: dt.datetime, maintenant: dt.datetime,
                              telephone: str | None = None) -> None: ...
@@ -111,7 +170,8 @@ class Depot(Protocol):
     def supprimer_code_connexion(self, artisan_id: str) -> None: ...
 
     def ouvrir_appel(self, artisan_id: str, maintenant: dt.datetime,
-                     appel_id: str | None = None) -> Appel: ...
+                     appel_id: str | None = None,
+                     config: dict | None = None) -> Appel: ...
 
     def enregistrer_etat(self, appel_id: str, etat: dict) -> None: ...
 
@@ -206,6 +266,33 @@ class DepotMemoire:
         cet appel à chaque démarrage : il doit être idempotent."""
         self._artisans_registre[ligne.id] = replace(ligne)
 
+    def artisan_par_id(self, artisan_id: str) -> LigneArtisan | None:
+        ligne = self._artisans_registre.get(artisan_id)
+        return replace(ligne) if ligne is not None else None
+
+    def artisan_par_token(self, empreinte: str) -> LigneArtisan | None:
+        # Une empreinte vide ne doit JAMAIS trouver quelqu'un : plusieurs lignes portent
+        # `token_sha256 = None` (celles créées par la migration 008), et une comparaison
+        # naïve les ferait toutes correspondre à « pas de jeton ».
+        if not empreinte:
+            return None
+        return next((replace(a) for a in self._artisans_registre.values()
+                     if a.token_sha256 == empreinte), None)
+
+    def artisan_par_telephone(self, numero: str) -> LigneArtisan | None:
+        cible = normaliser_numero(numero)
+        if not cible:
+            return None
+        return next((replace(a) for a in self._artisans_registre.values()
+                     if normaliser_numero(a.telephone) == cible), None)
+
+    def artisan_par_numero_relais(self, numero: str) -> LigneArtisan | None:
+        cible = normaliser_numero(numero)
+        if not cible:
+            return None
+        return next((replace(a) for a in self._artisans_registre.values()
+                     if normaliser_numero(a.numero_relais) == cible), None)
+
     # ---- codes de connexion ----
     def poser_code_connexion(self, artisan_id: str, empreinte: str,
                              expire_a: dt.datetime, maintenant: dt.datetime,
@@ -242,7 +329,8 @@ class DepotMemoire:
 
     # ---- appels ----
     def ouvrir_appel(self, artisan_id: str, maintenant: dt.datetime,
-                     appel_id: str | None = None) -> Appel:
+                     appel_id: str | None = None,
+                     config: dict | None = None) -> Appel:
         """`appel_id` permet à l'appelant d'IMPOSER l'identifiant.
 
         Ajouté pour la voix : la plateforme vocale porte déjà un identifiant d'appel
@@ -253,7 +341,7 @@ class DepotMemoire:
         Sans argument, le comportement ne change pas : le dépôt génère l'identifiant.
         """
         appel = Appel(id=appel_id or self._id("apl"), artisan_id=artisan_id,
-                      debut_a=maintenant)
+                      debut_a=maintenant, config_utilisee=config)
         self._appels[appel.id] = self._appel_en_dict(appel)
         return appel
 
@@ -454,12 +542,14 @@ class DepotMemoire:
     def _appel_en_dict(a: Appel) -> dict:
         return {"id": a.id, "artisan_id": a.artisan_id, "debut_a": a.debut_a.isoformat(),
                 "etat_conversation": a.etat_conversation,
-                "fin_a": a.fin_a.isoformat() if a.fin_a else None, "lead_id": a.lead_id}
+                "fin_a": a.fin_a.isoformat() if a.fin_a else None, "lead_id": a.lead_id,
+                "config_utilisee": a.config_utilisee}
 
     @staticmethod
     def _appel_de_dict(d: dict) -> Appel:
         return Appel(id=d["id"], artisan_id=d["artisan_id"],
                      debut_a=temps.depuis_iso(d["debut_a"]),
                      etat_conversation=d["etat_conversation"],
+                     config_utilisee=d.get("config_utilisee"),
                      fin_a=temps.depuis_iso(d["fin_a"]) if d["fin_a"] else None,
                      lead_id=d["lead_id"])

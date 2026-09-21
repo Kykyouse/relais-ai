@@ -134,7 +134,10 @@ def _jouer(depot, cfg, quand: dt.datetime, lignes: list[str]):
             break
         convo.process(ligne)
     donnees = build_lead(convo)
-    appel = depot.ouvrir_appel(ARTISAN_DEMO, quand)
+    # `config=cfg` comme le fait `api.py` : la config MERGÉE, celle que l'agent a
+    # réellement utilisée. Un semoir qui ouvrirait l'appel autrement que l'API
+    # produirait une démo qui n'éprouve pas le chemin réel.
+    appel = depot.ouvrir_appel(ARTISAN_DEMO, quand, config=cfg)
     depot.enregistrer_etat(appel.id, convo.to_dict())
     return depot.cloturer_appel(appel.id, donnees, quand), donnees
 
@@ -216,9 +219,13 @@ def run() -> int:
                   "connecteras (le code SMS est envoyé à CE numéro).")
             return 2
 
-        cfg = produit.appliquer(
-            json.loads((RACINE / "config" / CONFIG_DEMO).read_text(encoding="utf-8")),
-            produit.charger(RACINE / "config"))
+        # La config BRUTE est celle qu'on stocke ; la MERGÉE (avec la clé `produit`) ne
+        # sert qu'à jouer les appels. Stocker la mergée figerait une copie du produit par
+        # artisan, qui vieillirait sans que personne la mette à jour — `produit.appliquer`
+        # est justement là pour la rappliquer à chaque lecture.
+        brute = json.loads(
+            (RACINE / "config" / CONFIG_DEMO).read_text(encoding="utf-8"))
+        cfg = produit.appliquer(brute, produit.charger(RACINE / "config"))
 
         # Le jeton est GÉNÉRÉ ici et affiché UNE fois : la base n'en garde que
         # l'empreinte, comme pour tous les autres. Personne ne pourra le relire.
@@ -250,7 +257,10 @@ def run() -> int:
         depot.enregistrer_artisan(LigneArtisan(
             id=ARTISAN_DEMO, nom_affiche=cfg["entreprise"]["nom"],
             numero_relais=NUMERO_RELAIS_DEMO, telephone=tel,
-            config_fichier=CONFIG_DEMO, token_sha256=emp_token(jeton),
+            # CONFIG EN BASE (migration 011), et PAS `config_fichier` : c'est le chemin
+            # qu'empruntera un vrai artisan créé depuis l'admin. Le laisser pointer un
+            # fichier ferait de la démo un cas particulier, donc un cas non éprouvé.
+            config=brute, token_sha256=emp_token(jeton),
             etat_abonnement="actif"))
         print(f"artisan écrit.")
 

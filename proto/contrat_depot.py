@@ -126,6 +126,19 @@ def verifier(fabrique, cfg: dict) -> list[str]:
     relu = depot.appel(appel.id).etat_conversation
     exiger(_json_natif(relu) == _json_natif(etat),
            "enregistrer_etat : l'état sérialisé ne fait pas l'aller-retour")
+
+    # ---- l'INSTANTANÉ de config (migration 011) ----
+    # C'est lui qui remplace la garantie de git : « voici exactement ce que l'agent
+    # savait pendant CET appel ». Il doit faire l'aller-retour, et il doit rester NUL
+    # quand on ne le fournit pas — inventer une config rétroactivement serait
+    # précisément le mensonge que cette colonne existe pour empêcher.
+    fige = {"zone": {"communes": ["Nogent"]}, "tarifs": {"deplacement": 49}}
+    avec = depot.ouvrir_appel("art-dupont", LUNDI_9H, config=fige)
+    exiger(_json_natif(depot.appel(avec.id).config_utilisee) == _json_natif(fige),
+           "ouvrir_appel(config=…) : l'instantané ne fait pas l'aller-retour")
+    sans = depot.ouvrir_appel("art-dupont", LUNDI_9H)
+    exiger(depot.appel(sans.id).config_utilisee is None,
+           "un appel ouvert sans config doit porter None, pas un objet vide")
     exiger_leve(Introuvable, lambda: depot.appel(ID_ABSENT),
                 "appel(id inconnu) doit lever Introuvable")
 
@@ -395,6 +408,68 @@ def verifier(fabrique, cfg: dict) -> list[str]:
     repris = {a.id: a for a in depot.artisans()}.get("art-repris")
     exiger(repris is not None and not repris.utilisable(),
            "un artisan sans numéro Relais ni config doit être marqué inutilisable")
+
+    # ---- la CONFIG en base, et les trois recherches (migration 011) ----
+    #
+    # Le registre interrogeait sa propre mémoire, chargée une fois au démarrage : un
+    # artisan créé depuis l'admin restait invisible jusqu'au redéploiement suivant. Ces
+    # trois recherches descendent donc dans le port, et le contrat les tient.
+    depot.enregistrer_artisan(LigneArtisan(
+        id="art-config", nom_affiche="Config SAS", numero_relais="+33189700077",
+        telephone="+33600000077", token_sha256="f" * 64,
+        config={"entreprise": {"nom": "Config SAS"}, "zone": {"communes": ["Nogent"]}}))
+    lu = {a.id: a for a in depot.artisans()}.get("art-config")
+    exiger(lu is not None and lu.config is not None,
+           "la config en base ne fait pas l'aller-retour")
+    if lu is not None and lu.config is not None:
+        exiger(_json_natif(lu.config) == _json_natif(
+                   {"entreprise": {"nom": "Config SAS"},
+                    "zone": {"communes": ["Nogent"]}}),
+               f"config : aller-retour inexact ({lu.config})")
+        # SANS `config_fichier` : c'est le cas d'un artisan créé depuis l'admin, et
+        # l'exiger rendrait inutilisables tous les prochains.
+        exiger(lu.utilisable(),
+               "un artisan avec config EN BASE et sans fichier doit être utilisable")
+
+    exiger(depot.artisan_par_token("f" * 64) is not None
+           and depot.artisan_par_token("f" * 64).id == "art-config",
+           "artisan_par_token ne retrouve pas l'artisan")
+    exiger(depot.artisan_par_token("0" * 64) is None,
+           "artisan_par_token(jeton inconnu) doit rendre None, pas lever")
+    # Le cas qui mord : plusieurs lignes portent `token_sha256` nul (les reprises de la
+    # migration 008). Une empreinte vide ne doit correspondre à AUCUNE d'elles.
+    exiger(depot.artisan_par_token("") is None,
+           "artisan_par_token('') trouve quelqu'un — les lignes sans jeton sont "
+           "traitées comme « pas de jeton » et deviennent une porte ouverte")
+
+    # Les trois écritures du même numéro doivent mener au même artisan : c'est tout
+    # l'objet de la normalisation, et la raison pour laquelle elle est STOCKÉE.
+    for ecriture in ("+33600000077", "0600000077", "06 00 00 00 77"):
+        trouve = depot.artisan_par_telephone(ecriture)
+        exiger(trouve is not None and trouve.id == "art-config",
+               f"artisan_par_telephone({ecriture!r}) ne retrouve pas l'artisan")
+    for ecriture in ("+33189700077", "0189700077", "01 89 70 00 77"):
+        trouve = depot.artisan_par_numero_relais(ecriture)
+        exiger(trouve is not None and trouve.id == "art-config",
+               f"artisan_par_numero_relais({ecriture!r}) ne retrouve pas l'artisan")
+    exiger(depot.artisan_par_telephone("0699999999") is None,
+           "artisan_par_telephone(inconnu) doit rendre None")
+    exiger(depot.artisan_par_numero_relais("") is None,
+           "artisan_par_numero_relais('') doit rendre None")
+
+    # Mise à jour : les colonnes normalisées sont maintenues par l'ÉCRITURE. Sans ça,
+    # changer un numéro laisserait l'ancien index en place — l'artisan resterait
+    # joignable par son ancien numéro et introuvable par le nouveau.
+    depot.enregistrer_artisan(LigneArtisan(
+        id="art-config", nom_affiche="Config SAS", numero_relais="+33189700077",
+        telephone="+33600000088", token_sha256="f" * 64,
+        config={"entreprise": {"nom": "Config SAS"}}))
+    exiger(depot.artisan_par_telephone("0600000088") is not None,
+           "le nouveau numéro ne retrouve pas l'artisan : l'index normalisé n'est pas "
+           "mis à jour à l'écriture")
+    exiger(depot.artisan_par_telephone("0600000077") is None,
+           "l'ANCIEN numéro retrouve encore l'artisan : l'index normalisé n'est pas "
+           "nettoyé à l'écriture")
 
     # ---- codes de connexion (migration 009) ----
     exiger(depot.code_connexion("art-dupont") is None,

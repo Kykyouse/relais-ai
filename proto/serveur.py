@@ -128,11 +128,26 @@ def construire():
     dsn, opts, libelle = resoudre_connexion(candidats_env())
     print(f"base Postgres : {libelle}")
     depot = DepotPostgres(dsn, **opts)
-    # Depuis la migration 008, le registre vient de la TABLE `artisan`, pas du fichier.
-    # `config/artisans.json` reste la graine (`python semer_artisans.py --ecrire`) ; les
-    # `config/*.json` restent des fichiers versionnés, lus par identifiant.
-    registre = Registre.charger(depot, RACINE / "config",
-                                _exige("RELAIS_WEBHOOK_SECRET"))
+    # Le registre est LU EN BASE à chaque recherche depuis le 21/09 (`RegistreBase`), et
+    # non plus chargé une fois au démarrage. Ce n'était pas une optimisation à l'envers :
+    # un artisan écrit en base restait invisible jusqu'au redéploiement suivant, ce qui
+    # condamnait la page d'admin avant de l'écrire. Un cache local aurait divergé dès le
+    # second processus.
+    #
+    # `config/*.json` reste lu en REPLI, pour les artisans dont la config n'a pas encore
+    # migré en base : ces fichiers sont désormais des MODÈLES, pas la source.
+    from relais_proto import produit as _produit
+    from relais_proto.registre import RegistreBase, empreinte as _emp
+    registre = RegistreBase(depot, _produit.charger(RACINE / "config"),
+                            _emp(_exige("RELAIS_WEBHOOK_SECRET")),
+                            RACINE / "config")
+    servables, ecartes = registre.inventaire()
+    print(f"registre : {servables} artisan(s) servable(s), {len(ecartes)} écarté(s)")
+    for quoi in ecartes:
+        print(f"  ⚠️  artisan écarté : {quoi}")
+    if not servables:
+        print("  ⚠️  AUCUN artisan servable : crée-en un avec "
+              "« python semer_demo.py --ecrire --telephone … ».")
     # un client LLM neuf par tour : make_llm() rend le mode réel si la clé est là,
     # le mode scripté sinon — l'appel aboutit dans les deux cas (dégradation gracieuse)
     # base_url EXIGÉE, sans valeur par défaut : elle part dans un SMS. Un lien pointant
