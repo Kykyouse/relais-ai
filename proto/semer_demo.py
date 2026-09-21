@@ -46,9 +46,19 @@ CONFIG_DEMO = "dupont.json"
 # Les appels de la démo. Chacun déclare la catégorie ATTENDUE : si le moteur en produit
 # une autre, le script s'arrête au lieu de semer une démo qui ment. Une démo fausse est
 # pire qu'une démo absente — c'est celle qu'on montre à un prospect.
+#
+# L'ANCIENNETÉ EST EN MINUTES, et ce n'est pas du zèle. Premier essai le 21/09 : l'appel
+# urgent était daté de 2 h dans le passé, or un RDV URGENT a une fenêtre de validation de
+# 2 h (`delai_max_urgence_heures`). Il est donc né expiré, le cron l'a passé à `expire`
+# dans les dix minutes, et la boîte de validation — l'écran principal, celui avec les
+# boutons — était vide dans la démo. Une démo dont la page maîtresse est vide ne se
+# rattrape pas devant un prospect.
 APPELS_DEMO = [
     {
-        "il_y_a_h": 2,
+        # URGENT : fenêtre de 2 h seulement. Daté d'il y a 20 min, il reste donc
+        # décidable ~1 h 40. C'est le cas le plus démonstratif (5/5, bandeau urgence),
+        # et c'est aussi le plus périssable.
+        "il_y_a_min": 20,
         "categorie": "rdv_reserve",
         "lignes": [
             "Bonjour, j'ai une fuite sous l'évier, l'eau coule encore, c'est urgent !",
@@ -60,9 +70,22 @@ APPELS_DEMO = [
         ],
     },
     {
+        # NON URGENT : fenêtre de 24 h. C'est LUI qui fait qu'une démo montrée demain
+        # matin a encore quelque chose à valider à l'écran.
+        "il_y_a_min": 3 * 60,
+        "categorie": "rdv_reserve",
+        "lignes": [
+            "Bonjour, mon robinet de salle de bain goutte un peu",
+            "Nogent-sur-Marne, 94130, je suis propriétaire",
+            "Je m'appelle Petit, mon numéro c'est 06 55 66 77 88",
+            "Oui c'est bien ça",
+            "Le premier créneau c'est parfait",
+        ],
+    },
+    {
         # LE cas qui justifie la page « Mes appels » : un client joignable, qualifié,
         # qui n'a pas réservé. Avant elle, ce lead-là n'apparaissait nulle part.
-        "il_y_a_h": 5,
+        "il_y_a_min": 5 * 60,
         "categorie": "a_rappeler",
         "lignes": [
             "Bonjour, ma chaudière ne s'allume plus",
@@ -75,7 +98,7 @@ APPELS_DEMO = [
         ],
     },
     {
-        "il_y_a_h": 6,
+        "il_y_a_min": 6 * 60,
         "categorie": "injoignable",
         "lignes": [
             "Bonjour, j'ai une petite fuite au robinet de la cuisine",
@@ -86,7 +109,7 @@ APPELS_DEMO = [
         ],
     },
     {
-        "il_y_a_h": 26,
+        "il_y_a_min": 26 * 60,
         "categorie": "hors_zone",
         "lignes": [
             "Bonjour, je voudrais un devis pour une pompe à chaleur",
@@ -234,7 +257,7 @@ def run() -> int:
         from relais_proto import temps
         maintenant = temps.maintenant()
         for spec in APPELS_DEMO:
-            quand = maintenant - dt.timedelta(hours=spec["il_y_a_h"])
+            quand = maintenant - dt.timedelta(minutes=spec["il_y_a_min"])
             lead, donnees = _jouer(depot, cfg, quand, spec["lignes"])
             obtenue = donnees.get("categorie")
             if obtenue != spec["categorie"]:
@@ -250,8 +273,20 @@ def run() -> int:
                 # avec ses boutons. Un RDV en tampon n'y apparaîtrait pas comme décidable.
                 rdv.notifier(quand)
                 depot.sauver_rdv(rdv)
-                marque = f", RDV {rdv.statut}"
-            print(f"  il y a {spec['il_y_a_h']:>2} h — {obtenue}"
+                # GARDE-FOU, né du premier essai : un RDV semé DÉJÀ EXPIRÉ disparaît de
+                # la boîte de validation au passage suivant du cron, et la démo montre
+                # un écran vide. Le script le dit au lieu de laisser le découvrir devant
+                # quelqu'un.
+                if rdv.est_echu(maintenant):
+                    print(f"\n  ARRÊT : le RDV est déjà expiré "
+                          f"(créé il y a {spec['il_y_a_min']} min, échéance "
+                          f"{rdv.expire_a:%H:%M} UTC). Un RDV urgent n'a que "
+                          f"{cfg['validation']['delai_max_urgence_heures']} h de "
+                          f"validation — rapproche `il_y_a_min` de zéro.")
+                    return 2
+                reste = int((rdv.expire_a - maintenant).total_seconds() // 60)
+                marque = f", RDV à valider (encore {reste} min)"
+            print(f"  il y a {spec['il_y_a_min']:>4} min — {obtenue}"
                   f" (score {donnees.get('score')}){marque}")
 
         print()
