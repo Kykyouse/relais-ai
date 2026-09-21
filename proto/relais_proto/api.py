@@ -24,13 +24,13 @@ import secrets
 from . import (connexion, messages, pages, session, sonde_dispo as _sonde_dispo,
                sonde_voix as _sonde, temps,
                vapi as _vapi)
-from .calendar_stub import CalendarStub, libelle_creneau
+from .calendar_stub import JOURS_FR, MOIS_FR, CalendarStub, libelle_creneau
 from .confirmation import creer_jeton, empreinte, lien
 from .depot import Introuvable
 from .engine import Conversation
 from .rdv import TransitionInterdite
 from .registre import Artisan, Registre
-from .scoring import build_lead
+from .scoring import build_lead, est_urgent as scoring_est_urgent
 from .states import State
 
 CONTRAT_LEAD_VERSION = 1
@@ -884,6 +884,81 @@ def creer_app(depot, registre: Registre, fabrique_llm, horloge=None,
                            "echu": r.est_echu(t), "expire_a": r.expire_a})
         return HTMLResponse(pages.boite_validation(
             NOM, artisan.config["entreprise"]["prenom_patron"], cartes))
+
+    @app.get("/app/appels", response_class=HTMLResponse)
+    def page_appels(categorie: str = "",
+                    relais_session: str = Cookie(default="", alias=session.NOM_COOKIE),
+                    authorization: str = Header(default="")) -> HTMLResponse:
+        """« Mes appels » : tout ce que l'agent a pris, RDV ou pas.
+
+        Déclarée AVANT `/app/{rdv_id}/{action}` : celle-ci est un POST, donc il n'y a pas
+        de collision réelle, mais laisser un chemin littéral derrière un chemin à
+        paramètre est le genre d'ordre qui se retourne contre soi au premier ajout.
+
+        L'authentification est celle de `/app`, page de connexion comprise plutôt qu'un
+        401 nu : un artisan dont la session a expiré doit voir un écran.
+        """
+        artisan = (registre.par_token(authorization.removeprefix("Bearer ").strip())
+                   or _artisan_de_session(relais_session))
+        if artisan is None:
+            return HTMLResponse(
+                pages.connexion(NOM, "Session expirée ou révoquée. Reconnecte-toi."),
+                status_code=401)
+
+        tous = depot.leads(artisan.id)
+        # Les compteurs portent sur TOUT, pas sur la vue filtrée : un filtre doit dire
+        # combien il y a derrière lui, sinon il ne sert qu'à confirmer ce qu'on voit déjà.
+        comptes: dict[str, int] = {}
+        for l in tous:
+            c = l.donnees.get("categorie") or "autre"
+            comptes[c] = comptes.get(c, 0) + 1
+        filtres = [(None, "Tous", len(tous))]
+        filtres += [(c, pages._CATEGORIES.get(c, (c, ""))[0], n)
+                    for c, n in sorted(comptes.items(), key=lambda kv: -kv[1])]
+
+        retenus = [l for l in tous
+                   if not categorie or (l.donnees.get("categorie") or "autre") == categorie]
+        cartes = []
+        for l in retenus:
+            d = l.donnees
+            slots = d.get("slots") or {}
+            local = temps.en_local(l.debut_a, artisan.config)
+            quand = (f"{JOURS_FR[local.weekday()]} {local.day} "
+                     f"{MOIS_FR[local.month - 1]} à {local.hour}h{local.minute:02d}")
+            tel = slots.get("telephone_rappel") or ""
+            # Le résumé reprend les RAISONS calculées par le scoring : elles disent déjà
+            # problème, commune et disponibilités, dans cet ordre. Les recomposer ici
+            # ferait une deuxième définition de « ce qui compte dans un lead ».
+            #
+            # DEUX RETOUCHES, et seulement deux. Pour `hors_zone`, `hors_perimetre` et
+            # `spam`, le scoring sort tôt et `raisons` ne contient plus que l'écho de la
+            # catégorie — la carte affichait donc « Hors zone » en badge ET « hors zone »
+            # en résumé, pendant que les slots portaient « devis pompe à chaleur » à
+            # « Champigny ». Or c'est exactement la catégorie où l'artisan pourrait vouloir
+            # savoir : peut-être qu'il étendrait sa zone pour ce chantier-là.
+            # On retire donc l'écho, et on retombe sur les slots s'il ne reste rien.
+            cat = d.get("categorie") or "autre"
+            raisons = [r for r in (d.get("raisons") or [])
+                       if r != cat.replace("_", " ")]
+            if not raisons:
+                raisons = [x for x in (slots.get("probleme"),
+                                       slots.get("commune") or slots.get("code_postal"))
+                           if x]
+            cartes.append({
+                "quand": quand,
+                "score": d.get("score", 0),
+                "categorie": cat,
+                "urgence": scoring_est_urgent(slots),
+                "resume": " · ".join(raisons) or "Rien de noté",
+                "telephone": tel,
+                # lisible à l'œil, mais le `href` garde la forme brute : c'est elle que
+                # le téléphone sait composer.
+                "telephone_lisible": " ".join(tel[i:i + 2] for i in range(0, len(tel), 2))
+                                     if tel.isdigit() else tel,
+                "transcript": d.get("transcript") or [],
+            })
+        return HTMLResponse(pages.liste_appels(
+            NOM, artisan.config["entreprise"]["prenom_patron"], cartes, filtres))
 
     @app.post("/app/{rdv_id}/{action}")
     def agir(rdv_id: str, action: str,

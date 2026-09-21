@@ -3676,6 +3676,170 @@ def check_pas_de_promesse_sans_numero() -> bool:
     return True
 
 
+def _appel_sans_rdv(depot, nom_scenario: str, maintenant: dt.datetime):
+    """Joue un scénario qui n'aboutit PAS à un RDV, et pose son lead. Rend le lead.
+
+    Le pendant de `_appel_avec_rdv`, et c'est tout le sujet de la page « Mes appels » :
+    ces appels-là existaient déjà en base et n'avaient aucune surface pour les montrer.
+    """
+    convo = Conversation(CFG, MockLLM(), CalendarStub(CFG, now=maintenant))
+    convo.open()
+    for ligne in SCENARIOS[nom_scenario]["lignes"]:
+        if convo.state.value in ("S11", "FIN"):
+            break
+        convo.process(ligne)
+    appel = depot.ouvrir_appel("art-dupont", maintenant)
+    depot.enregistrer_etat(appel.id, convo.to_dict())
+    return depot.cloturer_appel(appel.id, build_lead(convo), maintenant)
+
+
+def check_page_mes_appels() -> bool:
+    """La page « Mes appels » : l'artisan voit ce que son agent a pris, RDV ou pas.
+
+    Ajoutée le 21/09. Le défaut qu'elle ferme n'est pas une fonctionnalité manquante mais
+    une MOITIÉ DE PROMESSE : le produit dit « l'agent répond à vos appels manqués », et
+    l'artisan n'avait aucun moyen de savoir quels appels avaient été répondus. `/app` ne
+    montre que les RDV à valider ; côté port, il n'existait que `lead(id)` — récupérer UN
+    lead dont on connaît déjà l'identifiant. Un client hors zone, un client à rappeler, un
+    appelant qui refuse son numéro : captés, scorés, stockés, vus par personne.
+
+    Ce qui est vérifié ici, dans l'ordre d'importance :
+
+    1. les appels SANS RDV apparaissent — sinon la page ne sert à rien ;
+    2. **aucun bouton de rappel quand il n'y a pas de numéro** (R79 porté à l'écran :
+       « une catégorie doit dire à l'artisan ce qu'il peut FAIRE »). `injoignable` est
+       précisément la catégorie sans numéro : y afficher « Rappeler » enverrait l'artisan
+       chercher un téléphone qui n'existe pas ;
+    3. l'ordre : le plus récent en tête ;
+    4. les filtres comptent sur TOUT, pas sur la vue courante.
+    """
+    try:
+        from fastapi.testclient import TestClient
+    except ImportError:
+        print("   fastapi/httpx absents : pip install -r requirements.txt")
+        return False
+
+    from html import escape as _esc
+
+    from relais_proto.api import creer_app
+    from relais_proto.envoi import EnvoyeurJournal
+    from relais_proto.registre import Artisan, Registre, empreinte as emp_token
+
+    registre = Registre([Artisan("art-dupont", "+33189701234", emp_token("tok"), CFG,
+                                 telephone="+33612345678")],
+                        emp_token("secret-voix"))
+    depot = DepotMemoire()
+    pendule = [LUNDI_9H]
+    # cookie_secure=False : les tests parlent en HTTP (cf. check_app_artisan).
+    app = creer_app(depot, registre, MockLLM, lambda: pendule[0],
+                    base_url="https://nelyo.test", cookie_secure=False,
+                    envoyeur=EnvoyeurJournal())
+
+    # trois appels, à trois instants distincts et dans le DÉSORDRE chronologique :
+    # si le tri se faisait sur l'ordre d'insertion, le test ne le verrait pas.
+    _appel_sans_rdv(depot, "T02_hors_zone", LUNDI_9H + dt.timedelta(hours=1))
+    _appel_avec_rdv(depot, "T01_urgence_fuite", LUNDI_9H)
+    _appel_sans_rdv(depot, "T11_refus_numero", LUNDI_9H + dt.timedelta(hours=2))
+
+    with TestClient(app) as julien:
+        if not connecter_par_sms(julien, depot, "06 12 34 56 78"):
+            print("   connexion par code SMS impossible")
+            return False
+
+        r = julien.get("/app/appels")
+        if r.status_code != 200:
+            print(f"   /app/appels : {r.status_code}")
+            return False
+        page = r.text
+
+        # Un libellé de catégorie apparaît à DEUX endroits : sur la carte d'un appel et
+        # dans la barre de filtres. Chercher la chaîne nue confondrait les deux — et un
+        # test qui passe pour la mauvaise raison est pire qu'un test absent. Sur une
+        # carte, le libellé est dans un `<span class="cat …">` ; c'est ce qu'on cherche.
+        def categories_affichees(html: str) -> list[str]:
+            """Les catégories des CARTES, dans l'ordre où elles sont rendues.
+
+            Un libellé apparaît à deux endroits — sur une carte et dans la barre de
+            filtres — et la barre précède les cartes. Chercher la chaîne nue ferait donc
+            passer aussi bien le test d'ordre que celui de contenu pour de mauvaises
+            raisons, et un test qui passe par accident est pire qu'un test absent.
+            """
+            return [bloc.split("</span>")[0].split(">", 1)[1]
+                    for bloc in html.split('<span class="cat ')[1:]]
+
+        # 1. les trois appels sont là, dont les DEUX sans RDV
+        vues = categories_affichees(page)
+        attendues = {_esc(x) for x in ("RDV réservé", "Hors zone", "Sans numéro")}
+        if set(vues) != attendues:
+            print(f"   cartes affichées : {vues} — attendu {sorted(attendues)} "
+                  f"(un appel sans RDV reste invisible)")
+            return False
+
+        # 2. R79 à l'écran : pas de rappel sans numéro, et on DIT pourquoi
+        if "Aucun numéro recueilli" not in page:
+            print("   un appel sans numéro ne dit pas qu'il n'est pas rappelable")
+            return False
+        # le seul lien tel: de la page doit être celui de l'appel qui a un numéro
+        tels = page.count('href="tel:')
+        if tels != 1:
+            print(f"   {tels} lien(s) « tel: » pour un seul appel joignable")
+            return False
+        if 'href="tel:0612345678"' not in page:
+            print("   le lien de rappel ne porte pas le numéro brut, seul composable")
+            return False
+
+        # 3. ordre : le plus récent (T11, +2 h) en tête, le plus ancien (T01) en queue
+        if vues != [_esc("Sans numéro"), _esc("Hors zone"), _esc("RDV réservé")]:
+            print(f"   ordre chronologique faux : {vues}")
+            return False
+
+        # 4. le résumé DIT quelque chose, même là où le scoring sort tôt. Pour
+        # `hors_zone`, `raisons` ne contient que l'écho de la catégorie : la carte
+        # affichait « Hors zone » en badge et « hors zone » en résumé, pendant que les
+        # slots portaient « devis pompe à chaleur » à « Champigny ». Or c'est justement
+        # la catégorie où l'artisan pourrait vouloir savoir ce qu'il refuse.
+        if "Champigny" not in page or "pompe à chaleur" not in page:
+            print("   la carte hors zone ne dit ni ce que le client voulait, "
+                  "ni d'où il appelait")
+            return False
+
+        # 5. les filtres comptent sur TOUT
+        if "Tous (3)" not in page:
+            print("   le filtre « Tous » ne compte pas les trois appels")
+            return False
+
+        # 6. filtrer réduit vraiment, et le compteur reste celui de l'ensemble
+        r2 = julien.get("/app/appels?categorie=hors_zone")
+        if categories_affichees(r2.text) != [_esc("Hors zone")]:
+            print(f"   le filtre par catégorie ne filtre pas : "
+                  f"{categories_affichees(r2.text)}")
+            return False
+        if "Tous (3)" not in r2.text:
+            print("   sous filtre, les compteurs ne portent plus sur l'ensemble")
+            return False
+
+        # 7. le transcript est consultable — c'est ce qui rend l'agent vérifiable
+        if "Voir la conversation" not in page:
+            print("   le transcript n'est pas consultable")
+            return False
+
+        # 8. la page est ATTEIGNABLE depuis la boîte de validation, dans les deux états.
+        # Une page sans lien n'existe pas, et c'est l'écran « rien à valider » qui en a
+        # le plus besoin : vide, il laisse croire qu'il ne s'est rien passé.
+        if 'href="/app/appels"' not in julien.get("/app").text:
+            print("   /app ne mène pas à « Mes appels » : la page est introuvable")
+            return False
+
+    # 9. sans session, une PAGE de connexion, pas un 401 nu (cohérent avec /app)
+    with TestClient(app) as anonyme:
+        r = anonyme.get("/app/appels")
+        if r.status_code != 401 or "<!DOCTYPE html>" not in r.text:
+            print(f"   /app/appels sans session : {r.status_code}, "
+                  f"page = {r.text[:70]!r}")
+            return False
+    return True
+
+
 def check_produit_sans_artisan() -> bool:
     """R94 : le nom du PRODUIT ne dépend pas de l'existence d'un client.
 
@@ -10880,6 +11044,14 @@ def run() -> int:
     if check_base_de_production_dit_non():
         print("   → une base déclarée production refuse le truncate elle-même, "
               "et le refus dit quoi retirer pour l'annuler : ✅ PASS")
+    else:
+        print("   → ❌ FAIL")
+        echecs += 1
+
+    print(f"\n──── T12_page_mes_appels ────")
+    if check_page_mes_appels():
+        print("   → les appels SANS RDV sont enfin visibles, et aucun rappel n'est "
+              "proposé là où il n'y a pas de numéro : ✅ PASS")
     else:
         print("   → ❌ FAIL")
         echecs += 1

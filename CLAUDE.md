@@ -240,6 +240,12 @@ commande gagne. `chat.py` et `run_llm_eval.py` font l'inverse, mais ne touchent 
 **<https://nelyo-api.onrender.com>** — `curl .../sante` dit la révision qui tourne ET le
 dernier passage du cron. C'est la première chose à faire quand quelque chose semble faux.
 
+⚠️ **`/sante` peut légitimement retarder sur `main`, et ce n'est PAS un échec de
+déploiement.** Les deux services ont `rootDir: proto` : Render ne redéploie que si des
+fichiers SOUS ce répertoire changent. Un commit qui ne touche que `docs/` ou `CLAUDE.md`
+ne redémarre rien — c'est voulu (la doc n'a pas à couper le service). Donc avant de
+conclure à une panne de déploiement, regarder si le commit touchait `proto/`.
+
 `render.yaml` (racine) déclare les DEUX services : `nelyo-api` (web, uvicorn) et
 `nelyo-worker` (cron, `*/10 * * * *`), **tous deux sur la branche `main`**. Arbitrage du
 09/09 : **Render plutôt que Fly**, et le motif est le CRON — Fly ne planifie nativement

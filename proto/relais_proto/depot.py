@@ -81,6 +81,16 @@ class Lead:
     # sortie de build_lead() telle quelle : c'est le contrat de la carte lead du
     # dashboard (spec produit §6), figé ici plutôt que redécoupé en colonnes
     donnees: dict = field(default_factory=dict)
+    # DÉBUT de l'appel dont ce lead est issu — lu par jointure, jamais stocké sur la
+    # ligne `lead`. Ajouté le 21/09 avec la page « Mes appels ».
+    #
+    # `donnees["horodatage"]` existait déjà, mais il date la FIN de l'appel (il est posé
+    # par `build_lead`, au moment du score). Trier sur le début et afficher la fin donne
+    # une liste visiblement mal triée dès que deux appels se chevauchent — un appel long
+    # commencé avant un appel court se termine après lui. **On trie et on affiche la même
+    # grandeur**, et c'est le début : « appel de 14h32 » désigne le moment où le téléphone
+    # a sonné, pas celui où l'agent a raccroché.
+    debut_a: dt.datetime | None = None
 
 
 class Depot(Protocol):
@@ -124,6 +134,8 @@ class Depot(Protocol):
     def rdv_par_confirmation(self, empreinte: str) -> Rdv: ...
 
     def lead(self, lead_id: str) -> Lead: ...
+
+    def leads(self, artisan_id: str, limite: int = 50) -> list[Lead]: ...
 
     def marquer_lead_alerte(self, lead_id: str, motif: str,
                             maintenant: dt.datetime) -> None: ...
@@ -266,8 +278,45 @@ class DepotMemoire:
 
     def lead(self, lead_id: str) -> Lead:
         d = self._exige(self._leads, lead_id)
+        return self._lead_de_dict(d)
+
+    def _lead_de_dict(self, d: dict) -> Lead:
+        """`debut_a` est TOUJOURS renseigné, y compris par `lead(id)`.
+
+        Un champ facultatif rempli par certaines méthodes et pas par d'autres est un
+        piège : l'appelant ne peut pas savoir, depuis le type, s'il a affaire à un
+        `None` légitime ou à un chemin qui a oublié de le remplir. Le coût est nul —
+        un appel existe toujours, et il est déjà en mémoire ici.
+        """
         return Lead(id=d["id"], appel_id=d["appel_id"], artisan_id=d["artisan_id"],
-                    donnees=d["donnees"])
+                    donnees=d["donnees"],
+                    debut_a=temps.depuis_iso(self._appels[d["appel_id"]]["debut_a"]))
+
+    def leads(self, artisan_id: str, limite: int = 50) -> list[Lead]:
+        """Les appels d'un artisan, le plus récent d'abord.
+
+        **Le port n'avait aucun moyen de LISTER des leads** — seulement `lead(id)`, qui
+        exige de connaître l'identifiant. Conséquence, constatée le 21/09 : tout appel
+        qui n'aboutissait pas à un RDV était invisible pour l'artisan. `/app` ne montre
+        que les RDV à valider ; un lead `a_rappeler` — quelqu'un qui demande un rappel,
+        avec son numéro et son problème — était capté, scoré, stocké, et vu par personne.
+        La promesse « l'agent répond à vos appels manqués » n'était tenue qu'à moitié :
+        l'artisan ne savait pas quels appels avaient été répondus.
+
+        Trié sur `appel.debut_a` et NON sur `donnees["horodatage"]` : le premier est une
+        vraie colonne d'instants, le second une chaîne ISO dans un blob. Les deux
+        coïncident aujourd'hui, mais trier des chaînes revient à parier que personne
+        n'écrira jamais un décalage horaire différent dedans.
+
+        Rend le lead ENTIER, transcript compris. Acceptable tant qu'un artisan compte ses
+        appels par dizaines ; le jour où ça pèse, la réponse est une projection de liste
+        (sans transcript) et un accès détaillé à part — pas une pagination bricolée par
+        l'appelant.
+        """
+        des_lui = [self._lead_de_dict(d) for d in self._leads.values()
+                   if d["artisan_id"] == artisan_id]
+        des_lui.sort(key=lambda l: (l.debut_a, l.id), reverse=True)
+        return des_lui[:max(1, min(int(limite), 500))]
 
     # ---- RDV ----
     def creer_rdv(self, *, lead_id: str, hold: dict, lead_donnees: dict, cfg: dict,

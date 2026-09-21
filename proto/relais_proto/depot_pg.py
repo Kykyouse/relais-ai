@@ -251,12 +251,34 @@ class DepotPostgres:
                        (maintenant, lead.id, appel_id))
         return lead
 
+    # une seule projection pour les deux lectures de lead : `debut_a` vient de la
+    # jointure et doit être renseigné PARTOUT, sinon le champ devient un piège
+    # (cf. le commentaire du dataclass `Lead`).
+    _COLS_LEAD = ("l.id, l.appel_id, l.artisan_id, l.donnees, a.debut_a "
+                  "from lead l join appel a on a.id = l.appel_id")
+
+    @staticmethod
+    def _lead_de_ligne(l) -> Lead:
+        return Lead(id=str(l[0]), appel_id=str(l[1]), artisan_id=l[2],
+                    donnees=l[3], debut_a=l[4])
+
     def lead(self, lead_id: str) -> Lead:
         lead_id = self._uuid(lead_id, lead_id)
-        ligne = self._un("select id, appel_id, artisan_id, donnees from lead where id = %s",
-                         (lead_id,), lead_id)
-        return Lead(id=str(ligne[0]), appel_id=str(ligne[1]), artisan_id=ligne[2],
-                    donnees=ligne[3])
+        return self._lead_de_ligne(self._un(
+            f"select {self._COLS_LEAD} where l.id = %s", (lead_id,), lead_id))
+
+    def leads(self, artisan_id: str, limite: int = 50) -> list[Lead]:
+        """Les appels d'un artisan, le plus récent d'abord. Cf. le port pour le POURQUOI.
+
+        Jointure sur `appel` pour trier par `debut_a` — une colonne `timestamptz`, pas la
+        chaîne ISO rangée dans le blob `donnees`. `limite` est bornée ici plutôt que
+        laissée à l'appelant : une page qui demande dix mille lignes est un défaut, et le
+        dépôt est le dernier endroit où l'on peut refuser d'en fabriquer un.
+        """
+        limite = max(1, min(int(limite), 500))
+        return [self._lead_de_ligne(l) for l in self._plusieurs(
+            f"select {self._COLS_LEAD} where l.artisan_id = %s "
+            "order by a.debut_a desc, l.id desc limit %s", (artisan_id, limite))]
 
     def marquer_lead_alerte(self, lead_id: str, motif: str,
                             maintenant: dt.datetime) -> None:

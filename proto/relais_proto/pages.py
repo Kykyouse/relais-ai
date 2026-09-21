@@ -138,10 +138,28 @@ input { width: 100%; min-height: 46px; font-size: 1rem; padding: 0 10px;
 .rdv.perime { opacity: .72; border-style: dashed; }
 .perdu { color: #98261a; font-size: .92rem; margin: 0; }
 a { color: #1a6b3c; }
+/* --- page « Mes appels » --- */
+.quand { color: #5b6472; font-size: .85rem; margin: 0 0 6px; }
+.cat { display: inline-block; font-size: .85rem; font-weight: 600; padding: 3px 9px;
+  border-radius: 999px; background: #eef1f5; color: #3c454a; margin-bottom: 8px; }
+.cat.ok { background: #e3f2e8; color: #1a6b3c; }
+.cat.action { background: #fdf3df; color: #7a5510; }
+.cat.urgent { background: #fde8e4; color: #98261a; }
+.filtres { font-size: .92rem; margin: 0 0 16px; line-height: 1.9; }
+/* Le lien de rappel est la seule ACTION de la page : taille de cible tactile pleine. */
+.rappel a { display: inline-block; min-height: 44px; line-height: 44px; font-weight: 600; }
+.dit-agent, .dit-client { margin: 6px 0; font-size: .92rem; }
+.dit-agent { color: #5b6472; }
+.dit-client { color: #14181f; }
 @media (prefers-color-scheme: dark) {
   .rdv { border-color: #2c3542; } .score { background: #2c3542; color: #c8d0da; }
   input { background: #14181f; color: #e8eaed; border-color: #2c3542; }
   button.refus { background: #1d232c; border-color: #5a3a34; color: #f0a99f; }
+  .cat { background: #2c3542; color: #c8d0da; }
+  .cat.ok { background: #1c3a28; color: #8fd0a8; }
+  .cat.action { background: #3a3322; color: #e0c07a; }
+  .cat.urgent { background: #3d2320; color: #f0a99f; }
+  .dit-client { color: #e8eaed; }
 }
 """
 
@@ -164,12 +182,18 @@ def boite_validation(produit: str, prenom: str, rdvs: list[dict]) -> str:
     de date et d'heure utilisent les types natifs, donc le sélecteur du téléphone — c'est
     précisément là qu'un composant maison serait pire que le natif.
     """
+    # Le lien vers « Mes appels », sur les DEUX sorties de cette fonction. Une page qu'on
+    # ne peut pas atteindre n'existe pas — et c'est la sortie « rien à valider » qui en a
+    # le plus besoin : un écran vide laisse croire qu'il ne s'est rien passé, alors que
+    # des appels sans RDV attendent peut-être d'être rappelés.
+    vers_appels = '<p class="apres"><a href="/app/appels">Tous mes appels</a></p>'
     if not rdvs:
         return _page_app(
             produit,
             "Rien à valider",
             f"<h1>Bonjour {escape(prenom)}</h1>"
-            '<p class="vide">Aucun rendez-vous en attente. Tout est à jour.</p>')
+            '<p class="vide">Aucun rendez-vous en attente. Tout est à jour.</p>'
+            + vers_appels)
 
     # Les RDV encore décidables d'abord, le plus pressé en tête ; les échus ensuite, à
     # titre d'information. L'artisan doit voir en haut ce sur quoi il peut agir.
@@ -219,7 +243,92 @@ def boite_validation(produit: str, prenom: str, rdvs: list[dict]) -> str:
             f"{actions}</div>")
     a_decider = sum(1 for r in rdvs if not r["echu"])
     titre = f"{a_decider} à valider" if a_decider else "Rien à valider"
-    return _page_app(produit, titre, f"<h1>Bonjour {escape(prenom)}</h1>" + "".join(blocs))
+    return _page_app(produit, titre,
+                     f"<h1>Bonjour {escape(prenom)}</h1>" + "".join(blocs) + vers_appels)
+
+
+# Ce que chaque catégorie VEUT DIRE à l'artisan, et ce qu'il peut en faire. Vocabulaire
+# fermé, aligné sur `engine.py` — une catégorie inconnue s'affiche telle quelle plutôt que
+# d'être masquée : mieux vaut un libellé brut qu'un appel escamoté.
+#
+# R79 appliqué à l'écran : « une catégorie doit dire à l'artisan ce qu'il peut FAIRE ».
+# D'où la colonne de droite, et d'où l'absence de bouton d'appel sur `injoignable` — c'est
+# précisément la catégorie où il n'y a PAS de numéro. Afficher « Rappeler » là-dessus
+# enverrait l'artisan chercher un téléphone qui n'existe pas.
+_CATEGORIES = {
+    "rdv_reserve":    ("RDV réservé", "ok"),
+    "prioritaire":    ("À rappeler — urgent", "urgent"),
+    "a_rappeler":     ("À rappeler", "action"),
+    "injoignable":    ("Sans numéro", "mort"),
+    "hors_zone":      ("Hors zone", "mort"),
+    "hors_perimetre": ("Hors prestations", "mort"),
+    "spam":           ("Indésirable", "mort"),
+    "appel_muet":     ("Appel muet", "mort"),
+    "autre":          ("Autre", "mort"),
+}
+
+
+def liste_appels(produit: str, prenom: str, appels: list[dict],
+                 filtres: list[tuple] = ()) -> str:
+    """« Mes appels » : ce que l'agent a répondu, RDV ou pas.
+
+    Ajoutée le 21/09 parce qu'il manquait la moitié de la promesse produit. `/app` ne
+    montrait que les RDV à valider ; un appel qui n'aboutissait pas — un client hors zone,
+    un client à rappeler, un numéro jamais obtenu — était capté, scoré, stocké, et vu par
+    personne. L'artisan ne pouvait pas savoir quels appels son agent avait pris.
+
+    Sans JavaScript, comme le reste : les filtres sont des LIENS (un GET par catégorie),
+    le transcript un `<details>` natif. Un filtre qui recharge la page est plus lent qu'un
+    filtre en JS ; il est aussi lisible sans script, indexable par le bouton « précédent »,
+    et partageable par son URL — sur une liste de quelques dizaines de lignes, l'échange
+    est franchement favorable.
+    """
+    # Les filtres disent COMBIEN : un filtre qui mène à une page vide est une déception
+    # qu'on peut éviter AVANT le clic. Ils s'affichent aussi sur une liste vide — c'est
+    # là qu'ils sont le plus utiles, puisqu'ils disent où sont les appels manquants.
+    liens = " · ".join(
+        f'<a href="/app/appels{"" if c is None else "?categorie=" + c}">'
+        f"{escape(nom)} ({n})</a>"
+        for c, nom, n in filtres)
+    entete = (f"<h1>Bonjour {escape(prenom)}</h1>"
+              + (f'<p class="filtres">{liens}</p>' if filtres else ""))
+    retour = '<p class="apres"><a href="/app">Mes rendez-vous à valider</a></p>'
+
+    if not appels:
+        return _page_app(
+            produit, "Mes appels",
+            entete + '<p class="vide">Aucun appel ici.</p>' + retour)
+
+    blocs = []
+    for a in appels:
+        libelle, teinte = _CATEGORIES.get(a["categorie"], (a["categorie"], "mort"))
+        urgent = " urgent" if a["urgence"] else ""
+        # Le numéro est la SEULE action possible depuis cette page, et c'est un lien
+        # `tel:` : sur le téléphone de l'artisan, un tap suffit. Rien ne s'affiche quand
+        # il n'y en a pas — voir le commentaire de _CATEGORIES.
+        if a["telephone"]:
+            action = (f'<p class="rappel"><a href="tel:{escape(a["telephone"])}">'
+                      f'Rappeler {escape(a["telephone_lisible"])}</a></p>')
+        else:
+            action = ('<p class="perdu">Aucun numéro recueilli — '
+                      "ce client n'est pas rappelable.</p>")
+        detail = ""
+        if a["transcript"]:
+            lignes = "".join(
+                f'<p class="{"dit-agent" if qui == "agent" else "dit-client"}">'
+                f"<b>{'Agent' if qui == 'agent' else 'Client'}</b> {escape(texte)}</p>"
+                for qui, texte in a["transcript"])
+            detail = (f"<details><summary>Voir la conversation "
+                      f"({len(a['transcript'])} tours)</summary>{lignes}</details>")
+        blocs.append(
+            f'<div class="rdv">'
+            f'<p class="quand">{escape(a["quand"])}</p>'
+            f'<span class="score{urgent}">{a["score"]}/5</span> '
+            f'<span class="cat {teinte}">{escape(libelle)}</span>'
+            f'<p class="creneau">{escape(a["resume"])}</p>'
+            f"{action}{detail}</div>")
+
+    return _page_app(produit, "Mes appels", entete + "".join(blocs) + retour)
 
 
 def action_impossible(produit: str, raison: str) -> str:

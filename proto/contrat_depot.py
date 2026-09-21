@@ -135,6 +135,9 @@ def verifier(fabrique, cfg: dict) -> list[str]:
            "cloturer_appel : l'appel ne pointe pas sur son lead")
     exiger(_json_natif(depot.lead(lead.id).donnees) == _json_natif(donnees),
            "lead : les données ne font pas l'aller-retour")
+    exiger(depot.lead(lead.id).debut_a == LUNDI_9H,
+           f"lead : debut_a doit TOUJOURS être renseigné, par jointure "
+           f"({depot.lead(lead.id).debut_a!r}) — un champ parfois vide est un piège")
     exiger_leve(ValueError, lambda: depot.cloturer_appel(appel.id, donnees, LUNDI_9H),
                 "clôturer deux fois le même appel doit lever")
 
@@ -148,6 +151,33 @@ def verifier(fabrique, cfg: dict) -> list[str]:
     exiger_leve(Introuvable,
                 lambda: depot.marquer_lead_alerte(ID_ABSENT, "x", LUNDI_9H),
                 "marquer_lead_alerte(id inconnu) doit lever Introuvable")
+
+    # ---- LISTER les leads d'un artisan (la page « Mes appels ») ----
+    # Trois exigences, et l'ordre est la plus fragile des trois : il repose sur
+    # `appel.debut_a` et doit survivre à des leads créés dans le désordre.
+    plus_tard = LUNDI_9H + dt.timedelta(hours=3)
+    a2 = depot.ouvrir_appel("art-dupont", plus_tard)
+    lead2 = depot.cloturer_appel(a2.id, donnees, plus_tard)
+    # un autre artisan, au MÊME instant : le cloisonnement doit tenir
+    a3 = depot.ouvrir_appel("art-martin", plus_tard)
+    lead3 = depot.cloturer_appel(a3.id, donnees, plus_tard)
+
+    liste = depot.leads("art-dupont")
+    ids = [l.id for l in liste]
+    exiger(lead3.id not in ids,
+           "leads : le lead d'un AUTRE artisan est rendu — cloisonnement rompu")
+    exiger(set(ids) == {lead.id, lead2.id},
+           f"leads : contenu inattendu ({ids})")
+    exiger(ids[0] == lead2.id,
+           f"leads : le plus RÉCENT n'est pas en tête ({ids})")
+    exiger(liste[0].debut_a == plus_tard,
+           f"leads : debut_a n'est pas celui de l'appel ({liste[0].debut_a!r})")
+    exiger(_json_natif(liste[0].donnees) == _json_natif(donnees),
+           "leads : les données ne font pas l'aller-retour dans la liste")
+    exiger(len(depot.leads("art-dupont", limite=1)) == 1,
+           "leads : la limite n'est pas respectée")
+    exiger(depot.leads("art-inconnu") == [],
+           "leads(artisan inconnu) doit rendre une liste vide, pas lever")
 
     # ---- RDV : aller-retour exact ----
     rdv = depot.creer_rdv(lead_id=lead.id, hold=donnees["rdv"], lead_donnees=donnees,

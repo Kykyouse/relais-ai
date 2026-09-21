@@ -28,6 +28,18 @@ def build_lead(convo) -> dict:
     }
 
 
+def est_urgent(slots: dict) -> bool:
+    """Une urgence RÉELLE, et pas seulement une demande présentée comme urgente.
+
+    Les deux conditions comptent : l'appelant a décrit une urgence (`intent`) ET elle a
+    été confirmée (`urgence_reelle`). Extrait de `_score` le 21/09 parce que la page
+    « Mes appels » doit signaler les mêmes appels comme urgents que le score — deux
+    copies de cette règle finiraient par diverger, et l'écart se lirait comme un bug du
+    score alors qu'il serait un bug de l'affichage.
+    """
+    return bool(slots.get("urgence_reelle")) and slots.get("intent") == "urgence"
+
+
 def _score(s: dict, f: dict) -> tuple[int, list[str]]:
     raisons: list[str] = []
     if f["categorie"] in ("hors_zone", "hors_perimetre", "spam"):
@@ -44,7 +56,7 @@ def _score(s: dict, f: dict) -> tuple[int, list[str]]:
 
     coords = bool(s.get("telephone_rappel"))
     rdv = f["hold"] is not None
-    urgent = bool(s.get("urgence_reelle")) and s.get("intent") == "urgence"
+    urgent = est_urgent(s)
 
     if rdv and urgent and coords:
         raisons.insert(0, "URGENCE réelle")
