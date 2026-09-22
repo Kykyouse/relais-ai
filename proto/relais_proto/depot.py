@@ -218,6 +218,12 @@ class Depot(Protocol):
 
     def rdvs_echus(self, maintenant: dt.datetime) -> list[Rdv]: ...
 
+    # Les RDV dont le CRÉNEAU tombe dans une période, quel que soit leur statut.
+    # Sert à deux choses que rien ne reliait : l'agenda de l'artisan, et le fait
+    # de ne pas revendre une plage déjà prise (R98). Le filtrage par statut reste
+    # à l'appelant, avec `rdv.OCCUPENT` — le dépôt ne décide pas.
+    def rdvs_entre(self, artisan_id: str, du: str, au: str) -> list[Rdv]: ...
+
     def rdv_par_confirmation(self, empreinte: str) -> Rdv: ...
 
     def lead(self, lead_id: str) -> Lead: ...
@@ -486,6 +492,12 @@ class DepotMemoire:
         qui n'est jamais parti ne doit pas laisser un créneau bloqué indéfiniment."""
         return [r for r in self._tous_rdvs()
                 if r.statut not in TERMINAUX and r.est_echu(maintenant)]
+
+    def rdvs_entre(self, artisan_id: str, du: str, au: str) -> list[Rdv]:
+        return sorted(
+            (r for r in self._tous_rdvs()
+             if r.artisan_id == artisan_id and du <= r.creneau.get("date", "") <= au),
+            key=lambda r: (r.creneau.get("date", ""), r.creneau.get("de", "")))
 
     def _tous_rdvs(self) -> list[Rdv]:
         return [Rdv.from_dict(d) for d in self._rdvs.values()]

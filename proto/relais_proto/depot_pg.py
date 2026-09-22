@@ -413,6 +413,15 @@ class DepotPostgres:
             "and expire_a <= %s order by expire_a",
             (list(_NON_TERMINAUX), maintenant))]
 
+    def rdvs_entre(self, artisan_id: str, du: str, au: str) -> list[Rdv]:
+        # Le créneau vit dans un `jsonb` : on compare sa date en TEXTE, ce qui est exact
+        # parce qu'elle est écrite en ISO (AAAA-MM-JJ) — le seul format où l'ordre
+        # lexicographique et l'ordre chronologique coïncident.
+        return [self._rdv_de_ligne(l) for l in self._plusieurs(
+            f"select {self._COLS_RDV} from rdv where artisan_id = %s "
+            "and creneau->>'date' between %s and %s "
+            "order by creneau->>'date', creneau->>'de'", (artisan_id, du, au))]
+
     def rdv_par_confirmation(self, empreinte: str) -> Rdv:
         if not empreinte:
             raise Introuvable("jeton vide")

@@ -72,7 +72,8 @@ def libelle_creneau(d: dt.date, de: str, a: str, aujourd_hui: dt.date) -> str:
 
 class CalendarStub:
     def __init__(self, config: dict, now: dt.datetime | None = None,
-                 urgences_consommees_aujourdhui: int = 0, jours_pleins: int = 0):
+                 urgences_consommees_aujourdhui: int = 0, jours_pleins: int = 0,
+                 occupes: list[dict] | None = None):
         self.config = config
         self.cfg = config["agenda"]
         # `now` est un INSTANT ; tout ce que ce module en tire (« aujourd'hui », « avant
@@ -82,6 +83,15 @@ class CalendarStub:
         self.urgences_consommees = urgences_consommees_aujourdhui
         self.jours_pleins = jours_pleins  # pour simuler T12 (calendrier saturé)
         self.holds: list[dict] = []
+        # CE QUI EST DÉJÀ PRIS (R98). Sans cette liste, `get_slots` fabriquait ses
+        # créneaux à partir des seules heures d'ouverture et ne regardait JAMAIS les
+        # rendez-vous existants : deux appelants du même jour se voyaient proposer — et
+        # obtenaient — la même plage. Mesuré le 22/09, en production.
+        #
+        # L'appelant la fournit (l'API la lit en base) plutôt que le calendrier d'aller
+        # la chercher : ce module ne connaît pas le dépôt, et c'est ce qui permet de le
+        # remplacer un jour par une lecture Google/Outlook sans rien changer ailleurs.
+        self.occupes = list(occupes or [])
 
     @property
     def local(self) -> dt.datetime:
@@ -176,7 +186,8 @@ class CalendarStub:
                     and self._jour_admis(d, jours, dates, jours_exclus, pas_avant,
                                          local.date()) \
                     and self._moment_ok(int(f["de"].split(":")[0]), moment) \
-                    and not self._moment_est(int(f["de"].split(":")[0]), moment_exclu):
+                    and not self._moment_est(int(f["de"].split(":")[0]), moment_exclu) \
+                    and not self._est_pris(d, f["de"], f["a"]):
                 slots.append(self._mk(d, f["de"], f["a"], urgence=True))
         # Puis les jours suivants (en sautant les jours "pleins" simulés)
         day = local.date() + dt.timedelta(days=1 + self.jours_pleins)
@@ -197,7 +208,9 @@ class CalendarStub:
                         fin_h = h + 2
                         if h >= debut.hour and fin_h <= int(a.split(":")[0]) \
                                 and self._moment_ok(h, moment) \
-                                and not self._moment_est(h, moment_exclu):
+                                and not self._moment_est(h, moment_exclu) \
+                                and not self._est_pris(day, f"{h:02d}:00",
+                                                       f"{fin_h:02d}:00"):
                             slots.append(self._mk(day, f"{h:02d}:00", f"{fin_h:02d}:00"))
                             if len(slots) >= n_total:
                                 return slots[skip:skip + n]
@@ -205,6 +218,22 @@ class CalendarStub:
             if (day - local.date()).days > 21:
                 break  # garde-fou (21 j : laisse leur chance aux jours rares type samedi)
         return slots[skip:skip + n]
+
+    def _est_pris(self, d: dt.date, de: str, a: str) -> bool:
+        """Cette plage chevauche-t-elle un créneau déjà pris ?
+
+        CHEVAUCHEMENT, pas égalité : un rendez-vous de 9 h à 11 h interdit la fenêtre de
+        10 h à 12 h, même si aucune borne ne coïncide. Comparer les heures en texte est
+        exact ici — elles sont écrites « HH:MM » sur 24 h, le seul format où l'ordre
+        des chaînes est l'ordre des horloges.
+        """
+        jour = d.isoformat()
+        for c in self.occupes:
+            if c.get("date") != jour:
+                continue
+            if de < c.get("a", "") and c.get("de", "") < a:
+                return True
+        return False
 
     def _mk(self, d: dt.date, de: str, a: str, urgence: bool = False) -> dict:
         return {"date": d.isoformat(), "de": de, "a": a, "urgence": urgence,
@@ -217,7 +246,11 @@ class CalendarStub:
         return {"now": self.now.isoformat(),
                 "urgences_consommees": self.urgences_consommees,
                 "jours_pleins": self.jours_pleins,
-                "holds": [dict(h) for h in self.holds]}
+                "holds": [dict(h) for h in self.holds],
+                # `occupes` VOYAGE AVEC L'ÉTAT (R14) : un appel dure plusieurs tours, et
+                # chaque tour peut tomber sur une autre instance. Sans cette clé, le tour
+                # suivant reproposerait un créneau que le tour précédent savait pris.
+                "occupes": [dict(c) for c in self.occupes]}
 
     @classmethod
     def from_dict(cls, data: dict, config: dict) -> CalendarStub:
@@ -227,6 +260,9 @@ class CalendarStub:
                   urgences_consommees_aujourdhui=data["urgences_consommees"],
                   jours_pleins=data["jours_pleins"])
         cal.holds = [dict(h) for h in data["holds"]]
+        # `.get` et non `data[...]` : un état sérialisé AVANT R98 n'a pas cette clé, et
+        # un appel en cours au moment du déploiement ne doit pas tomber au tour suivant.
+        cal.occupes = [dict(c) for c in data.get("occupes", [])]
         return cal
 
     def hold_slot(self, slot: dict, prestation: str | None) -> dict:

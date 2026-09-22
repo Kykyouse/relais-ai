@@ -37,6 +37,19 @@ class StatutRdv(str, Enum):
 
 TERMINAUX = frozenset({StatutRdv.VALIDE, StatutRdv.REFUSE, StatutRdv.EXPIRE})
 
+# CE QUI OCCUPE LE CRÉNEAU — et ce n'est PAS le complément de `TERMINAUX` (R98).
+#
+# Un RDV validé est terminal — il n'y a plus rien à décider — mais il occupe bel et bien
+# la plage : c'est même le seul qui l'occupe pour de bon. Un RDV refusé ou expiré, lui,
+# la libère. Confondre les deux notions, c'était soit proposer un créneau déjà vendu,
+# soit refuser de proposer un créneau rendu.
+#
+# La règle est nommée ICI, dans le domaine, et pas écrite dans une requête : une liste de
+# statuts recopiée dans du SQL est une seconde définition qui divergera le jour où un
+# statut s'ajoutera.
+OCCUPENT = frozenset({StatutRdv.TAMPON, StatutRdv.EN_ATTENTE_VALIDATION,
+                      StatutRdv.REPROPOSE, StatutRdv.VALIDE})
+
 # Le tampon peut expirer sans avoir jamais été notifié : si le push échoue, l'appelant
 # ne doit pas rester avec un créneau fantôme que personne ne regarde.
 TRANSITIONS: dict[StatutRdv, frozenset[StatutRdv]] = {

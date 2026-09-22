@@ -3708,6 +3708,123 @@ def _appel_sans_rdv(depot, nom_scenario: str, maintenant: dt.datetime):
     return depot.cloturer_appel(appel.id, build_lead(convo), maintenant)
 
 
+def check_pas_de_double_reservation() -> bool:
+    """R98 : le calendrier ne propose pas une plage déjà vendue.
+
+    Trouvé le 22/09, et c'était un défaut EN PRODUCTION, pas une fonctionnalité
+    manquante. Geoffrey : « pour l'agenda on est quand même censé en avoir un sans
+    forcément lié google ou outlook […] s'ils veulent gérer leur agenda uniquement sur
+    Nelyo il faut que ce soit possible ». En le vérifiant, j'ai mesuré pire : deux
+    appelants du même jour se voyaient proposer — et OBTENAIENT — « aujourd'hui entre
+    17h et 19h ». `get_slots` fabriquait ses créneaux à partir des seules heures
+    d'ouverture et ne regardait jamais les rendez-vous existants.
+
+    Le journal avait rangé le sujet derrière le calendrier externe (« le calendrier
+    externe sera un anti-double-réservation »). C'était l'erreur : l'artisan sans agenda
+    numérique est le cas COURANT, et c'est justement lui qui n'a aucun autre filet.
+
+    QUATRE PROPRIÉTÉS :
+
+    1. une plage prise n'est plus proposée ;
+    2. **le chevauchement compte, pas l'égalité** — un RDV de 9 h à 11 h interdit la
+       fenêtre de 10 h à 12 h, même si aucune borne ne coïncide ;
+    3. **`OCCUPENT` n'est pas le complément de `TERMINAUX`** : un RDV VALIDÉ est terminal
+       et occupe la plage ; un refusé ou un expiré la rend. Confondre les deux, c'est
+       soit revendre un créneau, soit refuser d'en proposer un qui est libre ;
+    4. les créneaux pris SURVIVENT à la sérialisation de l'état (R14) — un appel dure
+       plusieurs tours, et chaque tour peut tomber sur une autre instance.
+    """
+    import datetime as dt
+
+    from relais_proto.calendar_stub import CalendarStub
+    from relais_proto.depot import LigneArtisan
+    from relais_proto.rdv import OCCUPENT, StatutRdv, TERMINAUX
+
+    # (3) d'abord la règle elle-même, avant tout le reste : c'est elle qui décide.
+    if StatutRdv.VALIDE not in OCCUPENT:
+        print("   un RDV VALIDÉ n'occupe pas sa plage — elle serait revendue")
+        return False
+    for libre in (StatutRdv.REFUSE, StatutRdv.EXPIRE):
+        if libre in OCCUPENT:
+            print(f"   un RDV {libre.value} occupe encore sa plage — elle ne serait "
+                  f"jamais rendue")
+            return False
+    if OCCUPENT == frozenset(s for s in StatutRdv if s not in TERMINAUX):
+        print("   OCCUPENT est le complément de TERMINAUX : les deux notions sont "
+              "confondues, et un RDV validé ne bloquerait rien")
+        return False
+
+    # (1) une plage prise disparaît des propositions
+    libre = CalendarStub(CFG, now=LUNDI_9H)
+    creneaux = libre.get_slots(prestation="fuite", urgent=False, n=3)
+    if not creneaux:
+        print("   le calendrier ne propose rien du tout (fixture cassée)")
+        return False
+    premier = creneaux[0]
+    avec = CalendarStub(CFG, now=LUNDI_9H, occupes=[premier])
+    apres = avec.get_slots(prestation="fuite", urgent=False, n=3)
+    if any(s["date"] == premier["date"] and s["de"] == premier["de"] for s in apres):
+        print(f"   le créneau {premier['date']} {premier['de']} est proposé alors "
+              f"qu'il est déjà pris")
+        return False
+    if not apres:
+        print("   plus aucun créneau n'est proposé : on a exclu bien trop large")
+        return False
+
+    # (2) CHEVAUCHEMENT, pas égalité : 9h–11h doit interdire 10h–12h
+    cal = CalendarStub(CFG, now=LUNDI_9H)
+    if not cal._est_pris(dt.date(2026, 8, 25), "10:00", "12:00"):
+        cal.occupes = [{"date": "2026-08-25", "de": "09:00", "a": "11:00"}]
+        if not cal._est_pris(dt.date(2026, 8, 25), "10:00", "12:00"):
+            print("   un RDV de 9h–11h ne bloque pas la fenêtre 10h–12h : seules les "
+                  "plages IDENTIQUES sont exclues")
+            return False
+        # ...et il ne bloque pas ce qui ne le touche pas
+        if cal._est_pris(dt.date(2026, 8, 25), "11:00", "13:00"):
+            print("   une plage qui commence quand l'autre finit est jugée occupée")
+            return False
+        if cal._est_pris(dt.date(2026, 8, 26), "09:00", "11:00"):
+            print("   un créneau d'un AUTRE jour est jugé occupé")
+            return False
+
+    # (4) la sérialisation emporte les créneaux pris
+    relu = CalendarStub.from_dict(avec.to_dict(), CFG)
+    if relu.occupes != avec.occupes:
+        print(f"   les créneaux pris ne survivent pas à la sérialisation : "
+              f"{relu.occupes}")
+        return False
+    if any(s["date"] == premier["date"] and s["de"] == premier["de"]
+           for s in relu.get_slots(prestation="fuite", urgent=False, n=3)):
+        print("   après rechargement, le calendrier repropose la plage prise — un appel "
+              "de plusieurs tours revendrait le créneau au tour suivant")
+        return False
+    # un état d'AVANT R98 n'a pas la clé : il doit se recharger sans tomber
+    ancien = avec.to_dict()
+    del ancien["occupes"]
+    if CalendarStub.from_dict(ancien, CFG).occupes != []:
+        print("   un état sérialisé avant R98 ne se recharge pas proprement")
+        return False
+
+    # (5) DE BOUT EN BOUT : deux appels successifs ne repartent pas avec la même plage.
+    # C'est la forme exacte sous laquelle le défaut a été mesuré.
+    from relais_proto.rdv import OCCUPENT as _OCC
+    depot = DepotMemoire()
+    depot.enregistrer_artisan(LigneArtisan(
+        id="art-dupont", numero_relais="+33189701234", config_fichier="dupont.json"))
+    _, rdv1 = _appel_avec_rdv(depot, "T01_urgence_fuite", LUNDI_9H)
+    pris = [r.creneau for r in depot.rdvs_entre(
+        "art-dupont", "2026-01-01", "2030-01-01") if r.statut in _OCC]
+    if not pris:
+        print("   rdvs_entre ne rend pas le RDV qui vient d'être créé")
+        return False
+    cal2 = CalendarStub(CFG, now=LUNDI_9H, occupes=pris)
+    for s in cal2.get_slots(prestation="fuite", urgent=True, n=3):
+        if s["date"] == rdv1.creneau["date"] and s["de"] == rdv1.creneau["de"]:
+            print("   le second appelant se voit proposer le créneau du premier")
+            return False
+    return True
+
+
 def check_mobile_ambigu() -> bool:
     """R96/R97 : ce que la page d'admin a laissé passer en vingt minutes.
 
@@ -11704,6 +11821,14 @@ def run() -> int:
     if check_admin():
         print("   → un artisan se crée sans commit ni redéploiement, une config "
               "invalide est refusée en bloc, et les révocations révoquent : ✅ PASS")
+    else:
+        print("   → ❌ FAIL")
+        echecs += 1
+
+    print(f"\n──── R98_pas_de_double_reservation ────")
+    if check_pas_de_double_reservation():
+        print("   → une plage déjà vendue n'est plus proposée, le chevauchement "
+              "compte, et un RDV validé bloque son créneau : ✅ PASS")
     else:
         print("   → ❌ FAIL")
         echecs += 1

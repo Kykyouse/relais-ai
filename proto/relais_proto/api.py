@@ -31,7 +31,7 @@ from .confirmation import creer_jeton, empreinte, lien
 from . import admin as admin_mdp
 from .depot import Introuvable, LigneArtisan
 from .engine import Conversation
-from .rdv import TransitionInterdite
+from .rdv import OCCUPENT, TransitionInterdite
 from .registre import (Artisan, Registre, empreinte as registre_empreinte,
                        valider_config)
 from .scoring import build_lead, est_urgent as scoring_est_urgent
@@ -491,7 +491,9 @@ def creer_app(depot, registre: Registre, fabrique_llm, horloge=None,
             # s'il est exploitable — un appelant masqué ou un indicatif étranger ne doit
             # pas être prononcé.
             convo = Conversation(artisan.config, fabrique_llm(),
-                                 CalendarStub(artisan.config, now=t),
+                                 CalendarStub(
+                                     artisan.config, now=t,
+                                     occupes=_creneaux_pris(artisan.id, t)),
                                  numero_appelant=_vapi.numero_appelant(corps))
             texte = convo.open()
             if appel is None:
@@ -605,7 +607,8 @@ def creer_app(depot, registre: Registre, fabrique_llm, horloge=None,
         # (« demain entre 08h et 10h ») gardent le même sens jusqu'à la fin de l'appel,
         # même s'il franchit minuit.
         convo = Conversation(artisan.config, fabrique_llm(),
-                             CalendarStub(artisan.config, now=t))
+                             CalendarStub(artisan.config, now=t,
+                                          occupes=_creneaux_pris(artisan.id, t)))
         texte = convo.open()
         # L'INSTANTANÉ de config (migration 011) : ce que l'agent sait est figé au
         # moment où l'appel s'ouvre. C'est ce qui remplace l'historique git du
@@ -1253,6 +1256,26 @@ def creer_app(depot, registre: Registre, fabrique_llm, horloge=None,
     # n'apprend jamais si le chantier a eu lieu ni ce qu'il a rapporté. Les afficher
     # demanderait de les inventer, et une interface qui affirme un chiffre le fait avec
     # son autorité (R79, R85).
+
+    def _creneaux_pris(artisan_id: str, depuis: dt.datetime) -> list[dict]:
+        """Les plages déjà vendues, sur la fenêtre que le calendrier peut proposer.
+
+        R98 : `get_slots` fabriquait ses créneaux à partir des seules heures d'ouverture
+        et ne regardait JAMAIS les rendez-vous existants. Deux appelants du même jour se
+        voyaient proposer — et obtenaient — la même plage. C'est l'API qui va chercher
+        l'information, pas le calendrier : `calendar_stub` ne connaît pas le dépôt, et
+        c'est ce qui permettra de le remplacer par une lecture Google/Outlook sans rien
+        changer ailleurs.
+
+        VINGT-TROIS JOURS, parce que `get_slots` s'arrête à 21 jours et qu'une marge vaut
+        mieux qu'une borne juste. `OCCUPENT` vient du domaine : un RDV VALIDÉ est
+        terminal mais occupe la plage, un refusé ou un expiré la rend.
+        """
+        jour = temps.en_local(depuis, None).date()
+        return [r.creneau for r in depot.rdvs_entre(
+            artisan_id, jour.isoformat(),
+            (jour + dt.timedelta(days=23)).isoformat())
+            if r.statut in OCCUPENT]
 
     def _artisan_espace(authorization: str, relais_session: str,
                         nelyo_admin: str, nelyo_vue: str):

@@ -238,6 +238,24 @@ def verifier(fabrique, cfg: dict) -> list[str]:
            "rdvs_en_attente ne rend pas le RDV en attente")
     exiger(depot.rdvs_en_attente("art-autre") == [],
            "rdvs_en_attente fuit sur un autre artisan")
+
+    # ---- les RDV d'une PÉRIODE (R98) : l'agenda, et l'anti-double-réservation ----
+    # La date du créneau vit dans un `jsonb` et se compare en TEXTE. C'est exact parce
+    # qu'elle est écrite en ISO — le seul format où l'ordre des chaînes est l'ordre du
+    # calendrier — mais ça ne va pas de soi, donc le contrat le tient.
+    jour = rdv.creneau["date"]
+    exiger({r.id for r in depot.rdvs_entre("art-dupont", jour, jour)} == {rdv.id},
+           "rdvs_entre ne rend pas un RDV dont le créneau tombe le jour demandé")
+    exiger(depot.rdvs_entre("art-dupont", "1999-01-01", "1999-12-31") == [],
+           "rdvs_entre rend des RDV hors de la période")
+    exiger(depot.rdvs_entre("art-autre", jour, jour) == [],
+           "rdvs_entre fuit sur un autre artisan")
+    # BORNES INCLUSES des deux côtés : un agenda qui perd le premier ou le dernier jour
+    # de la semaine affichée est faux une fois sur sept.
+    exiger({r.id for r in depot.rdvs_entre("art-dupont", jour, "2099-12-31")} == {rdv.id}
+           and {r.id for r in depot.rdvs_entre("art-dupont", "1999-01-01", jour)}
+           == {rdv.id},
+           "rdvs_entre exclut une borne — un agenda hebdomadaire perdrait un jour")
     exiger(depot.rdvs_echus(rdv.expire_a - dt.timedelta(minutes=1)) == [],
            "rdvs_echus rend un RDV encore dans les temps")
     exiger({r.id for r in depot.rdvs_echus(rdv.expire_a)} == {rdv.id},
