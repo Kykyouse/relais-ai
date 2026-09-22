@@ -5,7 +5,7 @@
 
 ---
 
-# ÉTAT AU 21/09/2026 — à lire en premier
+# ÉTAT AU 22/09/2026 — à lire en premier
 
 > **Ce bloc se REMPLACE, il ne s'empile pas.** Les entrées datées plus bas sont le journal
 > chronologique (le pourquoi des décisions) ; ce bloc-ci est le où-on-en-est.
@@ -16,14 +16,14 @@ Le produit s'appelle **NELYO** et **il tourne en ligne** :
 <https://nelyo-api.onrender.com>, cron compris, sur une base de production séparée.
 Depuis le 21/09 **un artisan s'inscrit sans commit ni redéploiement** : sa config vit en
 base et s'édite dans `/admin`. La compréhension est au LLM sous contrat fermé, mesurée à
-**68/70** au banc d'extraction et **57/57** en éval réelle ×3 ; **102 tests** de
+**68/70** au banc d'extraction et **57/57** en éval réelle ×3 ; **104 tests** de
 non-régression. Il reste **un seul mur** : aucun numéro n'est joignable depuis la France.
 
-## Ce qui tourne (rejoué le 21/09)
+## Ce qui tourne (rejoué le 22/09)
 
 ```bash
 cd proto
-python run_scenario.py                              # 102 tests, ~3 s — sans clé NI BASE (R93)
+python run_scenario.py                              # 104 tests, ~3 s — sans clé NI BASE (R93)
 python run_extract_eval.py [--mock] [--only …]      # banc d'EXTRACTION : 68/70, p50 1131 ms
 python run_llm_eval.py [--mock] [--n 3]             # éval appelant-simulé (19 personas)
 python run_depot_pg.py [--migrer]                   # contrat du port contre Supabase
@@ -85,8 +85,10 @@ pause** (DNS qui ne résout plus, pooler qui répond `tenant/user not found`). B
 | **Onboarding : page d'admin, config éditable** | ✅ **21/09** | T13 + 2 mutations, et parcours réel en production |
 | **Config en base + instantané sur l'appel** | ✅ **21/09** | migrations 011/012, vérifiées contre la prod |
 | **Mode support : l'admin voit l'espace d'un artisan** | ✅ **21/09** | T14 + 2 mutations ; lecture seule STRUCTURELLE |
-| **Espace artisan : vrai site, pas une carte client** | 🟡 **21/09** | en-tête, onglets, grille responsive — Geoffrey fait un mockup pour la suite |
-| **Tableau de bord, facturation, agenda, site vitrine** | ❌ | rien de commencé |
+| **Espace artisan : la maquette appliquée** | ✅ **22/09** | jetons, typo et composants de `docs/maquette/` ; aucun composant absent |
+| **Agenda PROPRE de l'artisan** | ✅ **22/09** | T15 ; migration 013, et ce qu'il inscrit bloque l'agent |
+| **Anti-double-réservation** | ✅ **22/09** | R98 + mutation ; c'était un défaut EN PRODUCTION |
+| **Tableau de bord, facturation, site vitrine** | ❌ | rien de commencé |
 | Éval LLM réelle, 19 personas × 3 | ✅ 57/57 le 09/09 | à rejouer après R94 |
 
 ## Le fait structurant de la période (01–02/09) : le curseur a bougé
@@ -183,6 +185,20 @@ correcte, trois lignes au-dessus du code qui la contredisait.
 - **L'ESPACE ARTISAN N'EST PAS LA PAGE CLIENT** (21/09). Le client voit une page, une
   fois, sur un téléphone ; l'artisan revient tous les jours, souvent sur un PC, et doit
   pouvoir s'orienter. Deux enveloppes distinctes — un gabarit partagé en trahit un.
+- **`docs/maquette/nelyo-maquette.html` EST LA CIBLE VISUELLE** (22/09), pas une
+  inspiration : jetons, typographie, composants et navigation en sont repris tels quels.
+  Deux écarts assumés — polices AUTO-HÉBERGÉES (un chargement Google transmet l'IP de
+  chaque artisan ET de chaque client à un tiers) et pas de JavaScript (chaque vue est
+  une URL). **Et aucun chiffre inventé** : la maquette montre « 4 850 € récupérés »,
+  « ×32 votre abonnement », « 38 % de conversion » — le produit s'arrête au rendez-vous
+  validé et n'apprend jamais si le chantier a eu lieu ni ce qu'il a rapporté.
+- **NELYO EST UN AGENDA À PART ENTIÈRE** (22/09). Google et Outlook sont une
+  synchronisation optionnelle, jamais la condition. L'artisan sans agenda numérique est
+  le cas COURANT, et c'est lui qui n'a aucun autre filet — c'est pourquoi
+  l'anti-double-réservation vit chez nous (R98) et que l'artisan peut inscrire ses
+  propres engagements (T15).
+- **`OCCUPENT` n'est pas le complément de `TERMINAUX`** (R98) : un RDV VALIDÉ est
+  terminal et occupe sa plage ; un refusé ou un expiré la rend.
 
 ## Dettes et décisions ouvertes
 
@@ -240,6 +256,69 @@ Le mode d'emploi des sondes et le détail de la récolte du 25/08 sont dans les 
 datées ; l'en-tête de `vapi.py` porte le format de fil SSE. **Les lire avant de toucher au
 chantier voix.**
 
+
+---
+
+## 22/09 — La maquette appliquée, et l'agenda qui manquait
+
+Geoffrey livre `docs/maquette/nelyo-maquette.html` : « C'est la cible visuelle, pas une
+inspiration ». Jetons `:root`, typographie, composants et navigation à six entrées repris
+tels quels. Aucun composant de la maquette n'est absent des pages — vérifié par
+comparaison automatique.
+
+**Deux écarts, assumés.** Les polices sont AUTO-HÉBERGÉES : la maquette les charge depuis
+`fonts.googleapis.com`, et chaque chargement transmet l'IP du visiteur — artisan ou
+client — à un tiers, sur un produit qui traite des demandes de particuliers. Même
+familles, licence SIL OFL qui l'autorise. Au passage : Google servait la même police
+VARIABLE une fois par graisse demandée, trois fichiers identiques par famille (vérifié au
+md5) — une copie et une plage `font-weight` suffisent, 107 Ko au lieu de 321. Et pas de
+JavaScript : les six vues de la maquette sont six URL.
+
+**Aucun chiffre inventé.** C'est le seul contenu visible que j'ai retiré : le bandeau
+« 4 850 € récupérés · ×32 votre abonnement », les deltas (« +18 % vs août »), « chantiers
+signés », « 38 % de conversion ». Le produit ne sait pas les calculer — il s'arrête au
+rendez-vous validé et n'apprend jamais si le chantier a eu lieu ni ce qu'il a rapporté.
+Les afficher, c'était les inventer (R79, R85). Les quatre vues sans données disent ce qui
+leur manque, précisément, plutôt que « bientôt ».
+
+**Trois défauts introduits, tous attrapés par les tests** : « Nelyo » écrit EN DUR dans
+une page (R29 l'interdit depuis le premier jour), la carte de RDV échu qui perd
+« rappelez le client » (R85), et — le plus grave — **la reproposition de créneau perdue**.
+La maquette a trois boutons, je n'en avais gardé que deux : une fonction entière du
+produit disparaissait de l'écran alors qu'elle existait côté serveur.
+
+### R98 — Nelyo vendait deux fois le même créneau
+
+« pour l'agenda on est quand même censé en avoir un sans forcément lié google ou outlook
+[…] s'ils veulent gérer leur agenda uniquement sur Nelyo il faut que ce soit possible ».
+
+En allant vérifier ce qu'il fallait pour ça, j'ai trouvé pire qu'une fonctionnalité
+manquante : **un défaut en production**. Deux appelants du même jour se voyaient proposer
+— et obtenaient — la même plage. `get_slots` fabriquait ses créneaux à partir des seules
+heures d'ouverture et ne regardait jamais les rendez-vous existants.
+
+Le journal avait rangé le sujet derrière le calendrier externe (« le calendrier externe
+sera un anti-double-réservation »). C'était l'erreur, et elle contredisait une autre
+phrase du même journal : l'artisan sans agenda numérique est le cas COURANT.
+
+Trois points qui ne vont pas de soi : `OCCUPENT` n'est pas le complément de `TERMINAUX` ;
+c'est le CHEVAUCHEMENT qui compte et non l'égalité (éprouvé par mutation) ; et les
+créneaux pris voyagent avec l'état de l'appel (R14), faute de quoi le tour suivant
+reproposait la plage — `from_dict` les lit avec `.get`, pour qu'un appel en cours au
+moment du déploiement ne tombe pas.
+
+### T15 — l'autre moitié : ce que Nelyo ne sait pas
+
+R98 empêche de revendre ce que NELYO a vendu. Restait le chantier décroché de bouche à
+oreille, le rendez-vous chez le comptable, la semaine de congés. **Un agenda qui ne
+connaît que la moitié des engagements de son propriétaire est pire qu'absent : il inspire
+une confiance qu'il ne mérite pas.**
+
+Migration 013, et trois règles : un RDV Nelyo ne se supprime PAS depuis l'agenda (il
+porte un engagement envers un client, et se refuse depuis l'accueil — ce qui le prévient) ;
+on ne double pas l'artisan non plus (s'inscrire par-dessus un RDV Nelyo est refusé, conflit
+nommé) ; la suppression exige d'être le propriétaire, dans la clause SQL et pas seulement
+dans la route.
 
 ---
 
