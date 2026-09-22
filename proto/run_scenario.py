@@ -3839,7 +3839,60 @@ def check_agenda_propre() -> bool:
                 print(f"   saisie invalide acceptée : {mauvais}")
                 return False
 
-        # (5) suppression : l'artisan retire le sien
+        # (5) DÉPLACER — l'action d'agenda la plus courante, et celle qui distingue
+        # les deux natures de bloc.
+        page = julien.get(f"/app/agenda?semaine={vise['date']}", headers=entetes).text
+        if f"/app/agenda/{evts[0].id}/modifier" not in page:
+            print("   l'artisan ne peut pas déplacer son propre événement")
+            return False
+        demain = (dt.date.fromisoformat(vise["date"])
+                  + dt.timedelta(days=1)).isoformat()
+        r = julien.post(f"/app/agenda/{evts[0].id}/modifier", headers=entetes,
+                        follow_redirects=False,
+                        data={"titre": "Chantier Morel — reporté", "jour": demain,
+                              "de": "14:00", "a": "16:00", "type": "rdv"})
+        if r.status_code != 303:
+            print(f"   le déplacement est refusé : {r.status_code}")
+            return False
+        if depot.evenements_entre("art-dupont", vise["date"], vise["date"]):
+            print("   l'événement est resté à son ancienne date : il existe en double")
+            return False
+        bouge = depot.evenements_entre("art-dupont", demain, demain)
+        if len(bouge) != 1 or bouge[0].de != "14:00" \
+                or bouge[0].titre != "Chantier Morel — reporté":
+            print(f"   le déplacement n'a pas été appliqué : {bouge}")
+            return False
+
+        # déplacer SUR un RDV Nelyo est refusé, comme l'ajout
+        r = julien.post(f"/app/agenda/{bouge[0].id}/modifier", headers=entetes,
+                        follow_redirects=False,
+                        data={"titre": "X", "jour": rdv.creneau["date"],
+                              "de": rdv.creneau["de"], "a": rdv.creneau["a"],
+                              "type": "rdv"})
+        if "erreur=" not in r.headers.get("location", ""):
+            print("   on peut déplacer un événement SUR un rendez-vous Nelyo")
+            return False
+
+        # (5bis) UN RDV NELYO NE SE DÉPLACE PAS D'ICI : on PROPOSE, le client confirme.
+        page = julien.get(f"/app/agenda?semaine={rdv.creneau['date']}",
+                          headers=entetes).text
+        if f"/app/agenda/{rdv.id}/modifier" in page:
+            print("   un RDV Nelyo est déplaçable en silence depuis l'agenda — le "
+                  "client attendrait chez lui à l'ancienne heure")
+            return False
+        if f"/app/{rdv.id}/reproposer" not in page:
+            print("   aucun moyen de proposer un autre créneau pour un RDV Nelyo")
+            return False
+        if "devra confirmer" not in page:
+            print("   la page ne dit pas que le client doit confirmer")
+            return False
+
+        # remis à sa place pour la suite
+        depot.modifier_evenement("art-dupont", bouge[0].id, jour=vise["date"],
+                                 de=vise["de"], a=vise["a"], titre="Chantier Morel")
+        evts = depot.evenements_entre("art-dupont", vise["date"], vise["date"])
+
+        # (6) suppression : l'artisan retire le sien
         r = julien.post(f"/app/agenda/{evts[0].id}/supprimer", headers=entetes,
                         follow_redirects=False)
         if r.status_code != 303 or depot.evenements_entre(
@@ -3847,7 +3900,7 @@ def check_agenda_propre() -> bool:
             print("   l'artisan ne peut pas supprimer son propre événement")
             return False
 
-    # (6) le mode support reste en LECTURE SEULE sur l'agenda (T14)
+    # (7) le mode support reste en LECTURE SEULE sur l'agenda (T14)
     depot.creer_evenement(EvenementAgenda(
         id="", artisan_id="art-dupont", jour=vise["date"], de="14:00", a="16:00",
         titre="Congés", type="indisponible"))
@@ -3863,9 +3916,11 @@ def check_agenda_propre() -> bool:
         if "Congés" not in page:
             print("   le mode support ne voit pas l'agenda de l'artisan")
             return False
-        if "/supprimer" in page or "Ajouter à mon agenda" in page:
-            print("   le mode support offre des actions sur l'agenda")
-            return False
+        for interdit in ("/supprimer", "/modifier", "Ajouter à mon agenda",
+                         "/reproposer"):
+            if interdit in page:
+                print(f"   le mode support offre « {interdit} » sur l'agenda")
+                return False
         r = geoffrey.post("/app/agenda", follow_redirects=False,
                           data={"titre": "Pirate", "jour": vise["date"],
                                 "de": "18:00", "a": "19:00", "type": "rdv"})

@@ -582,6 +582,25 @@ def verifier(fabrique, cfg: dict) -> list[str]:
     exiger(len(depot.evenements_entre("art-dupont", "2026-08-27", "2026-08-28")) == 2,
            "evenements_entre : les DEUX bornes doivent être incluses")
 
+    # DÉPLACER : mêmes exigences que supprimer, et le propriétaire est dans la clause.
+    exiger(depot.modifier_evenement("art-dupont", ev.id, jour="2026-08-29",
+                                    de="14:00", a="16:00", titre="Chantier Morel (2)"),
+           "modifier_evenement ne rend pas True sur un déplacement réel")
+    deplace = depot.evenements_entre("art-dupont", "2026-08-29", "2026-08-29")
+    exiger(len(deplace) == 1 and deplace[0].de == "14:00" and deplace[0].a == "16:00"
+           and deplace[0].titre == "Chantier Morel (2)",
+           f"modifier_evenement : le déplacement n'est pas relu ({deplace})")
+    exiger(depot.evenements_entre("art-dupont", "2026-08-27", "2026-08-27") == [],
+           "l'événement est resté à son ancienne date APRÈS déplacement — il existe "
+           "maintenant en double")
+    exiger(depot.modifier_evenement("art-autre", ev.id, titre="Pirate") is False,
+           "un autre artisan a pu déplacer un événement qui ne lui appartient pas")
+    exiger(depot.modifier_evenement("art-dupont", ID_ABSENT, titre="X") is False,
+           "modifier un identifiant inconnu doit rendre False, pas lever")
+    # on le remet où il était, pour la suite du contrat
+    depot.modifier_evenement("art-dupont", ev.id, jour="2026-08-27", de="09:00",
+                             a="12:00", titre="Chantier Morel")
+
     # LA SUPPRESSION EXIGE L'ARTISAN, pas seulement l'identifiant : connaître un id ne
     # doit pas suffire à effacer l'agenda de quelqu'un d'autre.
     exiger(depot.supprimer_evenement("art-autre", ev.id) is False,

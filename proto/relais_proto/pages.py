@@ -637,10 +637,17 @@ details.horaire input{width:100%;min-height:38px;border:1px solid var(--line);
 .e-perso{background:var(--surface-2);border:1px solid var(--line);color:var(--ink)}
 .e-off{background:repeating-linear-gradient(45deg,var(--surface-2),
   var(--surface-2) 6px,var(--line) 6px,var(--line) 7px);color:var(--muted)}
-.evt .sup{position:absolute;top:5px;right:5px}
-.evt .sup button{background:none;border:0;color:var(--faint);cursor:pointer;
-  font-size:14px;line-height:1;padding:2px 4px;width:auto;min-height:0}
-.evt .sup button:hover{color:var(--crit)}
+.evt details{margin-top:7px}
+.evt details summary{list-style:none;cursor:pointer;color:var(--faint);font-size:11px;
+  letter-spacing:.04em;text-transform:uppercase;font-weight:600}
+.evt details summary::-webkit-details-marker{display:none}
+.evt details summary:hover{color:var(--ink)}
+.evt form{margin-top:7px;display:flex;flex-direction:column;gap:5px}
+.evt form label{margin:0;font-size:10.5px}
+.evt form input,.evt form select{min-height:32px;font-size:12.5px;padding:0 7px}
+.evt form .btns{display:flex;gap:6px;margin-top:4px}
+.evt form button{min-height:30px;font-size:11.5px;padding:0 9px;width:auto}
+.evt .avis{color:var(--muted);font-size:11px;line-height:1.35;margin:5px 0 0}
 .legend{display:flex;gap:18px;flex-wrap:wrap;font-size:12.5px;color:var(--muted);
   align-items:center}
 .sw{width:12px;height:12px;border-radius:4px;display:inline-block;vertical-align:-2px;
@@ -1031,6 +1038,61 @@ def page_a_venir(produit: str, vue: str, entreprise: str, prenom: str,
         a_valider=a_valider, vue_admin=vue_admin)
 
 
+def _actions_evenement(e: dict, jour_iso: str) -> str:
+    """Ce qu'on peut faire d'un bloc de l'agenda — et ça dépend de QUI l'a posé.
+
+    **Un événement que l'artisan a inscrit lui-même** se déplace, se renomme et se
+    retire : c'est sa note, elle n'engage personne d'autre.
+
+    **Un rendez-vous NELYO ne se déplace pas d'ici.** Sa plage a été vendue à quelqu'un
+    qui l'attend. On propose donc un AUTRE créneau — ce qui envoie au client un SMS avec
+    un lien de confirmation (spec §3.5bis) — et le rendez-vous ne bouge qu'une fois qu'il
+    a accepté. Déplacer une plage sans prévenir celui qui l'a achetée laisserait
+    quelqu'un attendre chez lui ; c'est exactement la faute que R79 et R85 interdisent
+    ailleurs dans le produit.
+    """
+    ident = escape(e["id"])
+    if e["supprimable"]:
+        options = "".join(
+            '<option value="{0}"{1}>{2}</option>'.format(
+                v, " selected" if e.get("type") == v else "", libelle)
+            for v, libelle in (("rdv", "Rendez-vous"),
+                               ("indisponible", "Indisponible")))
+        return (
+            "<details><summary>Modifier</summary>"
+            f'<form method="post" action="/app/agenda/{ident}/modifier">'
+            f'<label>Intitulé</label><input name="titre" required '
+            f'value="{escape(e["titre"])}">'
+            f'<label>Jour</label><input name="jour" type="date" required '
+            f'value="{escape(jour_iso)}">'
+            f'<label>De</label><input name="de" type="time" required '
+            f'value="{escape(e["de"])}">'
+            f'<label>À</label><input name="a" type="time" required '
+            f'value="{escape(e["a"])}">'
+            f'<label>Nature</label><select name="type">{options}</select>'
+            '<div class="btns">'
+            '<button class="btn btn-cu" type="submit">Déplacer</button></div>'
+            "</form>"
+            f'<form method="post" action="/app/agenda/{ident}/supprimer">'
+            '<div class="btns">'
+            '<button class="btn btn-ghost-crit" type="submit">Retirer</button>'
+            "</div></form></details>")
+    return (
+        "<details><summary>Déplacer</summary>"
+        f'<form method="post" action="/app/{ident}/reproposer">'
+        '<label>Nouveau jour</label>'
+        f'<input name="date" type="date" required value="{escape(jour_iso)}">'
+        f'<label>De</label><input name="de" type="time" required '
+        f'value="{escape(e["de"])}">'
+        f'<label>À</label><input name="a" type="time" required '
+        f'value="{escape(e["a"])}">'
+        '<div class="btns">'
+        '<button class="btn btn-cu" type="submit">Proposer au client</button></div>'
+        "</form>"
+        '<p class="avis">Le client recevra un SMS et devra confirmer. '
+        "Le rendez-vous ne bouge pas avant sa réponse.</p></details>")
+
+
 def agenda(produit: str, prenom: str, entreprise: str, jours: list[dict],
            semaine: str, precedente: str, suivante: str, a_valider: int = 0,
            commune: str = "", vue_admin: str = "", erreur: str = "") -> str:
@@ -1050,18 +1112,15 @@ def agenda(produit: str, prenom: str, entreprise: str, jours: list[dict],
     for j in jours:
         blocs = []
         for e in j["evenements"]:
-            sup = ""
-            if e["supprimable"] and not vue_admin:
-                sup = ('<span class="sup"><form method="post" '
-                       f'action="/app/agenda/{escape(e["id"])}/supprimer">'
-                       '<button type="submit" title="Retirer de l&#x27;agenda">×'
-                       "</button></form></span>")
+            actions = ""
+            if not vue_admin:
+                actions = _actions_evenement(e, j["iso"])
             blocs.append(
-                f'<div class="evt {e["classe"]}">{sup}'
+                f'<div class="evt {e["classe"]}">'
                 f'<time>{escape(e["heures"])}</time>'
                 f'<b>{escape(e["titre"])}</b>'
                 + (f' — {escape(e["detail"])}' if e["detail"] else "")
-                + "</div>")
+                + actions + "</div>")
         if not blocs:
             blocs.append('<div class="evt e-off" style="text-align:center">'
                          "Rien de prévu</div>")

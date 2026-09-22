@@ -256,6 +256,9 @@ class Depot(Protocol):
 
     def creer_evenement(self, ev: EvenementAgenda) -> EvenementAgenda: ...
 
+    def modifier_evenement(self, artisan_id: str, ev_id: str,
+                           **champs) -> bool: ...
+
     def supprimer_evenement(self, artisan_id: str, ev_id: str) -> bool: ...
 
     def rdv_par_confirmation(self, empreinte: str) -> Rdv: ...
@@ -545,6 +548,18 @@ class DepotMemoire:
         ev = replace(ev, id=ev.id or self._id("evt"))
         self._evenements[ev.id] = ev
         return replace(ev)
+
+    def modifier_evenement(self, artisan_id: str, ev_id: str, **champs) -> bool:
+        """Déplace ou renomme un événement. Rend True si quelque chose a changé.
+
+        L'ARTISAN EST DANS LA CONDITION, comme pour la suppression : connaître un
+        identifiant ne doit pas suffire à déplacer le rendez-vous de quelqu'un d'autre.
+        """
+        ev = self._evenements.get(ev_id)
+        if ev is None or ev.artisan_id != artisan_id:
+            return False
+        self._evenements[ev_id] = replace(ev, **champs)
+        return True
 
     def supprimer_evenement(self, artisan_id: str, ev_id: str) -> bool:
         """Rend True si quelque chose a été supprimé. L'ARTISAN EST DANS LA CONDITION,

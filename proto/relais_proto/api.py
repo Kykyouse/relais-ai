@@ -1606,8 +1606,11 @@ def creer_app(depot, registre: Registre, fabrique_llm, horloge=None,
                 "detail": (s.get("prestation") or "") + (
                     f" · {s['commune']}" if s.get("commune") else ""),
                 "classe": "e-ok" if valide else "e-wait",
-                # Un RDV Nelyo ne se supprime PAS d'ici : il porte un engagement envers
-                # un client, et se refuse depuis l'accueil — ce qui prévient le client.
+                "de": r.creneau.get("de", ""), "a": r.creneau.get("a", ""),
+                "type": "rdv",
+                # Un RDV Nelyo ne se supprime ni ne se déplace d'ici : il porte un
+                # engagement envers un client. On lui PROPOSE un autre créneau, et il
+                # confirme — c'est `reproposer`, qui lui envoie un SMS.
                 "supprimable": False,
             })
         for e in evts:
@@ -1615,6 +1618,7 @@ def creer_app(depot, registre: Registre, fabrique_llm, horloge=None,
                 "id": e.id, "tri": e.de, "heures": f"{e.de} – {e.a}",
                 "titre": e.titre, "detail": "",
                 "classe": "e-off" if e.type == "indisponible" else "e-perso",
+                "de": e.de, "a": e.a, "type": e.type,
                 "supprimable": True,
             })
 
@@ -1623,6 +1627,7 @@ def creer_app(depot, registre: Registre, fabrique_llm, horloge=None,
             d = lundi + dt.timedelta(days=i)
             liste = sorted(par_jour.get(d.isoformat(), []), key=lambda x: x["tri"])
             jours.append({
+                "iso": d.isoformat(),
                 "nom": JOURS_FR[d.weekday()].capitalize(),
                 "date": (f"{d.day} {MOIS_FR[d.month - 1][:4]}"
                          + (" · aujourd'hui" if d == ajd else "")),
@@ -1640,6 +1645,63 @@ def creer_app(depot, registre: Registre, fabrique_llm, horloge=None,
             a_valider=ctx["a_valider"], commune=ctx["commune"], vue_admin=vue,
             erreur=erreur))
 
+    def _valider_evenement(artisan_id: str, titre: str, jour: str, de: str, a: str,
+                           ignorer_rdv: str = "") -> tuple[str, str]:
+        """(titre nettoyé, erreur). UNE seule définition, pour l'ajout ET le déplacement.
+
+        Deux validations jumelles finiraient par diverger sur la vérification qui
+        manque — et ce serait celle-là qui laisserait passer un conflit.
+        """
+        titre = (titre or "").strip()
+        if not titre:
+            return "", ("Il faut un intitulé : c'est ce que vous relirez dans "
+                        "six semaines.")
+        if not (jour and de and a):
+            return titre, "Jour, heure de début et heure de fin sont obligatoires."
+        if de >= a:
+            return titre, "L'heure de fin doit venir après l'heure de début."
+        try:
+            dt.date.fromisoformat(jour)
+        except ValueError:
+            return titre, "Le jour n'est pas une date valide."
+        # ON NE DOUBLE PAS L'ARTISAN NON PLUS. R98 empêche l'agent de revendre une plage ;
+        # il serait incohérent de laisser l'artisan s'inscrire par-dessus un rendez-vous
+        # que Nelyo lui a déjà obtenu — il découvrirait le conflit chez le client.
+        occupe = [r for r in depot.rdvs_entre(artisan_id, jour, jour)
+                  if r.statut in OCCUPENT and r.id != ignorer_rdv
+                  and de < r.creneau.get("a", "") and r.creneau.get("de", "") < a]
+        if occupe:
+            return titre, (f"Vous avez déjà un rendez-vous Nelyo de "
+                           f"{occupe[0].creneau.get('de')} à "
+                           f"{occupe[0].creneau.get('a')} ce jour-là.")
+        return titre, ""
+
+    @app.post("/app/agenda/{ev_id}/modifier")
+    def agenda_modifier(ev_id: str, titre: str = Form(default=""),
+                        jour: str = Form(default=""), de: str = Form(default=""),
+                        a: str = Form(default=""), type: str = Form(default="rdv"),
+                        relais_session: str = Cookie(default="",
+                                                     alias=session.NOM_COOKIE),
+                        authorization: str = Header(default="")):
+        """Déplacer ou renommer un événement que l'artisan a inscrit lui-même.
+
+        Un rendez-vous NELYO ne passe pas par ici : le déplacer, c'est changer un
+        engagement pris envers un client, et ça se fait par `reproposer` — qui lui
+        envoie un SMS avec un lien de confirmation. Déplacer une plage vendue sans
+        prévenir celui qui l'a achetée laisserait quelqu'un attendre chez lui.
+        """
+        artisan = artisan_authentifie(authorization, relais_session)
+        titre, erreur = _valider_evenement(artisan.id, titre, jour, de, a)
+        if erreur:
+            return RedirectResponse(
+                f"/app/agenda?semaine={jour}&erreur={quote(erreur)}", status_code=303)
+        if not depot.modifier_evenement(artisan.id, ev_id, jour=jour, de=de, a=a,
+                                        titre=titre,
+                                        type=type if type in ("rdv", "indisponible")
+                                        else "rdv"):
+            raise HTTPException(404, "événement inconnu")
+        return RedirectResponse(f"/app/agenda?semaine={jour}", status_code=303)
+
     @app.post("/app/agenda")
     def agenda_ajouter(titre: str = Form(default=""), jour: str = Form(default=""),
                        de: str = Form(default=""), a: str = Form(default=""),
@@ -1655,31 +1717,7 @@ def creer_app(depot, registre: Registre, fabrique_llm, horloge=None,
         """
         artisan = artisan_authentifie(authorization, relais_session)
         from .depot import EvenementAgenda
-        erreur = ""
-        titre = (titre or "").strip()
-        if not titre:
-            erreur = "Il faut un intitulé : c'est ce que vous relirez dans six semaines."
-        elif not (jour and de and a):
-            erreur = "Jour, heure de début et heure de fin sont obligatoires."
-        elif de >= a:
-            erreur = "L'heure de fin doit venir après l'heure de début."
-        else:
-            try:
-                dt.date.fromisoformat(jour)
-            except ValueError:
-                erreur = "Le jour n'est pas une date valide."
-        if not erreur:
-            # ON NE DOUBLE PAS L'ARTISAN NON PLUS. R98 empêche l'agent de revendre une
-            # plage ; il serait incohérent de laisser l'artisan s'inscrire par-dessus un
-            # rendez-vous que Nelyo lui a déjà obtenu — il découvrirait le conflit le
-            # jour même, chez le client.
-            occupe = [r for r in depot.rdvs_entre(artisan.id, jour, jour)
-                      if r.statut in OCCUPENT
-                      and de < r.creneau.get("a", "") and r.creneau.get("de", "") < a]
-            if occupe:
-                erreur = (f"Vous avez déjà un rendez-vous Nelyo de "
-                          f"{occupe[0].creneau.get('de')} à "
-                          f"{occupe[0].creneau.get('a')} ce jour-là.")
+        titre, erreur = _valider_evenement(artisan.id, titre, jour, de, a)
         if erreur:
             return RedirectResponse(f"/app/agenda?semaine={jour}&erreur={quote(erreur)}",
                                     status_code=303)

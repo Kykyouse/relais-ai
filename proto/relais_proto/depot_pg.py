@@ -448,6 +448,22 @@ class DepotPostgres:
             f"select {self._COLS_EVT} from evenement_agenda where id = %s",
             (ident,), ident))
 
+    def modifier_evenement(self, artisan_id: str, ev_id: str, **champs) -> bool:
+        # Les colonnes autorisées sont une LISTE BLANCHE, jamais les clés reçues : ce
+        # sont des noms de colonnes interpolés dans du SQL, et la seule protection qui
+        # tienne est de n'en accepter aucune qu'on n'ait écrite soi-même.
+        permis = [c for c in ("jour", "de", "a", "titre", "type") if c in champs]
+        if not permis:
+            return False
+        try:
+            ev_id = self._uuid(ev_id, ev_id)
+        except Introuvable:
+            return False
+        sets = ", ".join(f"{c} = %s" for c in permis)
+        return bool(self._executer(
+            f"update evenement_agenda set {sets} where id = %s and artisan_id = %s",
+            tuple(champs[c] for c in permis) + (ev_id, artisan_id)))
+
     def supprimer_evenement(self, artisan_id: str, ev_id: str) -> bool:
         try:
             ev_id = self._uuid(ev_id, ev_id)

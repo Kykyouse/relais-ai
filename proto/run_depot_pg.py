@@ -35,7 +35,25 @@ import pathlib
 import sys
 
 MIGRATIONS = pathlib.Path(__file__).parent / "migrations"
-TABLES = ("message_sortant", "rdv", "lead", "appel")  # ordre inverse des dépendances
+# Les tables que le contrat REMPLIT, donc qu'il doit vider avant de tourner. Ordre
+# inverse des dépendances.
+TABLES = ("message_sortant", "rdv", "lead", "appel", "evenement_agenda")
+
+# Celles qu'il ne vide PAS, et pourquoi — la liste existe pour que le garde ci-dessous
+# puisse signaler tout ce qui n'est ni dans l'une ni dans l'autre.
+#
+# `evenement_agenda` a manqué à `TABLES` le 22/09, et le symptôme était trompeur : les
+# événements d'une exécution survivaient à la suivante, le contrat voyait des lignes
+# qu'il n'avait pas créées, et l'écart ressemblait à un défaut de l'ADAPTATEUR. Une liste
+# qu'on doit penser à mettre à jour finit toujours par ne pas l'être ; celle-ci se
+# plaint désormais toute seule.
+PERMANENTES = frozenset({
+    "artisan",              # le registre : le contrat pose le sien par UPSERT
+    "admin",                # comptes d'exploitation — rien à voir avec le contrat
+    "session_admin", "session_artisan", "code_connexion",  # écrasés par clé
+    "jalon",                # une ligne, écrasée
+    "relais_base_de_test", "relais_production",            # marqueurs
+})
 MARQUEUR = "relais_base_de_test"
 DELAI_CONNEXION = 8  # secondes : on veut basculer vite sur le pooler, pas attendre
 
@@ -191,6 +209,21 @@ def _vider(cx) -> None:
         cur.execute(f"truncate {', '.join(TABLES)} cascade")
 
 
+def _tables_oubliees(cx) -> list[str]:
+    """Les tables que personne n'a rangées : ni vidées, ni déclarées permanentes.
+
+    Une table ajoutée par une migration et oubliée dans `TABLES` rend le contrat NON
+    REPRODUCTIBLE — il voit les lignes de l'exécution précédente — et l'écart se lit
+    comme un défaut de l'adaptateur. C'est arrivé le 22/09 avec `evenement_agenda`.
+    Ce garde ne corrige rien : il NOMME l'oubli, ce qui suffit à ne pas chercher
+    ailleurs pendant dix minutes.
+    """
+    with cx.cursor() as cur:
+        cur.execute("select tablename from pg_tables where schemaname = 'public'")
+        toutes = {r[0] for r in cur.fetchall()}
+    return sorted(toutes - set(TABLES) - PERMANENTES)
+
+
 def run() -> int:
     _charger_env()
     from relais_proto.depot_pg import candidats_env
@@ -239,6 +272,12 @@ def run() -> int:
         print("Si les tables n'existent pas encore, relance avec --migrer.")
         cx.close()
         return 2
+
+    oubliees = _tables_oubliees(cx)
+    if oubliees:
+        print(f"\n⚠️  tables ni vidées ni déclarées permanentes : {oubliees}")
+        print("   Si le contrat y écrit, il verra les lignes de l'exécution "
+              "précédente — ajoute-les à TABLES ou à PERMANENTES.")
 
     from contrat_depot import verifier
     from relais_proto.depot_pg import DepotPostgres
