@@ -160,7 +160,7 @@ class DepotPostgres:
     # est en dernier parce que le dataclass l'y a mis — une colonne insérée au milieu
     # décalerait silencieusement tous les champs suivants.
     _COLS_ARTISAN = ("id, nom_affiche, numero_relais, telephone, config_fichier, "
-                     "token_sha256, etat_abonnement, config")
+                     "token_sha256, etat_abonnement, config, mot_de_passe")
 
     def artisans(self) -> list[LigneArtisan]:
         return [LigneArtisan(*l) for l in self._plusieurs(
@@ -180,18 +180,20 @@ class DepotPostgres:
         from psycopg.types.json import Jsonb
         self._executer(
             f"insert into artisan ({self._COLS_ARTISAN}, telephone_normalise, "
-            "numero_relais_normalise) values (%s,%s,%s,%s,%s,%s,%s,%s,%s,%s) "
+            "numero_relais_normalise) values (%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s) "
             "on conflict (id) do update set nom_affiche = excluded.nom_affiche, "
             "numero_relais = excluded.numero_relais, telephone = excluded.telephone, "
             "config_fichier = excluded.config_fichier, "
             "token_sha256 = excluded.token_sha256, "
             "etat_abonnement = excluded.etat_abonnement, "
             "config = excluded.config, "
+            "mot_de_passe = excluded.mot_de_passe, "
             "telephone_normalise = excluded.telephone_normalise, "
             "numero_relais_normalise = excluded.numero_relais_normalise",
             (ligne.id, ligne.nom_affiche, ligne.numero_relais, ligne.telephone,
              ligne.config_fichier, ligne.token_sha256, ligne.etat_abonnement,
              Jsonb(ligne.config) if ligne.config is not None else None,
+             ligne.mot_de_passe,
              normaliser_numero(ligne.telephone) or None,
              normaliser_numero(ligne.numero_relais) or None))
 

@@ -464,6 +464,28 @@ def verifier(fabrique, cfg: dict) -> list[str]:
         exiger(lu.utilisable(),
                "un artisan avec config EN BASE et sans fichier doit être utilisable")
 
+    # LE MOT DE PASSE (migration 014). `None` est un état normal — l'artisan entre alors
+    # par code SMS. Ce qui compte, c'est qu'il fasse l'aller-retour et qu'un UPSERT le
+    # remplace vraiment : un mot de passe changé qui resterait l'ancien serait une
+    # révocation qui ne révoque pas.
+    depot.enregistrer_artisan(LigneArtisan(
+        id="art-config", nom_affiche="Config SAS", numero_relais="+33189700077",
+        telephone="+33600000077", token_sha256="f" * 64,
+        config={"entreprise": {"nom": "Config SAS"}},
+        mot_de_passe="scrypt$1$2$3$aa$bb"))
+    avec_mdp = {a.id: a for a in depot.artisans()}.get("art-config")
+    exiger(avec_mdp is not None and avec_mdp.mot_de_passe == "scrypt$1$2$3$aa$bb",
+           f"le mot de passe de l'artisan ne fait pas l'aller-retour ({avec_mdp})")
+    depot.enregistrer_artisan(LigneArtisan(
+        id="art-config", nom_affiche="Config SAS", numero_relais="+33189700077",
+        telephone="+33600000077", token_sha256="f" * 64,
+        config={"entreprise": {"nom": "Config SAS"}},
+        mot_de_passe="scrypt$9$9$9$cc$dd"))
+    change = {a.id: a for a in depot.artisans()}.get("art-config")
+    exiger(change is not None and change.mot_de_passe == "scrypt$9$9$9$cc$dd",
+           "changer le mot de passe laisse l'ancien en place — une révocation qui ne "
+           "révoque pas")
+
     exiger(depot.artisan_par_token("f" * 64) is not None
            and depot.artisan_par_token("f" * 64).id == "art-config",
            "artisan_par_token ne retrouve pas l'artisan")

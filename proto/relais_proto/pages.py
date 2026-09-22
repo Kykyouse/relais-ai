@@ -198,25 +198,38 @@ def action_impossible(produit: str, raison: str) -> str:
 
 
 def connexion(produit: str, erreur: str = "") -> str:
-    """Premier écran : l'artisan donne son numéro de mobile.
+    """Premier écran : le mobile, et le mot de passe pour qui en a un.
 
     `type="tel"` fait sortir le pavé numérique du téléphone, et `autocomplete="tel"`
     laisse le navigateur proposer le numéro déjà connu — sur un chantier, une main libre
     et un écran sale, chaque frappe évitée compte.
+
+    LE MOT DE PASSE EST FACULTATIF, sur le même formulaire (22/09). Deux écrans séparés
+    auraient obligé à choisir sa porte AVANT de savoir laquelle on a ; ici on remplit ce
+    qu'on sait, et le serveur tranche. Laissé vide, c'est le code SMS — la seule voie
+    pour qui a perdu son mot de passe, changé de téléphone, ou n'en a jamais défini.
+
+    `autocomplete="username"` sur le mobile et `current-password` sur le second champ :
+    c'est ce couple, et lui seul, qui fait proposer l'enregistrement au gestionnaire du
+    navigateur. Sans lui, « l'enregistrer dans son appareil » ne marche tout simplement
+    pas — l'artisan retaperait son mot de passe à chaque fois.
     """
     alerte = f'<p class="raisons">{escape(erreur)}</p>' if erreur else ""
     return _page_app(
         produit,
         "Connexion",
         "<h1>Connexion</h1>"
-        '<p class="raisons">Entrez votre numéro de mobile : vous recevrez un code '
-        "par SMS.</p>"
+        '<p class="raisons">Votre mobile et votre mot de passe. Sans mot de passe, '
+        "vous recevrez un code par SMS.</p>"
         + alerte
         + '<form method="post" action="/connexion">'
           "<label>Mobile</label>"
-          '<input type="tel" name="telephone" autocomplete="tel" '
+          '<input type="tel" name="telephone" autocomplete="username" '
           'inputmode="numeric" placeholder="06 12 34 56 78" required>'
-          '<label></label><button type="submit">Recevoir un code</button></form>')
+          "<label>Mot de passe <small>(si vous en avez un)</small></label>"
+          '<input type="password" name="mot_de_passe" '
+          'autocomplete="current-password">'
+          '<label></label><button type="submit">Se connecter</button></form>')
 
 
 def saisie_code(produit: str, telephone: str, erreur: str = "") -> str:
@@ -348,7 +361,8 @@ def admin_artisans(produit: str, nom: str, artisans: list[dict]) -> str:
 
 
 def admin_artisan(produit: str, artisan: dict, config_json: str,
-                  erreurs: list = (), jeton: str = "", cree: bool = False) -> str:
+                  erreurs: list = (), jeton: str = "", cree: bool = False,
+                  lien: str = "", mot_de_passe: str = "") -> str:
     """Création et édition. UN SEUL gabarit pour les deux : les champs sont les mêmes, et
     deux pages jumelles finiraient par diverger sur le détail qui compte.
 
@@ -373,6 +387,16 @@ def admin_artisan(produit: str, artisan: dict, config_json: str,
                   "<br>" + escape(jeton) + "<br>"
                   "La base n en garde que l empreinte : il ne sera pas relisible.</div>"
                   ).replace("n en", "n&#x27;en").replace("l empreinte", "l&#x27;empreinte")
+    if lien:
+        secret += ('<div class="secret"><b>Lien de connexion — valable 15 minutes, '
+                   "un seul usage.</b><br>" + escape(lien) + "<br>"
+                   "Il ouvre la session de cet artisan. Ne le transmettez qu&#x27;à lui."
+                   "</div>")
+    if mot_de_passe:
+        secret += ('<div class="secret"><b>Mot de passe — affiché une seule fois.</b>'
+                   "<br>" + escape(mot_de_passe) + "<br>"
+                   "L&#x27;artisan se connectera avec son mobile et ce mot de passe, "
+                   "que son navigateur pourra retenir.</div>")
     bandeau = '<p class="raisons">Artisan créé.</p>' if cree else ""
     verrou = " required autofocus" if neuf else " readonly"
     etat = artisan.get("etat_abonnement") or "actif"
@@ -383,11 +407,23 @@ def admin_artisan(produit: str, artisan: dict, config_json: str,
     titre = artisan.get("id") or "Nouvel artisan"
     regenerer = ""
     if not neuf:
+        ident_a = escape(artisan["id"])
         regenerer = (
-            '<form method="post" action="/admin/artisan/'
-            + escape(artisan["id"]) + '/jeton" style="margin-top:18px">'
+            '<div style="margin-top:18px;display:flex;gap:10px;flex-wrap:wrap">'
+            # OUVRIR UNE SESSION SANS SMS. En production `RELAIS_SMS=journal` : le code
+            # ne part pas, il s'imprime dans les journaux de l'hébergeur. Ce lien évite
+            # d'aller les lire — et servira surtout à faire entrer un vrai artisan le
+            # jour de son inscription, sans dépendre d'un SMS qui coûte et peut ne pas
+            # arriver.
+            '<form method="post" action="/admin/artisan/' + ident_a + '/lien">'
+            '<button class="discret" type="submit">Lien de connexion (15 min)</button>'
+            "</form>"
+            '<form method="post" action="/admin/artisan/' + ident_a + '/motdepasse">'
+            '<button class="discret" type="submit">Définir un mot de passe</button>'
+            "</form>"
+            '<form method="post" action="/admin/artisan/' + ident_a + '/jeton">'
             '<button class="discret" type="submit">Régénérer le jeton porteur</button>'
-            "</form>")
+            "</form></div>")
     return _page_admin(
         produit, titre,
         '<div class="barre"><h1>' + escape(titre) + "</h1>"

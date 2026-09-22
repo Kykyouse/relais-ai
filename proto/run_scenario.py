@@ -3708,6 +3708,218 @@ def _appel_sans_rdv(depot, nom_scenario: str, maintenant: dt.datetime):
     return depot.cloturer_appel(appel.id, build_lead(convo), maintenant)
 
 
+def check_portes_artisan() -> bool:
+    """T16 : trois portes vers la MÊME session artisan.
+
+    « oui construis le lien de connexion, mais j'suis pas contre que les artisans aient
+    juste un id + mdp comme un site classique, qu'ils pourront enregistré dans leurs
+    appareils pour pas avoir a se reco en permanence » (22/09).
+
+    `session.py` posait la règle bien avant qu'aucune de ces portes n'existe : « c'est la
+    session qui compte, pas la méthode de connexion ». Elles mènent donc toutes trois à la
+    même chose — 90 jours, empreinte seule en base, révocable — et à un seul endroit du
+    code (`_ouvrir_session`).
+
+    CE QUE CE TEST TIENT :
+
+    1. **le code SMS marche toujours.** C'est la seule voie pour qui a perdu son mot de
+       passe, changé de téléphone, ou n'en a jamais défini — l'ajouter ne doit pas le
+       casser ;
+    2. **le mot de passe ouvre la session**, et un mauvais mot de passe ne dit RIEN de
+       plus qu'un numéro inconnu. Un message qui distinguerait « ce numéro existe » de
+       « ce mot de passe est faux » transformerait l'écran en annuaire ;
+    3. **le lien est à USAGE UNIQUE et expire.** Il traîne dans un historique, un
+       presse-papier, une conversation : le servir deux fois en ferait une clé ;
+    4. **un lien forgé ne vaut rien** — le secret est le jeton, pas l'identifiant qui
+       l'accompagne dans l'URL ;
+    5. **le mot de passe n'est jamais stocké en clair**, et la page ne l'affiche qu'une
+       fois.
+    """
+    try:
+        from fastapi.testclient import TestClient
+    except ImportError:
+        print("   fastapi/httpx absents : pip install -r requirements.txt")
+        return False
+
+    import json as _js
+    import re as _re
+
+    from relais_proto import admin as admin_mdp, connexion as cnx, motdepasse
+    from relais_proto.api import creer_app
+    from relais_proto.depot import LigneAdmin, LigneArtisan
+    from relais_proto.envoi import EnvoyeurJournal
+    from relais_proto.registre import RegistreBase, empreinte as emp
+    from relais_proto.session import NOM_COOKIE
+
+    modele = _js.loads((_DOSSIER_CONFIG / "dupont.json").read_text(encoding="utf-8"))
+    depot = DepotMemoire()
+    depot.enregistrer_artisan(LigneArtisan(
+        id="art-dupont", nom_affiche="Dupont Chauffage",
+        numero_relais="+33189701234", telephone="+33612345678",
+        token_sha256=emp("tok-a"), config=modele))
+    depot.enregistrer_admin(LigneAdmin(
+        id="adm-1", identifiant="geoffrey",
+        mot_de_passe=admin_mdp.chiffrer("un-mot-de-passe-solide")))
+    registre = RegistreBase(depot, produit.charger(_DOSSIER_CONFIG), emp("secret"),
+                            _DOSSIER_CONFIG, journal=lambda m: None)
+    pendule = [LUNDI_9H]
+    app = creer_app(depot, registre, MockLLM, lambda: pendule[0],
+                    base_url="https://nelyo.test", cookie_secure=False,
+                    envoyeur=EnvoyeurJournal())
+
+    # (1) PORTE 1 — le code SMS, inchangé
+    with TestClient(app) as julien:
+        if not connecter_par_sms(julien, depot, "06 12 34 56 78"):
+            print("   le code SMS ne fonctionne plus")
+            return False
+        if julien.get("/app").status_code != 200:
+            print("   la session ouverte par code SMS ne donne pas accès à /app")
+            return False
+
+    # (2) PORTE 2 — le mot de passe
+    with TestClient(app) as julien:
+        # tant qu'aucun mot de passe n'est défini, en fournir un ne doit RIEN ouvrir
+        r = julien.post("/connexion", follow_redirects=False,
+                        data={"telephone": "06 12 34 56 78", "mot_de_passe": "peu"})
+        if r.status_code != 401:
+            print(f"   un mot de passe est accepté alors qu'aucun n'est défini : "
+                  f"{r.status_code}")
+            return False
+
+    ligne = depot.artisan_par_id("art-dupont")
+    ligne.mot_de_passe = motdepasse.chiffrer("chantier-du-lundi")
+    depot.enregistrer_artisan(ligne)
+    if "chantier-du-lundi" in (depot.artisan_par_id("art-dupont").mot_de_passe or ""):
+        print("   le mot de passe est stocké en clair")
+        return False
+
+    with TestClient(app) as julien:
+        r = julien.post("/connexion", follow_redirects=False,
+                        data={"telephone": "06 12 34 56 78",
+                              "mot_de_passe": "chantier-du-lundi"})
+        if r.status_code != 303 or r.headers.get("location") != "/app":
+            print(f"   le bon mot de passe n'ouvre pas la session : {r.status_code}")
+            return False
+        if not julien.cookies.get(NOM_COOKIE):
+            print("   aucun cookie de session après connexion par mot de passe")
+            return False
+        if julien.get("/app").status_code != 200:
+            print("   la session ouverte par mot de passe ne donne pas accès à /app")
+            return False
+
+    # un MAUVAIS mot de passe et un numéro INCONNU doivent être indiscernables
+    with TestClient(app) as inconnu:
+        faux = inconnu.post("/connexion", follow_redirects=False,
+                            data={"telephone": "06 12 34 56 78",
+                                  "mot_de_passe": "pas-le-bon-du-tout"})
+        absent = inconnu.post("/connexion", follow_redirects=False,
+                              data={"telephone": "06 99 99 99 99",
+                                    "mot_de_passe": "pas-le-bon-du-tout"})
+        if faux.status_code != 401 or absent.status_code != 401:
+            print(f"   mauvais mot de passe accepté : {faux.status_code} / "
+                  f"{absent.status_code}")
+            return False
+
+        def _msg(page):
+            m = _re.search(r'class="raisons">([^<]*)</p>', page)
+            return m.group(1) if m else ""
+        if _msg(faux.text) != _msg(absent.text) or not _msg(faux.text):
+            print("   le message distingue un numéro connu d'un numéro inconnu — "
+                  "l'écran de connexion devient un annuaire")
+            return False
+
+    # (3) PORTE 3 — le lien à usage unique
+    with TestClient(app) as geoffrey:
+        geoffrey.post("/admin/connexion",
+                      data={"identifiant": "geoffrey",
+                            "mot_de_passe": "un-mot-de-passe-solide"})
+        r = geoffrey.post("/admin/artisan/art-dupont/lien")
+        if r.status_code != 200:
+            print(f"   l'admin ne peut pas engendrer de lien : {r.status_code}")
+            return False
+        liens = _re.findall(r"/connexion/lien/[A-Za-z0-9_.\-]+/[A-Za-z0-9_\-]{20,}",
+                            r.text)
+        if not liens:
+            print("   aucun lien affiché après génération")
+            return False
+        chemin = liens[0]
+        # le CLAIR ne doit pas être en base : seule l'empreinte
+        secret = chemin.rsplit("/", 1)[1]
+        pose = depot.code_connexion("art-dupont")
+        if pose is None or secret in pose.empreinte:
+            print("   le jeton du lien est stocké en clair")
+            return False
+
+    with TestClient(app) as artisan:
+        r = artisan.get(chemin, follow_redirects=False)
+        if r.status_code != 303 or r.headers.get("location") != "/app":
+            print(f"   le lien n'ouvre pas la session : {r.status_code}")
+            return False
+        if artisan.get("/app").status_code != 200:
+            print("   la session ouverte par lien ne donne pas accès à /app")
+            return False
+
+    # USAGE UNIQUE : le même lien, une seconde fois, ne vaut plus rien
+    with TestClient(app) as rejoueur:
+        if rejoueur.get(chemin, follow_redirects=False).status_code != 401:
+            print("   le lien fonctionne DEUX fois — ce n'est plus un usage unique, "
+                  "c'est une clé qui traîne dans un historique")
+            return False
+
+    # (4) un lien FORGÉ ne vaut rien, et l'identifiant dans l'URL n'est pas le secret
+    with TestClient(app) as geoffrey:
+        geoffrey.post("/admin/connexion",
+                      data={"identifiant": "geoffrey",
+                            "mot_de_passe": "un-mot-de-passe-solide"})
+        geoffrey.post("/admin/artisan/art-dupont/lien")
+    with TestClient(app) as pirate:
+        for forge in ("/connexion/lien/art-dupont/" + "z" * 43,
+                      "/connexion/lien/art-inconnu/" + "z" * 43):
+            if pirate.get(forge, follow_redirects=False).status_code != 401:
+                print(f"   un lien forgé est accepté : {forge}")
+                return False
+
+    # EXPIRATION : 15 minutes, pas les 90 jours d'une session
+    import datetime as _dt
+    with TestClient(app) as geoffrey:
+        geoffrey.post("/admin/connexion",
+                      data={"identifiant": "geoffrey",
+                            "mot_de_passe": "un-mot-de-passe-solide"})
+        r = geoffrey.post("/admin/artisan/art-dupont/lien")
+        tard = _re.findall(r"/connexion/lien/[A-Za-z0-9_.\-]+/[A-Za-z0-9_\-]{20,}",
+                           r.text)[0]
+    pendule[0] = LUNDI_9H + _dt.timedelta(minutes=cnx.DUREE_LIEN_MINUTES + 1)
+    with TestClient(app) as retardataire:
+        if retardataire.get(tard, follow_redirects=False).status_code != 401:
+            print("   un lien périmé ouvre encore la session")
+            return False
+    pendule[0] = LUNDI_9H
+
+    # (5) le mot de passe engendré par l'admin s'affiche UNE fois, et fonctionne
+    with TestClient(app) as geoffrey:
+        geoffrey.post("/admin/connexion",
+                      data={"identifiant": "geoffrey",
+                            "mot_de_passe": "un-mot-de-passe-solide"})
+        r = geoffrey.post("/admin/artisan/art-dupont/motdepasse")
+        mdp = _re.search(r'Mot de passe — affiché une seule fois\.</b>'
+                         r'<br>([A-Za-z0-9_\-]{16,})<br>', r.text)
+        if not mdp:
+            print("   le mot de passe engendré n'est pas affiché")
+            return False
+        # la fiche rechargée ne doit PLUS le montrer
+        if mdp.group(1) in geoffrey.get("/admin/artisan/art-dupont").text:
+            print("   le mot de passe réapparaît en rouvrant la fiche")
+            return False
+    with TestClient(app) as julien:
+        r = julien.post("/connexion", follow_redirects=False,
+                        data={"telephone": "06 12 34 56 78",
+                              "mot_de_passe": mdp.group(1)})
+        if r.status_code != 303:
+            print("   le mot de passe engendré par l'admin ne fonctionne pas")
+            return False
+    return True
+
+
 def check_agenda_propre() -> bool:
     """T15 : l'artisan tient son agenda SUR NELYO, sans Google ni Outlook.
 
@@ -12044,6 +12256,14 @@ def run() -> int:
     if check_admin():
         print("   → un artisan se crée sans commit ni redéploiement, une config "
               "invalide est refusée en bloc, et les révocations révoquent : ✅ PASS")
+    else:
+        print("   → ❌ FAIL")
+        echecs += 1
+
+    print(f"\n──── T16_portes_artisan ────")
+    if check_portes_artisan():
+        print("   → code SMS, mot de passe et lien à usage unique ouvrent la MÊME "
+              "session ; le lien ne sert qu'une fois : ✅ PASS")
     else:
         print("   → ❌ FAIL")
         echecs += 1

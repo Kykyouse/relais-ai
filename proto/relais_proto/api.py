@@ -30,6 +30,7 @@ from . import (connexion, messages, pages, session, sonde_dispo as _sonde_dispo,
 from .calendar_stub import JOURS_FR, MOIS_FR, CalendarStub, libelle_creneau
 from .confirmation import creer_jeton, empreinte, lien
 from . import admin as admin_mdp
+from . import motdepasse
 from .depot import Introuvable, LigneArtisan
 from .engine import Conversation
 from .rdv import OCCUPENT, StatutRdv as _StatutRdv, TransitionInterdite
@@ -821,9 +822,46 @@ def creer_app(depot, registre: Registre, fabrique_llm, horloge=None,
         reponse.delete_cookie(COOKIE_CONNEXION, path="/")
         return reponse
 
+    @app.get("/connexion/lien/{artisan_id}/{jeton}")
+    def connexion_par_lien(artisan_id: str, jeton: str):
+        """Le lien à usage unique : il ouvre la session, puis il meurt.
+
+        L'IDENTIFIANT DE L'ARTISAN EST DANS L'URL, et ce n'est pas une faiblesse : ce
+        n'est pas un secret, et le port cherche un code PAR artisan. Le secret, c'est le
+        jeton — 32 octets — et il est comparé à temps constant à l'empreinte stockée.
+
+        CONSOMMÉ QUOI QU'IL ARRIVE en cas de succès : un lien qui ouvrirait deux sessions
+        n'est plus à usage unique, et celui qui traîne dans un historique de navigateur ou
+        une conversation redeviendrait une clé.
+        """
+        t = maintenant()
+        pose = depot.code_connexion(artisan_id)
+        if pose is None or pose.expire_a <= t \
+                or not secrets.compare_digest(pose.empreinte,
+                                              connexion.empreinte(jeton)):
+            # Un lien périmé, déjà servi ou faux mène à la page de connexion ordinaire —
+            # pas à une erreur : celui qui clique est probablement l'artisan, en retard.
+            return HTMLResponse(
+                pages.connexion(NOM, "Ce lien n'est plus valable. Demandez un code "
+                                     "avec votre mobile, ou un nouveau lien."),
+                status_code=401)
+        if registre.artisan(artisan_id) is None:
+            return HTMLResponse(pages.connexion(NOM), status_code=401)
+        depot.supprimer_code_connexion(artisan_id)
+        return _ouvrir_session(artisan_id, t)
+
     @app.post("/connexion")
-    def demander_code(telephone: str = Form(...)):
-        """Envoie un code à 6 chiffres au mobile de l'artisan.
+    def demander_code(telephone: str = Form(...),
+                      mot_de_passe: str = Form(default="")):
+        """Le mobile ouvre la session — par MOT DE PASSE s'il en a un, par CODE sinon.
+
+        Deux portes, un seul écran : l'artisan tape son numéro, et son mot de passe s'il
+        en a défini un. C'est ce que demandait Geoffrey le 22/09 — « comme un site
+        classique, qu'ils pourront enregistrer dans leurs appareils » : le gestionnaire
+        du navigateur remplit les deux champs, et personne ne se reconnecte.
+
+        Le CODE SMS ne disparaît pas et ne disparaîtra pas : c'est la seule voie pour qui
+        a perdu son mot de passe, changé de téléphone, ou n'en a jamais défini.
 
         **La réponse est la MÊME que le numéro soit connu ou non** : sinon cette page
         dirait à quiconque la sollicite si tel numéro est celui d'un de nos artisans.
@@ -833,6 +871,27 @@ def creer_app(depot, registre: Registre, fabrique_llm, horloge=None,
         numero = connexion.normaliser_telephone(telephone)
         artisan = registre.par_telephone(numero)
         t = maintenant()
+
+        # PORTE 1 — LE MOT DE PASSE, quand l'artisan en a défini un et l'a saisi
+        # (migration 014). « comme un site classique, qu'ils pourront enregistrer dans
+        # leurs appareils » : le navigateur le propose, l'artisan ne se reconnecte plus.
+        #
+        # La vérification tourne MÊME quand le numéro est inconnu, contre une empreinte
+        # factice : sinon le temps de réponse dirait quels mobiles sont enregistrés chez
+        # nous — scrypt coûte assez cher pour que l'écart se mesure à distance.
+        if mot_de_passe:
+            ligne = depot.artisan_par_telephone(numero) if artisan else None
+            if motdepasse.verifier(
+                    mot_de_passe,
+                    (ligne.mot_de_passe if ligne and ligne.mot_de_passe
+                     else motdepasse.EMPREINTE_FACTICE)):
+                return _ouvrir_session(artisan.id, t)
+            # Un échec ne dit RIEN de plus : ni que le compte existe, ni qu'il a un mot
+            # de passe. Le même écran que pour un numéro inconnu, avec un message.
+            return HTMLResponse(
+                pages.connexion(NOM, "Numéro ou mot de passe incorrect."),
+                status_code=401)
+
         reponse = HTMLResponse(pages.saisie_code(NOM, _masquer(numero)))
         if artisan is None:
             return reponse
@@ -1221,6 +1280,60 @@ def creer_app(depot, registre: Registre, fabrique_llm, horloge=None,
         reponse = RedirectResponse("/admin", status_code=303)
         reponse.delete_cookie(admin_mdp.NOM_COOKIE_VUE, path="/")
         return reponse
+
+    def _fiche_artisan(a, **extra) -> HTMLResponse:
+        """La fiche d'un artisan, rendue depuis la ligne relue. Un seul endroit : trois
+        routes s'y terminent, et trois rendus jumeaux divergeraient sur un champ."""
+        return HTMLResponse(pages.admin_artisan(
+            NOM,
+            {"id": a.id, "nom": a.nom_affiche, "numero_relais": a.numero_relais,
+             "telephone": a.telephone, "etat_abonnement": a.etat_abonnement},
+            _json_mod.dumps(a.config or {}, ensure_ascii=False, indent=2), **extra))
+
+    @app.post("/admin/artisan/{artisan_id}/lien", response_class=HTMLResponse)
+    def admin_lien_connexion(
+            artisan_id: str,
+            nelyo_admin: str = Cookie(default="", alias=admin_mdp.NOM_COOKIE)):
+        """Engendre un lien de connexion à usage unique pour cet artisan.
+
+        Il est rangé dans `code_connexion`, au même endroit que le code SMS : il hérite
+        ainsi de « un seul vivant par artisan » — en engendrer un nouveau invalide le
+        précédent, et un code demandé entre-temps l'invalide aussi. Empreinte seule en
+        base ; le clair n'apparaît qu'ici, une fois.
+        """
+        if _exige_admin(nelyo_admin) is None:
+            return HTMLResponse(pages.admin_connexion(NOM), status_code=401)
+        a = depot.artisan_par_id(artisan_id)
+        if a is None:
+            raise HTTPException(404, "artisan inconnu")
+        t = maintenant()
+        clair, emp = connexion.creer_lien()
+        depot.poser_code_connexion(artisan_id, emp,
+                                   connexion.expiration_lien(t), t,
+                                   telephone=a.telephone)
+        return _fiche_artisan(
+            a, lien=f"{base_url.rstrip('/')}/connexion/lien/{artisan_id}/{clair}")
+
+    @app.post("/admin/artisan/{artisan_id}/motdepasse", response_class=HTMLResponse)
+    def admin_mot_de_passe_artisan(
+            artisan_id: str,
+            nelyo_admin: str = Cookie(default="", alias=admin_mdp.NOM_COOKIE)):
+        """Définit (ou remplace) le mot de passe de l'artisan, et l'affiche une fois.
+
+        ENGENDRÉ, jamais choisi ici : un mot de passe tapé par l'admin dans un formulaire
+        qu'il relit à l'écran finit dans son historique de navigateur et dans sa mémoire.
+        L'artisan le changera pour le sien quand il aura son espace — d'ici là, celui-ci
+        est solide et n'a été vu qu'une fois.
+        """
+        if _exige_admin(nelyo_admin) is None:
+            return HTMLResponse(pages.admin_connexion(NOM), status_code=401)
+        a = depot.artisan_par_id(artisan_id)
+        if a is None:
+            raise HTTPException(404, "artisan inconnu")
+        clair = motdepasse.suggerer()
+        a.mot_de_passe = motdepasse.chiffrer(clair)
+        depot.enregistrer_artisan(a)
+        return _fiche_artisan(depot.artisan_par_id(artisan_id), mot_de_passe=clair)
 
     @app.post("/admin/artisan/{artisan_id}/jeton", response_class=HTMLResponse)
     def admin_regenerer_jeton(

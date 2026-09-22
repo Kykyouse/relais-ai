@@ -20,7 +20,7 @@ Cible V1 : plombiers/chauffagistes FR. Solo dev : Geoffrey (binôme Claude) ; ma
 ```bash
 cd proto
 pip install -r requirements.txt     # anthropic, python-dotenv (inutiles en mock)
-python run_scenario.py              # suite de non-régression (mock, sans clé, ~3 s) — 104 tests
+python run_scenario.py              # suite de non-régression (mock, sans clé, ~3 s) — 105 tests
                                     # « sans BASE » est désormais VÉRIFIÉ, pas promis (R93) :
                                     # la suite importait `serveur.py` — le câblage de prod,
                                     # qui ouvre une connexion Postgres à l'import — et

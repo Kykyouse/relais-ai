@@ -76,3 +76,34 @@ def normaliser_telephone(numero: str) -> str:
     if chiffres.startswith("0") and len(chiffres) == 10:
         return "+33" + chiffres[1:]
     return "+" + chiffres if chiffres else ""
+
+
+# ---------------------------------------------------------- lien à usage unique
+#
+# Un LIEN que l'admin engendre pour ouvrir l'espace d'un artisan sans SMS. Demandé le
+# 22/09 : en production `RELAIS_SMS=journal`, donc le code ne part pas — il s'imprime dans
+# les journaux de l'hébergeur, et se connecter en lisant les logs du service n'est pas un
+# parcours. Ce sera aussi la façon de faire entrer un artisan le jour de son inscription,
+# sans dépendre d'un SMS qui coûte et qui peut ne pas arriver.
+#
+# MÊME MÉCANIQUE QUE LE CODE, et c'est voulu : empreinte seule en base, usage unique,
+# expiration courte. Il est d'ailleurs RANGÉ AU MÊME ENDROIT (`code_connexion`), ce qui
+# lui fait hériter gratuitement de la règle « un seul vivant par artisan » — en engendrer
+# un nouveau invalide le précédent, et un code SMS demandé entre-temps l'invalide aussi.
+#
+# CE QUI CHANGE PAR RAPPORT AU CODE : 32 octets d'aléa au lieu de 6 chiffres. Compter les
+# essais n'a donc plus de sens — un million de possibilités se parcourt, 2^256 non. La
+# durée, elle, est plus courte : un lien de connexion traîne dans un historique, un
+# presse-papier ou une conversation, là où six chiffres tapés à la main ne laissent rien.
+DUREE_LIEN_MINUTES = 15
+
+
+def creer_lien() -> tuple[str, str]:
+    """(jeton en clair, empreinte). Le clair ne quitte le serveur qu'une fois, dans le
+    lien affiché à l'admin — la base n'en garde que l'empreinte, comme pour le code."""
+    jeton = secrets.token_urlsafe(32)
+    return jeton, empreinte(jeton)
+
+
+def expiration_lien(maintenant: dt.datetime) -> dt.datetime:
+    return maintenant + dt.timedelta(minutes=DUREE_LIEN_MINUTES)

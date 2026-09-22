@@ -93,6 +93,10 @@ class LigneArtisan:
     # fonctionner sans conversion, et les fichiers `config/*.json` deviennent des
     # MODÈLES dont un nouvel artisan part.
     config: dict | None = None
+    # « scrypt$… », jamais le clair (migration 014). `None` est un état NORMAL : un
+    # artisan inscrit ce matin n'en a pas encore et entre par code SMS. Les deux portes
+    # mènent à la même session — c'est la session qui compte, pas la méthode.
+    mot_de_passe: str | None = None
 
     def utilisable(self) -> bool:
         """Un artisan qu'on peut réellement servir : il a un numéro Relais et une config.
