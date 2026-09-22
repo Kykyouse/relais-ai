@@ -619,6 +619,38 @@ details.horaire input{width:100%;min-height:38px;border:1px solid var(--line);
   border-bottom:1px solid var(--line);padding:10px 28px;font-size:13px;display:flex;
   gap:12px;align-items:center;flex-wrap:wrap}
 .support form{margin-left:auto}
+.week{display:grid;grid-template-columns:repeat(6,1fr);gap:10px}
+.day{background:var(--surface);border:1px solid var(--line);border-radius:var(--r);
+  min-height:260px;display:flex;flex-direction:column}
+.day.today{border-color:var(--cuivre)}
+.day-h{padding:10px 12px;border-bottom:1px solid var(--line);font-weight:600;
+  font-size:13px}
+.day-h span{color:var(--faint);font-weight:400;display:block;font-size:11.5px}
+.day-b{padding:8px;display:flex;flex-direction:column;gap:7px}
+.evt{border-radius:8px;padding:8px 10px;font-size:12.5px;line-height:1.35;
+  border:1px solid transparent;position:relative}
+.evt time{display:block;font-size:11px;font-weight:600;opacity:.75;
+  font-variant-numeric:tabular-nums}
+.evt b{font-size:12.5px}
+.e-ok{background:var(--marine-soft);color:var(--ink)}
+.e-wait{background:var(--cuivre-soft);border:1px dashed var(--cuivre);color:var(--ink)}
+.e-perso{background:var(--surface-2);border:1px solid var(--line);color:var(--ink)}
+.e-off{background:repeating-linear-gradient(45deg,var(--surface-2),
+  var(--surface-2) 6px,var(--line) 6px,var(--line) 7px);color:var(--muted)}
+.evt .sup{position:absolute;top:5px;right:5px}
+.evt .sup button{background:none;border:0;color:var(--faint);cursor:pointer;
+  font-size:14px;line-height:1;padding:2px 4px;width:auto;min-height:0}
+.evt .sup button:hover{color:var(--crit)}
+.legend{display:flex;gap:18px;flex-wrap:wrap;font-size:12.5px;color:var(--muted);
+  align-items:center}
+.sw{width:12px;height:12px;border-radius:4px;display:inline-block;vertical-align:-2px;
+  margin-right:6px}
+.ajout{display:grid;grid-template-columns:repeat(auto-fit,minmax(120px,1fr));gap:10px;
+  align-items:end}
+.ajout label{margin:0 0 3px}
+.ajout .large{grid-column:span 2}
+@media (max-width:940px){.week{grid-template-columns:repeat(2,1fr)}}
+@media (max-width:520px){.week{grid-template-columns:1fr}}
 /* ---------- responsive ---------- */
 .mobilebar{display:none}
 @media (max-width:940px){
@@ -997,3 +1029,90 @@ def page_a_venir(produit: str, vue: str, entreprise: str, prenom: str,
         f"<ul>{points}</ul></div></div>",
         entreprise=entreprise, prenom=prenom, commune=commune,
         a_valider=a_valider, vue_admin=vue_admin)
+
+
+def agenda(produit: str, prenom: str, entreprise: str, jours: list[dict],
+           semaine: str, precedente: str, suivante: str, a_valider: int = 0,
+           commune: str = "", vue_admin: str = "", erreur: str = "") -> str:
+    """L'agenda de l'artisan — le SIEN, sans Google ni Outlook.
+
+    Il montre DEUX choses dans la même grille : ce que Nelyo a réservé (validé ou en
+    attente) et ce que l'artisan a inscrit lui-même. C'est le point de toute la
+    fonctionnalité : un agenda qui ne connaîtrait que la moitié des engagements de son
+    propriétaire inspirerait une confiance qu'il ne mérite pas — et l'agent continuerait
+    de vendre les plages manquantes.
+
+    Les événements de l'artisan sont supprimables, les rendez-vous Nelyo ne le sont pas :
+    ceux-là portent un engagement pris envers un client, et se refusent depuis l'accueil
+    (ce qui prévient le client), jamais en les effaçant d'un agenda.
+    """
+    cases = []
+    for j in jours:
+        blocs = []
+        for e in j["evenements"]:
+            sup = ""
+            if e["supprimable"] and not vue_admin:
+                sup = ('<span class="sup"><form method="post" '
+                       f'action="/app/agenda/{escape(e["id"])}/supprimer">'
+                       '<button type="submit" title="Retirer de l&#x27;agenda">×'
+                       "</button></form></span>")
+            blocs.append(
+                f'<div class="evt {e["classe"]}">{sup}'
+                f'<time>{escape(e["heures"])}</time>'
+                f'<b>{escape(e["titre"])}</b>'
+                + (f' — {escape(e["detail"])}' if e["detail"] else "")
+                + "</div>")
+        if not blocs:
+            blocs.append('<div class="evt e-off" style="text-align:center">'
+                         "Rien de prévu</div>")
+        cases.append(
+            f'<div class="day{" today" if j["aujourdhui"] else ""}">'
+            f'<div class="day-h">{escape(j["nom"])}<span>{escape(j["date"])}</span></div>'
+            f'<div class="day-b">{"".join(blocs)}</div></div>')
+
+    alerte = f'<div class="card aveu"><div class="card-b">{escape(erreur)}</div></div>' \
+        if erreur else ""
+
+    formulaire = ""
+    if not vue_admin:
+        formulaire = (
+            '<div class="card"><div class="card-h"><h3>Ajouter à mon agenda</h3>'
+            '<span class="sub" style="margin-left:auto">Un chantier, un rendez-vous, '
+            "des congés — l&#x27;assistant cessera de proposer ces heures</span></div>"
+            '<div class="card-b"><form method="post" action="/app/agenda">'
+            '<div class="ajout">'
+            '<div class="large"><label for="t">Intitulé</label>'
+            '<input id="t" name="titre" required placeholder="Chantier Morel"></div>'
+            '<div><label for="j">Jour</label>'
+            '<input id="j" name="jour" type="date" required></div>'
+            '<div><label for="d">De</label>'
+            '<input id="d" name="de" type="time" required value="08:00"></div>'
+            '<div><label for="f">À</label>'
+            '<input id="f" name="a" type="time" required value="10:00"></div>'
+            '<div><label for="ty">Nature</label>'
+            '<select id="ty" name="type">'
+            '<option value="rdv">Rendez-vous</option>'
+            '<option value="indisponible">Indisponible</option>'
+            "</select></div>"
+            '<div><button class="btn btn-cu" type="submit">Ajouter</button></div>'
+            "</div></form></div></div>")
+
+    corps = (
+        '<div class="filters">'
+        f'<a class="fbtn" href="/app/agenda?semaine={escape(precedente)}">◀</a>'
+        f'<span class="chip" style="font-weight:600">{escape(semaine)}</span>'
+        f'<a class="fbtn" href="/app/agenda?semaine={escape(suivante)}">▶</a>'
+        '<span style="margin-left:auto" class="legend">'
+        '<span><span class="sw" style="background:var(--marine-soft)"></span>'
+        "RDV confirmé</span>"
+        '<span><span class="sw" style="background:var(--cuivre-soft);'
+        'border:1px dashed var(--cuivre)"></span>En attente de validation</span>'
+        '<span><span class="sw" style="background:var(--surface-2);'
+        'border:1px solid var(--line)"></span>Ajouté par vous</span>'
+        "</span></div>"
+        + alerte
+        + f'<div class="week">{"".join(cases)}</div>'
+        + formulaire)
+    return _page_nelyo(produit, "agenda", corps, entreprise=entreprise, prenom=prenom,
+                       commune=commune, a_valider=a_valider, vue_admin=vue_admin,
+                       titre="Agenda")

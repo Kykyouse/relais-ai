@@ -557,6 +557,46 @@ def verifier(fabrique, cfg: dict) -> list[str]:
                 "la déconnexion admin ne supprime pas la session")
     depot.supprimer_session_admin("emp-adm")   # idempotent
 
+    # ---- agenda propre de l'artisan (migration 013) ----
+    from relais_proto.depot import EvenementAgenda
+    ev = depot.creer_evenement(EvenementAgenda(
+        id="", artisan_id="art-dupont", jour="2026-08-27", de="09:00", a="12:00",
+        titre="Chantier Morel", type="rdv"))
+    exiger(bool(ev.id), "creer_evenement ne rend pas d'identifiant")
+    relus = depot.evenements_entre("art-dupont", "2026-08-27", "2026-08-27")
+    exiger(len(relus) == 1 and relus[0].titre == "Chantier Morel"
+           and relus[0].de == "09:00" and relus[0].a == "12:00"
+           and relus[0].type == "rdv",
+           f"evenements_entre : aller-retour incomplet ({relus})")
+    exiger(relus and relus[0].creneau() == {"date": "2026-08-27", "de": "09:00",
+                                            "a": "12:00"},
+           "creneau() ne rend pas la forme attendue par le calendrier")
+    exiger(depot.evenements_entre("art-dupont", "2026-08-28", "2026-08-29") == [],
+           "evenements_entre rend des événements hors de la période")
+    exiger(depot.evenements_entre("art-autre", "2026-08-27", "2026-08-27") == [],
+           "evenements_entre fuit sur un autre artisan")
+
+    depot.creer_evenement(EvenementAgenda(
+        id="", artisan_id="art-dupont", jour="2026-08-28", de="08:00", a="18:00",
+        titre="Congés", type="indisponible"))
+    exiger(len(depot.evenements_entre("art-dupont", "2026-08-27", "2026-08-28")) == 2,
+           "evenements_entre : les DEUX bornes doivent être incluses")
+
+    # LA SUPPRESSION EXIGE L'ARTISAN, pas seulement l'identifiant : connaître un id ne
+    # doit pas suffire à effacer l'agenda de quelqu'un d'autre.
+    exiger(depot.supprimer_evenement("art-autre", ev.id) is False,
+           "un autre artisan a pu supprimer un événement qui ne lui appartient pas")
+    exiger(len(depot.evenements_entre("art-dupont", "2026-08-27", "2026-08-27")) == 1,
+           "l'événement a disparu malgré le refus de suppression")
+    exiger(depot.supprimer_evenement("art-dupont", ev.id) is True,
+           "supprimer_evenement ne rend pas True sur une suppression réelle")
+    exiger(depot.evenements_entre("art-dupont", "2026-08-27", "2026-08-27") == [],
+           "l'événement n'a pas été supprimé")
+    exiger(depot.supprimer_evenement("art-dupont", ev.id) is False,
+           "supprimer deux fois doit rendre False, pas lever")
+    exiger(depot.supprimer_evenement("art-dupont", ID_ABSENT) is False,
+           "supprimer un identifiant inconnu doit rendre False")
+
     # ---- codes de connexion (migration 009) ----
     exiger(depot.code_connexion("art-dupont") is None,
            "code_connexion() devrait être vide avant toute demande")

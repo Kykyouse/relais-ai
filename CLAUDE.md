@@ -20,7 +20,7 @@ Cible V1 : plombiers/chauffagistes FR. Solo dev : Geoffrey (binôme Claude) ; ma
 ```bash
 cd proto
 pip install -r requirements.txt     # anthropic, python-dotenv (inutiles en mock)
-python run_scenario.py              # suite de non-régression (mock, sans clé, ~3 s) — 102 tests
+python run_scenario.py              # suite de non-régression (mock, sans clé, ~3 s) — 104 tests
                                     # « sans BASE » est désormais VÉRIFIÉ, pas promis (R93) :
                                     # la suite importait `serveur.py` — le câblage de prod,
                                     # qui ouvre une connexion Postgres à l'import — et
@@ -226,10 +226,13 @@ DÉRIVÉES du modèle `dupont.json`, jamais listées à la main (dix-huit chemin
 `actions.py` le MENU d'actions fermé par état, la validation, et le bout de prompt qui le
 décrit — une seule source pour ce que le modèle peut proposer et ce que le code accepte ·
 `engine.py` contrôleur déterministe S0–S11 · `llm.py` extracteur+formuleur (Anthropic/Mock/Resilient,
-dégradation gracieuse : jamais muet) · `guards.py` invariants en code · `calendar_stub.py` règles
-agenda · `scoring.py` lead + score 0–5 · `produit.py` config PRODUIT — nom visible
+dégradation gracieuse : jamais muet) · `guards.py` invariants en code · `scoring.py` lead + score 0–5 · `produit.py` config PRODUIT — nom visible
 (**Nelyo**) et expéditeur SMS unique (**nelyo**), contraintes AF2M vérifiées au
 démarrage ; « Relais » reste le nom de CODE (repo, modules, tables) ·
+`calendar_stub.py` règles agenda — et depuis R98 il REFUSE les plages déjà prises :
+l'API lui passe `occupes` (RDV qui occupent + agenda propre de l'artisan), il ne
+connaît toujours pas le dépôt, ce qui permettra de le remplacer par une lecture
+Google/Outlook sans rien changer ailleurs ·
 `temps.py` instants UTC vs heures de pendule (règle n°7,
 à lire avant de toucher à une échéance) · `version.py` la révision qui tourne
 (`RELAIS_VERSION`, puis git, puis « inconnue ») — **module sans effet à l'import,

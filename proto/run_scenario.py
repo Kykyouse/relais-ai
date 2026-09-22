@@ -3708,6 +3708,174 @@ def _appel_sans_rdv(depot, nom_scenario: str, maintenant: dt.datetime):
     return depot.cloturer_appel(appel.id, build_lead(convo), maintenant)
 
 
+def check_agenda_propre() -> bool:
+    """T15 : l'artisan tient son agenda SUR NELYO, sans Google ni Outlook.
+
+    « pour l'agenda on est quand même censé en avoir un sans forcément lié google ou
+    outlook, ca doit être un plus de synchronisation, mais s'ils veulent gérer leur
+    agenda uniquement sur Nelyo il faut que ce soit possible » (22/09).
+
+    R98 avait réglé la moitié du problème : ne plus revendre une plage que NELYO avait
+    vendue. L'autre moitié est celle-ci — le chantier décroché de bouche à oreille, le
+    rendez-vous chez le comptable, la semaine de congés. Tant qu'ils n'existent nulle
+    part, l'agent continue de vendre ces heures, et l'artisan découvre le conflit le jour
+    même, chez le client.
+
+    CE QUI EST TENU ICI :
+
+    1. l'artisan inscrit un engagement, et **l'agent cesse de proposer cette plage** —
+       c'est la seule propriété qui compte vraiment, le reste est de l'affichage ;
+    2. la semaine montre les DEUX sources côte à côte, distinguées : RDV Nelyo validé,
+       RDV Nelyo en attente, et ce que l'artisan a ajouté ;
+    3. **un RDV Nelyo ne se supprime pas depuis l'agenda** : il porte un engagement
+       envers un client et se refuse depuis l'accueil, ce qui prévient le client ;
+    4. on ne double pas l'artisan non plus : s'inscrire par-dessus un RDV Nelyo est
+       refusé, avec le conflit nommé ;
+    5. la suppression exige d'être le propriétaire (déjà tenu par le contrat du port, on
+       vérifie ici que la ROUTE ne contourne pas la règle) ;
+    6. le mode support (T14) reste en lecture seule sur l'agenda aussi.
+    """
+    try:
+        from fastapi.testclient import TestClient
+    except ImportError:
+        print("   fastapi/httpx absents : pip install -r requirements.txt")
+        return False
+
+    import datetime as dt
+    import json as _js
+
+    from relais_proto import admin as admin_mdp
+    from relais_proto.api import creer_app
+    from relais_proto.calendar_stub import CalendarStub
+    from relais_proto.depot import EvenementAgenda, LigneAdmin, LigneArtisan
+    from relais_proto.registre import RegistreBase, empreinte as emp
+
+    modele = _js.loads((_DOSSIER_CONFIG / "dupont.json").read_text(encoding="utf-8"))
+    depot = DepotMemoire()
+    depot.enregistrer_artisan(LigneArtisan(
+        id="art-dupont", nom_affiche="Dupont Chauffage",
+        numero_relais="+33189701234", telephone="+33612345678",
+        token_sha256=emp("tok-a"), config=modele))
+    registre = RegistreBase(depot, produit.charger(_DOSSIER_CONFIG), emp("secret"),
+                            _DOSSIER_CONFIG, journal=lambda m: None)
+    app = creer_app(depot, registre, MockLLM, lambda: LUNDI_9H,
+                    base_url="https://nelyo.test", cookie_secure=False)
+    entetes = {"Authorization": "Bearer tok-a"}
+
+    # (1) LE POINT : ce que l'artisan inscrit disparaît des propositions de l'agent.
+    libre = CalendarStub(CFG, now=LUNDI_9H).get_slots("fuite", urgent=False, n=3)
+    if not libre:
+        print("   le calendrier ne propose rien (fixture cassée)")
+        return False
+    vise = libre[0]
+    with TestClient(app) as julien:
+        r = julien.post("/app/agenda", headers=entetes, follow_redirects=False,
+                        data={"titre": "Chantier Morel", "jour": vise["date"],
+                              "de": vise["de"], "a": vise["a"], "type": "rdv"})
+        if r.status_code != 303:
+            print(f"   l'ajout à l'agenda est refusé : {r.status_code}")
+            return False
+    evts = depot.evenements_entre("art-dupont", vise["date"], vise["date"])
+    if len(evts) != 1 or evts[0].titre != "Chantier Morel":
+        print(f"   l'événement n'est pas enregistré : {evts}")
+        return False
+    apres = CalendarStub(CFG, now=LUNDI_9H,
+                         occupes=[e.creneau() for e in evts]).get_slots(
+        "fuite", urgent=False, n=3)
+    if any(s["date"] == vise["date"] and s["de"] == vise["de"] for s in apres):
+        print("   l'agent propose encore la plage que l'artisan s'est réservée — "
+              "l'agenda ne sert à rien")
+        return False
+
+    # (2) la semaine montre les deux sources, distinguées
+    _, rdv = _appel_avec_rdv(depot, "T01_urgence_fuite", LUNDI_9H)
+    rdv.notifier(LUNDI_9H)
+    depot.sauver_rdv(rdv)
+    with TestClient(app) as julien:
+        page = julien.get(f"/app/agenda?semaine={rdv.creneau['date']}",
+                          headers=entetes).text
+        if "Chantier Morel" not in page:
+            print("   l'événement de l'artisan n'apparaît pas dans la semaine")
+            return False
+        if 'class="evt e-wait' not in page:
+            print("   un RDV Nelyo en attente n'est pas distingué à l'agenda")
+            return False
+        if 'class="evt e-perso' not in page:
+            print("   un événement ajouté par l'artisan n'est pas distingué")
+            return False
+
+        # (3) un RDV Nelyo ne porte PAS de bouton de suppression
+        import re as _re
+        if f"/app/agenda/{rdv.id}/supprimer" in page:
+            print("   un RDV Nelyo est supprimable depuis l'agenda — il porte un "
+                  "engagement envers un client, il se refuse depuis l'accueil")
+            return False
+        if f"/app/agenda/{evts[0].id}/supprimer" not in page:
+            print("   l'artisan ne peut pas retirer ce qu'il a lui-même ajouté")
+            return False
+
+        # (4) s'inscrire par-dessus un RDV Nelyo est refusé, conflit nommé
+        r = julien.post("/app/agenda", headers=entetes, follow_redirects=False,
+                        data={"titre": "Doublon", "jour": rdv.creneau["date"],
+                              "de": rdv.creneau["de"], "a": rdv.creneau["a"],
+                              "type": "rdv"})
+        if r.status_code != 303 or "erreur=" not in r.headers.get("location", ""):
+            print("   s'inscrire par-dessus un RDV Nelyo est accepté")
+            return False
+        if any(e.titre == "Doublon" for e in depot.evenements_entre(
+                "art-dupont", rdv.creneau["date"], rdv.creneau["date"])):
+            print("   l'événement en conflit a été enregistré malgré le refus")
+            return False
+
+        # une saisie incohérente est refusée aussi, sans rien écrire
+        for mauvais in ({"titre": "", "jour": vise["date"], "de": "08:00", "a": "10:00"},
+                        {"titre": "X", "jour": vise["date"], "de": "10:00",
+                         "a": "08:00"},
+                        {"titre": "X", "jour": "pas-une-date", "de": "08:00",
+                         "a": "10:00"}):
+            r = julien.post("/app/agenda", headers=entetes, follow_redirects=False,
+                            data={**mauvais, "type": "rdv"})
+            if "erreur=" not in r.headers.get("location", ""):
+                print(f"   saisie invalide acceptée : {mauvais}")
+                return False
+
+        # (5) suppression : l'artisan retire le sien
+        r = julien.post(f"/app/agenda/{evts[0].id}/supprimer", headers=entetes,
+                        follow_redirects=False)
+        if r.status_code != 303 or depot.evenements_entre(
+                "art-dupont", vise["date"], vise["date"]):
+            print("   l'artisan ne peut pas supprimer son propre événement")
+            return False
+
+    # (6) le mode support reste en LECTURE SEULE sur l'agenda (T14)
+    depot.creer_evenement(EvenementAgenda(
+        id="", artisan_id="art-dupont", jour=vise["date"], de="14:00", a="16:00",
+        titre="Congés", type="indisponible"))
+    depot.enregistrer_admin(LigneAdmin(
+        id="adm-1", identifiant="geoffrey",
+        mot_de_passe=admin_mdp.chiffrer("un-mot-de-passe-solide")))
+    with TestClient(app) as geoffrey:
+        geoffrey.post("/admin/connexion",
+                      data={"identifiant": "geoffrey",
+                            "mot_de_passe": "un-mot-de-passe-solide"})
+        geoffrey.post("/admin/artisan/art-dupont/voir")
+        page = geoffrey.get(f"/app/agenda?semaine={vise['date']}").text
+        if "Congés" not in page:
+            print("   le mode support ne voit pas l'agenda de l'artisan")
+            return False
+        if "/supprimer" in page or "Ajouter à mon agenda" in page:
+            print("   le mode support offre des actions sur l'agenda")
+            return False
+        r = geoffrey.post("/app/agenda", follow_redirects=False,
+                          data={"titre": "Pirate", "jour": vise["date"],
+                                "de": "18:00", "a": "19:00", "type": "rdv"})
+        if r.status_code != 401:
+            print(f"   l'admin a pu écrire dans l'agenda de l'artisan : "
+                  f"{r.status_code}")
+            return False
+    return True
+
+
 def check_pas_de_double_reservation() -> bool:
     """R98 : le calendrier ne propose pas une plage déjà vendue.
 
@@ -11821,6 +11989,14 @@ def run() -> int:
     if check_admin():
         print("   → un artisan se crée sans commit ni redéploiement, une config "
               "invalide est refusée en bloc, et les révocations révoquent : ✅ PASS")
+    else:
+        print("   → ❌ FAIL")
+        echecs += 1
+
+    print(f"\n──── T15_agenda_propre ────")
+    if check_agenda_propre():
+        print("   → l'artisan tient son agenda sur Nelyo : ce qu'il inscrit "
+              "bloque l'agent, et un RDV client ne s'efface pas d'ici : ✅ PASS")
     else:
         print("   → ❌ FAIL")
         echecs += 1

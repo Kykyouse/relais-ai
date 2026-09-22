@@ -122,6 +122,32 @@ class LigneAdmin:
 
 
 @dataclass
+class EvenementAgenda:
+    """Un engagement de l'artisan pris HORS Nelyo (migration 013).
+
+    `type` vaut `rdv` (un chantier, un devis, un rendez-vous personnel) ou
+    `indisponible` (congés, formation, maladie). Les deux bloquent la plage de la même
+    façon — l'agent ne la propose plus — mais ils ne se racontent pas pareil à l'écran.
+
+    Sans cette table, Nelyo ne connaissait que les rendez-vous passés PAR lui : un agenda
+    qui ignore la moitié des engagements de son propriétaire inspire une confiance qu'il
+    ne mérite pas.
+    """
+    id: str
+    artisan_id: str
+    jour: str          # ISO, « AAAA-MM-JJ »
+    de: str            # « HH:MM »
+    a: str
+    titre: str
+    type: str = "rdv"
+
+    def creneau(self) -> dict:
+        """La même forme qu'un créneau de RDV, pour que le calendrier n'ait qu'UNE façon
+        de lire ce qui est pris (cf. `CalendarStub.occupes`)."""
+        return {"date": self.jour, "de": self.de, "a": self.a}
+
+
+@dataclass
 class CodeConnexion:
     """Un code SMS en attente. **Un seul vivant par artisan** — voir migration 009."""
     artisan_id: str
@@ -224,6 +250,14 @@ class Depot(Protocol):
     # à l'appelant, avec `rdv.OCCUPENT` — le dépôt ne décide pas.
     def rdvs_entre(self, artisan_id: str, du: str, au: str) -> list[Rdv]: ...
 
+    # ---- agenda propre de l'artisan (migration 013) ----
+    def evenements_entre(self, artisan_id: str, du: str,
+                         au: str) -> list[EvenementAgenda]: ...
+
+    def creer_evenement(self, ev: EvenementAgenda) -> EvenementAgenda: ...
+
+    def supprimer_evenement(self, artisan_id: str, ev_id: str) -> bool: ...
+
     def rdv_par_confirmation(self, empreinte: str) -> Rdv: ...
 
     def lead(self, lead_id: str) -> Lead: ...
@@ -305,6 +339,7 @@ class DepotMemoire:
         self._sessions: dict[str, dict] = {}  # empreinte -> session
         self._admins: dict[str, LigneAdmin] = {}
         self._sessions_admin: dict[str, dict] = {}
+        self._evenements: dict[str, EvenementAgenda] = {}
         self._artisans_registre: dict[str, LigneArtisan] = {}
         self._codes: dict[str, CodeConnexion] = {}   # artisan_id -> code SMS en attente
         self._compteurs: dict[str, int] = {}
@@ -498,6 +533,28 @@ class DepotMemoire:
             (r for r in self._tous_rdvs()
              if r.artisan_id == artisan_id and du <= r.creneau.get("date", "") <= au),
             key=lambda r: (r.creneau.get("date", ""), r.creneau.get("de", "")))
+
+    # ---- agenda propre de l'artisan (migration 013) ----
+    def evenements_entre(self, artisan_id: str, du: str,
+                         au: str) -> list[EvenementAgenda]:
+        return sorted((replace(e) for e in self._evenements.values()
+                       if e.artisan_id == artisan_id and du <= e.jour <= au),
+                      key=lambda e: (e.jour, e.de))
+
+    def creer_evenement(self, ev: EvenementAgenda) -> EvenementAgenda:
+        ev = replace(ev, id=ev.id or self._id("evt"))
+        self._evenements[ev.id] = ev
+        return replace(ev)
+
+    def supprimer_evenement(self, artisan_id: str, ev_id: str) -> bool:
+        """Rend True si quelque chose a été supprimé. L'ARTISAN EST DANS LA CONDITION,
+        pas seulement l'identifiant : sans ça, connaître un id suffirait à effacer
+        l'agenda de quelqu'un d'autre."""
+        ev = self._evenements.get(ev_id)
+        if ev is None or ev.artisan_id != artisan_id:
+            return False
+        del self._evenements[ev_id]
+        return True
 
     def _tous_rdvs(self) -> list[Rdv]:
         return [Rdv.from_dict(d) for d in self._rdvs.values()]

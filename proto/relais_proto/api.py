@@ -15,6 +15,7 @@ import datetime as dt
 import json as _json_mod
 import pathlib
 import re as _re_mod
+from urllib.parse import quote
 
 from fastapi import Cookie, Depends, FastAPI, Form, Header, HTTPException, Request
 from fastapi.responses import (HTMLResponse, JSONResponse, RedirectResponse,
@@ -31,7 +32,7 @@ from .confirmation import creer_jeton, empreinte, lien
 from . import admin as admin_mdp
 from .depot import Introuvable, LigneArtisan
 from .engine import Conversation
-from .rdv import OCCUPENT, TransitionInterdite
+from .rdv import OCCUPENT, StatutRdv as _StatutRdv, TransitionInterdite
 from .registre import (Artisan, Registre, empreinte as registre_empreinte,
                        valider_config)
 from .scoring import build_lead, est_urgent as scoring_est_urgent
@@ -1272,10 +1273,17 @@ def creer_app(depot, registre: Registre, fabrique_llm, horloge=None,
         terminal mais occupe la plage, un refusé ou un expiré la rend.
         """
         jour = temps.en_local(depuis, None).date()
-        return [r.creneau for r in depot.rdvs_entre(
-            artisan_id, jour.isoformat(),
-            (jour + dt.timedelta(days=23)).isoformat())
-            if r.statut in OCCUPENT]
+        du, au = jour.isoformat(), (jour + dt.timedelta(days=23)).isoformat()
+        pris = [r.creneau for r in depot.rdvs_entre(artisan_id, du, au)
+                if r.statut in OCCUPENT]
+        # ET l'agenda PROPRE de l'artisan (migration 013). Sans lui, Nelyo ne connaîtrait
+        # que les rendez-vous passés par Nelyo : le chantier décroché de bouche à
+        # oreille, le rendez-vous chez le comptable, la semaine de congés resteraient
+        # invisibles — et l'agent continuerait de vendre ces plages. C'est la moitié
+        # manquante de R98, et c'est ce qui permet de tenir son agenda ICI, sans Google
+        # ni Outlook.
+        pris += [e.creneau() for e in depot.evenements_entre(artisan_id, du, au)]
+        return pris
 
     def _artisan_espace(authorization: str, relais_session: str,
                         nelyo_admin: str, nelyo_vue: str):
@@ -1483,10 +1491,6 @@ def creer_app(depot, registre: Registre, fabrique_llm, horloge=None,
     # navigation de la maquette soit entière — un onglet qui mène à une 404 est pire
     # qu'un onglet absent — et elles disent CE QUI MANQUE, précisément.
     _A_VENIR = {
-        "agenda": ["brancher un agenda (Google ou Outlook), ce qui exige d'abord un "
-                   "domaine vérifié et une politique de confidentialité hébergée",
-                   "les rendez-vous validés sont déjà en base : la semaine s'affichera "
-                   "dès que l'agenda externe sera relié"],
         "stats": ["l'entonnoir (appels → qualifiés → RDV) est calculable dès "
                   "aujourd'hui et viendra en premier",
                   "le chiffre d'affaires et les chantiers signés ne le sont PAS : "
@@ -1516,15 +1520,6 @@ def creer_app(depot, registre: Registre, fabrique_llm, horloge=None,
             NOM, cle, ctx["entreprise"], ctx["prenom"], _A_VENIR[cle],
             a_valider=ctx["a_valider"], commune=ctx["commune"], vue_admin=vue))
 
-    @app.get("/app/agenda", response_class=HTMLResponse)
-    def page_agenda(relais_session: str = Cookie(default="", alias=session.NOM_COOKIE),
-                    nelyo_admin: str = Cookie(default="", alias=admin_mdp.NOM_COOKIE),
-                    nelyo_vue: str = Cookie(default="",
-                                            alias=admin_mdp.NOM_COOKIE_VUE),
-                    authorization: str = Header(default="")) -> HTMLResponse:
-        return _vue_a_venir("agenda", relais_session, nelyo_admin, nelyo_vue,
-                            authorization)
-
     @app.get("/app/stats", response_class=HTMLResponse)
     def page_stats(relais_session: str = Cookie(default="", alias=session.NOM_COOKIE),
                    nelyo_admin: str = Cookie(default="", alias=admin_mdp.NOM_COOKIE),
@@ -1550,6 +1545,157 @@ def creer_app(depot, registre: Registre, fabrique_llm, horloge=None,
             authorization: str = Header(default="")) -> HTMLResponse:
         return _vue_a_venir("factu", relais_session, nelyo_admin, nelyo_vue,
                             authorization)
+
+
+    # ---------------------------------------------------------------- AGENDA
+    #
+    # L'agenda PROPRE de l'artisan (migration 013). Google et Outlook deviendront une
+    # synchronisation optionnelle ; ils ne sont plus la condition d'avoir un agenda.
+
+    def _lundi(iso: str, defaut) -> "dt.date":
+        """Le lundi de la semaine demandée, ou celui de la semaine en cours.
+
+        Une date invalide dans l'URL ramène à aujourd'hui plutôt que de lever : un lien
+        recopié de travers doit montrer un agenda, pas une erreur.
+        """
+        try:
+            d = dt.date.fromisoformat(iso) if iso else defaut
+        except ValueError:
+            d = defaut
+        return d - dt.timedelta(days=d.weekday())
+
+    @app.get("/app/agenda", response_class=HTMLResponse)
+    def page_agenda(semaine: str = "",
+                    relais_session: str = Cookie(default="", alias=session.NOM_COOKIE),
+                    nelyo_admin: str = Cookie(default="", alias=admin_mdp.NOM_COOKIE),
+                    nelyo_vue: str = Cookie(default="",
+                                            alias=admin_mdp.NOM_COOKIE_VUE),
+                    authorization: str = Header(default=""),
+                    erreur: str = "") -> HTMLResponse:
+        artisan, vue = _artisan_espace(authorization, relais_session,
+                                       nelyo_admin, nelyo_vue)
+        if artisan is None:
+            return HTMLResponse(
+                pages.connexion(NOM, "Session expirée ou révoquée. Reconnecte-toi."),
+                status_code=401)
+        ctx = _contexte(artisan)
+        cfg = artisan.config
+        ajd = temps.en_local(maintenant(), cfg).date()
+        lundi = _lundi(semaine, ajd)
+        # SIX JOURS, lundi→samedi, comme la maquette : le dimanche n'est pas un jour
+        # ouvré pour un plombier, et lui garder une colonne vide sept fois sur sept
+        # rétrécit les six autres pour rien.
+        fin = lundi + dt.timedelta(days=5)
+
+        rdvs = depot.rdvs_entre(artisan.id, lundi.isoformat(), fin.isoformat())
+        evts = depot.evenements_entre(artisan.id, lundi.isoformat(), fin.isoformat())
+
+        par_jour: dict[str, list] = {}
+        for r in rdvs:
+            # Un RDV refusé ou expiré ne figure PAS à l'agenda : sa plage est rendue, et
+            # l'y laisser ferait croire à un engagement qui n'existe plus.
+            if r.statut not in OCCUPENT:
+                continue
+            d = depot.lead(r.lead_id).donnees
+            s = d.get("slots") or {}
+            valide = r.statut is _StatutRdv.VALIDE
+            par_jour.setdefault(r.creneau["date"], []).append({
+                "id": r.id, "tri": r.creneau.get("de", ""),
+                "heures": f"{r.creneau.get('de', '')} – {r.creneau.get('a', '')}",
+                "titre": s.get("nom") or "Client",
+                "detail": (s.get("prestation") or "") + (
+                    f" · {s['commune']}" if s.get("commune") else ""),
+                "classe": "e-ok" if valide else "e-wait",
+                # Un RDV Nelyo ne se supprime PAS d'ici : il porte un engagement envers
+                # un client, et se refuse depuis l'accueil — ce qui prévient le client.
+                "supprimable": False,
+            })
+        for e in evts:
+            par_jour.setdefault(e.jour, []).append({
+                "id": e.id, "tri": e.de, "heures": f"{e.de} – {e.a}",
+                "titre": e.titre, "detail": "",
+                "classe": "e-off" if e.type == "indisponible" else "e-perso",
+                "supprimable": True,
+            })
+
+        jours = []
+        for i in range(6):
+            d = lundi + dt.timedelta(days=i)
+            liste = sorted(par_jour.get(d.isoformat(), []), key=lambda x: x["tri"])
+            jours.append({
+                "nom": JOURS_FR[d.weekday()].capitalize(),
+                "date": (f"{d.day} {MOIS_FR[d.month - 1][:4]}"
+                         + (" · aujourd'hui" if d == ajd else "")),
+                "aujourdhui": d == ajd, "evenements": liste,
+            })
+
+        libelle = (f"Semaine du {lundi.day} au {fin.day} {MOIS_FR[fin.month - 1]}"
+                   if lundi.month == fin.month else
+                   f"Semaine du {lundi.day} {MOIS_FR[lundi.month - 1]} au "
+                   f"{fin.day} {MOIS_FR[fin.month - 1]}")
+        return HTMLResponse(pages.agenda(
+            NOM, ctx["prenom"], ctx["entreprise"], jours, libelle,
+            (lundi - dt.timedelta(days=7)).isoformat(),
+            (lundi + dt.timedelta(days=7)).isoformat(),
+            a_valider=ctx["a_valider"], commune=ctx["commune"], vue_admin=vue,
+            erreur=erreur))
+
+    @app.post("/app/agenda")
+    def agenda_ajouter(titre: str = Form(default=""), jour: str = Form(default=""),
+                       de: str = Form(default=""), a: str = Form(default=""),
+                       type: str = Form(default="rdv"),
+                       relais_session: str = Cookie(default="",
+                                                    alias=session.NOM_COOKIE),
+                       authorization: str = Header(default="")):
+        """Inscrire un engagement pris HORS Nelyo.
+
+        `artisan_authentifie` et NON `_artisan_espace` : écrire dans l'agenda est une
+        ACTION, et le mode support est en lecture seule (T14). La lecture seule reste
+        donc structurelle ici aussi — l'identité d'emprunt n'existe pas sur ce chemin.
+        """
+        artisan = artisan_authentifie(authorization, relais_session)
+        from .depot import EvenementAgenda
+        erreur = ""
+        titre = (titre or "").strip()
+        if not titre:
+            erreur = "Il faut un intitulé : c'est ce que vous relirez dans six semaines."
+        elif not (jour and de and a):
+            erreur = "Jour, heure de début et heure de fin sont obligatoires."
+        elif de >= a:
+            erreur = "L'heure de fin doit venir après l'heure de début."
+        else:
+            try:
+                dt.date.fromisoformat(jour)
+            except ValueError:
+                erreur = "Le jour n'est pas une date valide."
+        if not erreur:
+            # ON NE DOUBLE PAS L'ARTISAN NON PLUS. R98 empêche l'agent de revendre une
+            # plage ; il serait incohérent de laisser l'artisan s'inscrire par-dessus un
+            # rendez-vous que Nelyo lui a déjà obtenu — il découvrirait le conflit le
+            # jour même, chez le client.
+            occupe = [r for r in depot.rdvs_entre(artisan.id, jour, jour)
+                      if r.statut in OCCUPENT
+                      and de < r.creneau.get("a", "") and r.creneau.get("de", "") < a]
+            if occupe:
+                erreur = (f"Vous avez déjà un rendez-vous Nelyo de "
+                          f"{occupe[0].creneau.get('de')} à "
+                          f"{occupe[0].creneau.get('a')} ce jour-là.")
+        if erreur:
+            return RedirectResponse(f"/app/agenda?semaine={jour}&erreur={quote(erreur)}",
+                                    status_code=303)
+        depot.creer_evenement(EvenementAgenda(
+            id="", artisan_id=artisan.id, jour=jour, de=de, a=a, titre=titre,
+            type=type if type in ("rdv", "indisponible") else "rdv"))
+        return RedirectResponse(f"/app/agenda?semaine={jour}", status_code=303)
+
+    @app.post("/app/agenda/{ev_id}/supprimer")
+    def agenda_supprimer(ev_id: str,
+                         relais_session: str = Cookie(default="",
+                                                      alias=session.NOM_COOKIE),
+                         authorization: str = Header(default="")):
+        artisan = artisan_authentifie(authorization, relais_session)
+        depot.supprimer_evenement(artisan.id, ev_id)
+        return RedirectResponse("/app/agenda", status_code=303)
 
 
     return app

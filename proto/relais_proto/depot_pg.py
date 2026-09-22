@@ -22,8 +22,8 @@ from __future__ import annotations
 import datetime as dt
 import uuid
 
-from .depot import (Appel, CodeConnexion, Introuvable, Lead, LigneAdmin,
-                    LigneArtisan, normaliser_numero)
+from .depot import (Appel, CodeConnexion, EvenementAgenda, Introuvable, Lead,
+                    LigneAdmin, LigneArtisan, normaliser_numero)
 from .messages import Brouillon, MessageSortant, StatutMessage
 from .rdv import Rdv, StatutRdv, TERMINAUX
 
@@ -421,6 +421,43 @@ class DepotPostgres:
             f"select {self._COLS_RDV} from rdv where artisan_id = %s "
             "and creneau->>'date' between %s and %s "
             "order by creneau->>'date', creneau->>'de'", (artisan_id, du, au))]
+
+    # ---- agenda propre de l'artisan (migration 013) ----
+    _COLS_EVT = "id, artisan_id, jour, de, a, titre, type"
+
+    @staticmethod
+    def _evt_de_ligne(l) -> EvenementAgenda:
+        # `jour` est une colonne `date` : psycopg rend un objet date, que le domaine
+        # manipule en ISO comme partout ailleurs.
+        return EvenementAgenda(id=str(l[0]), artisan_id=l[1], jour=l[2].isoformat(),
+                               de=l[3], a=l[4], titre=l[5], type=l[6])
+
+    def evenements_entre(self, artisan_id: str, du: str,
+                         au: str) -> list[EvenementAgenda]:
+        return [self._evt_de_ligne(l) for l in self._plusieurs(
+            f"select {self._COLS_EVT} from evenement_agenda where artisan_id = %s "
+            "and jour between %s and %s order by jour, de", (artisan_id, du, au))]
+
+    def creer_evenement(self, ev: EvenementAgenda) -> EvenementAgenda:
+        ident = ev.id or self._id()
+        self._executer(
+            f"insert into evenement_agenda ({self._COLS_EVT}) "
+            "values (%s,%s,%s,%s,%s,%s,%s)",
+            (ident, ev.artisan_id, ev.jour, ev.de, ev.a, ev.titre, ev.type))
+        return self._evt_de_ligne(self._un(
+            f"select {self._COLS_EVT} from evenement_agenda where id = %s",
+            (ident,), ident))
+
+    def supprimer_evenement(self, artisan_id: str, ev_id: str) -> bool:
+        try:
+            ev_id = self._uuid(ev_id, ev_id)
+        except Introuvable:
+            return False
+        # L'ARTISAN EST DANS LA CLAUSE, pas seulement l'identifiant : sinon connaître un
+        # id suffirait à effacer l'agenda de quelqu'un d'autre.
+        return bool(self._executer(
+            "delete from evenement_agenda where id = %s and artisan_id = %s",
+            (ev_id, artisan_id)))
 
     def rdv_par_confirmation(self, empreinte: str) -> Rdv:
         if not empreinte:
