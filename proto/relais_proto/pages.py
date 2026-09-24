@@ -614,7 +614,17 @@ nav{padding:6px 12px;display:flex;flex-direction:column;gap:2px}
   padding:6px 14px;font:500 13px "Instrument Sans";color:var(--muted);cursor:pointer;
   text-decoration:none;display:inline-block}
 .fbtn.on{background:var(--marine);border-color:var(--marine);color:#fff}
-table.calls{width:100%;border-collapse:collapse;font-size:13.5px}
+table.calls{width:100%;border-collapse:collapse;font-size:13.5px;
+  table-layout:fixed;min-width:760px}
+.calls td{overflow-wrap:anywhere}
+/* La ligne de repli n'a ni bordure ni rembourrage tant qu'elle est fermée : elle ne
+   doit pas peser une ligne de plus sous chaque appel. */
+.calls tr.depli>td{padding:0;border-bottom:1px solid var(--line)}
+.calls tr.ligne>td{border-bottom:0}
+.calls details.appel>summary{list-style:none;cursor:pointer;color:var(--faint);
+  font-size:11.5px;padding:4px 14px 8px;display:block}
+.calls details.appel>summary::-webkit-details-marker{display:none}
+.calls details.appel>summary:hover{color:var(--ink)}
 .calls th{font-size:11px;letter-spacing:.07em;text-transform:uppercase;
   color:var(--faint);text-align:left;padding:11px 14px;
   border-bottom:1px solid var(--line);font-weight:600}
@@ -632,8 +642,6 @@ table.calls{width:100%;border-collapse:collapse;font-size:13.5px}
   border-top-right-radius:3px;align-self:flex-end}
 .bulle .who{display:block;font-size:10.5px;letter-spacing:.06em;text-transform:uppercase;
   color:var(--faint);margin-bottom:2px;font-weight:600}
-details.appel summary{list-style:none;cursor:pointer}
-details.appel summary::-webkit-details-marker{display:none}
 details.horaire summary{list-style:none;cursor:pointer;display:inline-block}
 details.horaire summary::-webkit-details-marker{display:none}
 details.horaire[open]{flex:1 0 100%;order:9}
@@ -704,7 +712,9 @@ details.horaire input{width:100%;min-height:38px;border:1px solid var(--line);
   .g4,.g3{grid-template-columns:repeat(2,1fr)}
   .g2{grid-template-columns:1fr}
   .valid-act{margin-left:0;width:100%}
-  .calls th:nth-child(4),.calls td:nth-child(4){display:none}
+  .calls{min-width:520px}
+  .calls th:nth-child(4),.calls td:nth-child(4),
+  .calls th:nth-child(6),.calls td:nth-child(6){display:none}
   .mobilebar{display:flex;position:fixed;bottom:0;left:0;right:0;
     background:var(--surface);border-top:1px solid var(--line);z-index:20;
     justify-content:space-around;
@@ -1002,11 +1012,10 @@ def liste_appels(produit: str, prenom: str, appels: list[dict],
     lignes = []
     for a in appels:
         libelle, teinte = _CATEGORIES.get(a["categorie"], (a["categorie"], "p-mut"))
-        tel = (f'<span>{escape(a["telephone_lisible"])}</span>'
-               if a["telephone"] else '<span>—</span>')
+        tel = (escape(a["telephone_lisible"]) if a["telephone"] else "—")
         rang = (
-            '<tr><td class="num">{}</td>'
-            '<td class="caller"><b>{}</b>{}</td>'
+            '<tr class="ligne"><td class="num">{}</td>'
+            '<td class="caller"><b>{}</b><span>{}</span></td>'
             "<td>{}</td><td>{}</td>"
             '<td><span class="score {}" style="width:30px;height:30px">{}</span></td>'
             '<td class="num">{}</td>'
@@ -1014,38 +1023,51 @@ def liste_appels(produit: str, prenom: str, appels: list[dict],
         ).format(escape(a["heure"]), escape(a["client"]), tel, escape(a["motif"]),
                  escape(a["commune"]), _classe_score(a["score"]), a["score"],
                  escape(a["duree"]), teinte, escape(libelle))
-        bulles = "".join(
-            '<div class="bulle {}"><span class="who">{}</span>{}</div>'.format(
-                "b-ia" if qui == "agent" else "b-cl",
-                "Assistant " + escape(produit) if qui == "agent" else "Client",
-                escape(texte))
-            for qui, texte in a["transcript"])
-        rappel = ""
-        if a["telephone"]:
-            rappel = ('<div><a class="btn btn-cu" href="tel:'
-                      + escape(a["telephone"]) + '">Rappeler '
-                      + escape(a["telephone_lisible"]) + "</a></div>")
-        else:
-            rappel = ('<div><span class="pill p-mut">Aucun numéro recueilli — '
-                      "ce client n&#x27;est pas rappelable</span></div>")
+
         detail = ""
         if a["transcript"]:
+            bulles = "".join(
+                '<div class="bulle {}"><span class="who">{}</span>{}</div>'.format(
+                    "b-ia" if qui == "agent" else "b-cl",
+                    "Assistant " + escape(produit) if qui == "agent" else "Client",
+                    escape(texte))
+                for qui, texte in a["transcript"])
+            if a["telephone"]:
+                rappel = ('<div><a class="btn btn-cu" href="tel:'
+                          + escape(a["telephone"]) + '">Rappeler '
+                          + escape(a["telephone_lisible"]) + "</a></div>")
+            else:
+                rappel = ('<div><span class="pill p-mut">Aucun numéro recueilli — '
+                          "ce client n&#x27;est pas rappelable</span></div>")
+            # LE TRANSCRIPT OCCUPE TOUTE LA LARGEUR, dans une ligne qui enjambe les sept
+            # colonnes. C'est ce qui permet de n'avoir QU'UN tableau : chaque appel
+            # devient un `<tbody>` de deux lignes, et les colonnes restent celles du
+            # tableau — donc alignées, quoi que contienne une cellule.
             detail = (
-                '<details class="appel"><summary><table class="calls">'
-                f"<tbody>{rang}</tbody></table></summary>"
-                f'<div class="transcript"><span class="eyebrow">Transcript — '
-                f'{escape(a["client"])} · {escape(a["heure"])}</span>'
-                f"{bulles}{rappel}</div></details>")
-        else:
-            detail = f'<table class="calls"><tbody>{rang}</tbody></table>'
-        lignes.append(detail)
+                '<tr class="depli"><td colspan="7">'
+                '<details class="appel"><summary>Voir la conversation ({} tours)'
+                "</summary>"
+                '<div class="transcript"><span class="eyebrow">Transcript — {} · {}'
+                "</span>{}{}</div></details></td></tr>"
+            ).format(len(a["transcript"]), escape(a["client"]), escape(a["heure"]),
+                     bulles, rappel)
+        lignes.append(f"<tbody>{rang}{detail}</tbody>")
 
-    entete = ('<table class="calls"><thead><tr><th>Heure</th><th>Appelant</th>'
-              "<th>Motif</th><th>Commune</th><th>Score</th><th>Durée</th>"
-              "<th>Issue</th></tr></thead></table>")
+    # LES LARGEURS SONT DÉCLARÉES, et le tableau est en `fixed` : sans ça, chaque colonne
+    # se dimensionne sur son contenu le plus long, et un motif bavard décale tout le
+    # reste. C'est même ce qui avait cassé l'alignement — il y avait UN TABLEAU PAR
+    # LIGNE, chacun calculant ses largeurs dans son coin.
+    colonnes = ("<colgroup>"
+                '<col style="width:76px"><col style="width:22%">'
+                '<col style="width:24%"><col style="width:15%">'
+                '<col style="width:64px"><col style="width:74px">'
+                '<col style="width:17%"></colgroup>')
     return enveloppe(
         barre + '<div class="card" style="overflow-x:auto">'
-        + entete + "".join(lignes) + "</div>")
+        + '<table class="calls">' + colonnes
+        + "<thead><tr><th>Heure</th><th>Appelant</th><th>Motif</th><th>Commune</th>"
+        + "<th>Score</th><th>Durée</th><th>Issue</th></tr></thead>"
+        + "".join(lignes) + "</table></div>")
 
 
 def page_a_venir(produit: str, vue: str, entreprise: str, prenom: str,

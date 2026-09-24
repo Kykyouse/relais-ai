@@ -5003,6 +5003,36 @@ def check_page_mes_appels() -> bool:
             print("   sous filtre, les compteurs ne portent plus sur l'ensemble")
             return False
 
+        # 6bis. LES COLONNES S'ALIGNENT, et ça ne tient qu'à une chose : elles
+        # appartiennent au MÊME tableau. La première version rendait un tableau PAR
+        # LIGNE — plus un autre pour l'en-tête — et chacun calculait ses largeurs dans
+        # son coin : rien ne pouvait tomber en face. Geoffrey l'a vu tout de suite, et
+        # aucun test ne le voyait, parce qu'ils vérifiaient le CONTENU.
+        #
+        # On vérifie donc la STRUCTURE, la seule chose dont l'alignement dépende :
+        # un tableau, sept colonnes déclarées, sept cellules par ligne.
+        if page.count("<table") != 1:
+            print(f"   {page.count('<table')} tableaux sur la page : des colonnes "
+                  f"réparties entre plusieurs tableaux ne peuvent pas s'aligner")
+            return False
+        if len(_re_t12.findall(r"<th>", page)) != 7 \
+                or len(_re_t12.findall(r"<col ", page)) != 7:
+            print("   l'en-tête et les largeurs déclarées ne comptent pas 7 colonnes")
+            return False
+        if "table-layout:fixed" not in page:
+            print("   sans `table-layout: fixed`, un motif bavard élargit sa colonne "
+                  "et décale tout le reste")
+            return False
+        cellules = [len(_re_t12.findall(r"<td", bloc)) for bloc in
+                    _re_t12.findall(r'<tr class="ligne">(.*?)</tr>', page, _re_t12.S)]
+        if not cellules or cellules != [7] * len(cellules):
+            print(f"   toutes les lignes n'ont pas 7 cellules : {cellules}")
+            return False
+        # et le transcript enjambe la largeur entière, au lieu de tenir dans une cellule
+        if page.count('colspan="7"') != len(cellules):
+            print("   un transcript ne couvre pas les sept colonnes")
+            return False
+
         # 7. le transcript est consultable — c'est ce qui rend l'agent vérifiable.
         # La maquette ouvre la conversation en dépliant la LIGNE de l'appel ; on
         # vérifie donc le mécanisme ET le contenu, pas un libellé de bouton : une
