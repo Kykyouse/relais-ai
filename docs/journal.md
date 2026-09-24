@@ -5,7 +5,7 @@
 
 ---
 
-# ÉTAT AU 22/09/2026 — à lire en premier
+# ÉTAT AU 24/09/2026 — à lire en premier
 
 > **Ce bloc se REMPLACE, il ne s'empile pas.** Les entrées datées plus bas sont le journal
 > chronologique (le pourquoi des décisions) ; ce bloc-ci est le où-on-en-est.
@@ -16,14 +16,14 @@ Le produit s'appelle **NELYO** et **il tourne en ligne** :
 <https://nelyo-api.onrender.com>, cron compris, sur une base de production séparée.
 Depuis le 21/09 **un artisan s'inscrit sans commit ni redéploiement** : sa config vit en
 base et s'édite dans `/admin`. La compréhension est au LLM sous contrat fermé, mesurée à
-**68/70** au banc d'extraction et **57/57** en éval réelle ×3 ; **104 tests** de
+**68/70** au banc d'extraction et **57/57** en éval réelle ×3 ; **107 tests** de
 non-régression. Il reste **un seul mur** : aucun numéro n'est joignable depuis la France.
 
-## Ce qui tourne (rejoué le 22/09)
+## Ce qui tourne (rejoué le 24/09)
 
 ```bash
 cd proto
-python run_scenario.py                              # 104 tests, ~3 s — sans clé NI BASE (R93)
+python run_scenario.py                              # 107 tests, ~3 s — sans clé NI BASE (R93)
 python run_extract_eval.py [--mock] [--only …]      # banc d'EXTRACTION : 68/70, p50 1131 ms
 python run_llm_eval.py [--mock] [--n 3]             # éval appelant-simulé (19 personas)
 python run_depot_pg.py [--migrer]                   # contrat du port contre Supabase
@@ -88,7 +88,9 @@ pause** (DNS qui ne résout plus, pooler qui répond `tenant/user not found`). B
 | **Espace artisan : la maquette appliquée** | ✅ **22/09** | jetons, typo et composants de `docs/maquette/` ; aucun composant absent |
 | **Agenda PROPRE de l'artisan** | ✅ **22/09** | T15 ; migration 013, et ce qu'il inscrit bloque l'agent |
 | **Anti-double-réservation** | ✅ **22/09** | R98 + mutation ; c'était un défaut EN PRODUCTION |
-| **Tableau de bord, facturation, site vitrine** | ❌ | rien de commencé |
+| **Trois portes vers la session artisan** (code SMS, mot de passe, lien) | ✅ **23/09** | T16 ; l'artisan s'enregistre dans son appareil et ne se reconnecte plus |
+| **Écran « Assistant IA » : ce que la machine dit, mot pour mot** | ✅ **24/09** | T17 + 4 mutations ; l'accueil affiché EST `formule_accueil(cfg)` |
+| **Statistiques, facturation, site vitrine** | ❌ | rien de commencé |
 | Éval LLM réelle, 19 personas × 3 | ✅ 57/57 le 09/09 | à rejouer après R94 |
 
 ## Le fait structurant de la période (01–02/09) : le curseur a bougé
@@ -216,7 +218,14 @@ correcte, trois lignes au-dessus du code qui la contredisait.
 6. **Worker de rattrapage** pour les RDV décidés dont le SMS n'a pas été mis en file.
 7. **Couvrir `appel_muet` (S9)** — la dernière des six issues que personne n'emprunte.
 8. **Rejouer l'éval ×3 après R94.** La dernière mesure (57/57) date du 09/09, avant R93/R94.
-9. **Séquence externe, côté cousin** : INPI/marque → domaine (candidat `nelyo-ia.*`, **pas
+9. **La série `T<n>` désigne DEUX choses** et le sait : les personas d'éval
+   (`run_llm_eval.py` : `T17_commune_deformee`) et les écrans du produit
+   (`run_scenario.py` : `T17_page_assistant`). La collision est antérieure à
+   aujourd'hui — T13 à T16 la portent déjà — et elle n'a aucun effet à l'exécution
+   (deux fichiers, deux registres). Elle coûte à la LECTURE : « T16 » ne désigne pas
+   la même chose selon la phrase. Renommer la série des écrans (`E<n>` ?) est un
+   geste mécanique, à faire d'un coup ou pas du tout.
+10. **Séquence externe, côté cousin** : INPI/marque → domaine (candidat `nelyo-ia.*`, **pas
    acheté**) → structure & Kbis → Sender ID OVH (~72 h). Le jour du domaine propre,
    renseigner `RELAIS_BASE_URL` sur `nelyo-api` : le repli `RENDER_EXTERNAL_URL` s'efface
    tout seul.
@@ -256,6 +265,83 @@ Le mode d'emploi des sondes et le détail de la récolte du 25/08 sont dans les 
 datées ; l'en-tête de `vapi.py` porte le format de fil SSE. **Les lire avant de toucher au
 chantier voix.**
 
+
+---
+
+## 24/09 — L'écran qui dit ce que la machine dit, et une feuille de style coupée en deux
+
+Geoffrey : « je comprends pas pourquoi l'onglet assistant IA ne peut pas déjà exister,
+même avec les données factices de Dupont Chauffage ». Il avait raison, et ma
+justification de la veille confondait deux choses très différentes : **MODIFIER** la
+config — vrai travail, un champ mal rempli casse un appel en cours — et la **MONTRER**,
+disponible depuis toujours puisque le moteur la lit à chaque appel.
+
+### Ce que l'écran montre, et pourquoi c'est délicat
+
+Le risque propre à cette page n'est pas qu'elle plante, c'est qu'elle **mente avec
+aplomb**. Personne ne peut vérifier ce qu'une machine raconte au téléphone : l'artisan
+croira cette page sur parole. Une page qui paraphraserait la config — « votre assistant
+se présente et annonce qu'il est une IA » — serait juste le jour où elle est écrite, puis
+divergerait en silence, et l'artisan découvrirait l'écart par un client mécontent.
+
+D'où la règle de construction : **rien n'est reformulé pour l'écran.** `formule_accueil`
+a été EXTRAITE de `Conversation.open()` (`engine.py`) pour que la page affiche la
+fonction elle-même, pas une copie. Les consignes de sécurité et les phrases de tarif sont
+les chaînes que l'agent prononce. T17 le verrouille en comparant l'affichage à la sortie
+de `Conversation.open()` — jamais à une constante de test — et il le fait **sur une
+config à formule maison**, sinon une phrase en dur dans `pages.py` passerait le test tant
+que la formule par défaut ne bouge pas.
+
+Et **deux choses sont dites absentes plutôt que devinées**. La maquette affichait « Renvoi
+d'appel actif — vérifié il y a 2 j » : Nelyo ne teste jamais ce renvoi, il constate
+seulement les appels qui arrivent. La page dit donc « non vérifié » — R79 porté à l'écran,
+sur ce qui est pourtant la panne la plus probable du produit. Les boutons « Modifier »
+n'y sont pas non plus : les afficher sans qu'ils fassent quelque chose serait promettre
+ce qui n'existe pas.
+
+### Le défaut qui comptait vraiment n'était pas dans la page
+
+En relisant `pages.py` pour une autre raison, `def assistant(` apparaissait **deux fois**.
+Le script qui avait posé la page extrayait son CSS ainsi :
+
+```python
+bloc.split('_STYLE_ASSISTANT = """')[1].rsplit('"""', 1)[0]
+```
+
+`rsplit` coupe sur le **dernier** `"""` du fichier source — celui qui ferme la docstring
+de `assistant()`, pas celui qui ferme le style. Le « style » inséré portait donc, en plus
+du CSS, une fermeture de chaîne, un `def assistant` entier et l'ouverture de sa
+docstring. Résultat : `_STYLE_NELYO` se refermait au milieu d'elle-même et **tout le bloc
+responsive tombait dans une docstring morte**. Plus de barre de navigation basse, plus de
+grilles adaptées. Sur un produit dont l'utilisateur est sur un chantier, le téléphone
+n'est pas un cas dégradé — c'est le cas normal.
+
+**Rien ne l'a signalé.** Le module s'importait, les 106 tests passaient, la page se
+rendait, et le `def assistant` fantôme — corps réduit à sa docstring, donc renvoyant
+`None` — était écrasé par le vrai, défini plus bas. C'est la forme la plus désagréable de
+défaut : purement silencieux, invisible à qui compte les balises, visible seulement à
+l'œil dans un navigateur étroit. **R99** pose les deux verrous : le CSS **servi** va
+jusqu'à son marqueur de fin (et ne contient pas de Python égaré), et aucune fonction de
+`pages.py` n'est définie deux fois. La mutation qui reproduit le défaut à l'identique est
+tuée.
+
+### Trois défauts plus petits, tous trouvés en LISANT la page rendue
+
+- **`escape` appelé depuis `api.py`**, qui ne l'importe pas — un `NameError` à
+  l'affichage. La correction n'est pas l'import : c'est que la **route assemble des
+  données et la page fabrique le HTML**. Une route qui se met à écrire des balises finit
+  par en écrire sans les échapper.
+- **Trois titres pré-échappés** (`Zone d&#x27;intervention`) retraversaient `escape()` et
+  s'affichaient tels quels. T17 interdit désormais `&amp;#` dans la page.
+- **« Quand il promet un rappel (ouvree) »** : des clés de config lues par un
+  chauffagiste. Le français est passé dans `pages.py` avec le reste de la copie, la route
+  n'émet plus que la clé, et une clé inconnue retombe sur sa forme brute — mieux vaut un
+  libellé laid qu'une promesse invisible.
+
+### Ce qu'il reste
+
+Statistiques et facturation ne sont pas commencées. Et le mur n'a pas bougé d'un pouce :
+**aucun numéro n'est joignable depuis la France.**
 
 ---
 

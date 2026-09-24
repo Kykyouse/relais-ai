@@ -702,6 +702,19 @@ details.horaire input{width:100%;min-height:38px;border:1px solid var(--line);
 .ajout .large{grid-column:span 2}
 @media (max-width:940px){.week{grid-template-columns:repeat(2,1fr)}}
 @media (max-width:520px){.week{grid-template-columns:1fr}}
+.numline{display:flex;align-items:center;gap:16px;flex-wrap:wrap}
+.numline .n{font-family:"Bricolage Grotesque";font-size:22px;font-weight:700;
+  letter-spacing:.5px}
+.kv{display:grid;grid-template-columns:1fr auto;gap:8px 16px;font-size:13.5px}
+.kv dt{color:var(--muted)}
+.kv dd{margin:0;font-weight:600;text-align:right;font-variant-numeric:tabular-nums}
+.chips{display:flex;gap:8px;flex-wrap:wrap}
+.dit{background:var(--surface-2);border:1px solid var(--line);border-radius:8px;
+  padding:13px 15px;font-size:13.5px;line-height:1.55;font-style:italic;
+  color:var(--muted);margin:0 0 10px}
+.dit b{font-style:normal;color:var(--ink);display:block;font-size:11px;
+  letter-spacing:.06em;text-transform:uppercase;margin-bottom:5px;font-weight:600}
+.note{color:var(--muted);font-size:12.5px;margin:14px 0 0}
 /* ---------- responsive ---------- */
 .mobilebar{display:none}
 @media (max-width:940px){
@@ -1233,3 +1246,102 @@ def agenda(produit: str, prenom: str, entreprise: str, jours: list[dict],
     return _page_nelyo(produit, "agenda", corps, entreprise=entreprise, prenom=prenom,
                        commune=commune, a_valider=a_valider, vue_admin=vue_admin,
                        titre="Agenda")
+
+
+# Ce que l'artisan lit au-dessus de chaque phrase de son assistant. Les clés viennent
+# de la config (`accueil.promesse_rappel`) ; une clé inconnue retombe sur sa forme brute
+# — mieux vaut un libellé laid qu'une promesse invisible.
+_QUAND = {
+    "accueil": "À l'ouverture de chaque appel",
+    "ouvree": "Quand il promet un rappel, en journée",
+    "soir_weekend": "Quand il promet un rappel, le soir ou le week-end",
+}
+
+
+def assistant(produit: str, prenom: str, entreprise: str, bloc: dict,
+              a_valider: int = 0, commune: str = "", vue_admin: str = "") -> str:
+    """« Assistant IA » : ce que la machine SAIT et ce qu'elle DIT, pour cet artisan.
+
+    Geoffrey, le 24/09 : « je comprends pas pourquoi l'onglet assistant IA ne peut pas
+    déjà exister, même avec les données factices de Dupont Chauffage ». Il avait raison,
+    et ma justification confondait deux choses très différentes : MODIFIER la config
+    (vrai travail — un champ mal rempli casse un appel en cours) et la MONTRER, qui est
+    disponible depuis toujours puisque l'agent la lit à chaque appel.
+
+    C'est même sans doute l'écran le plus rassurant du produit. Quelqu'un qui paie une
+    machine pour décrocher à sa place veut savoir exactement ce qu'elle raconte à ses
+    clients — et ici, les phrases affichées sont LES phrases, pas des exemples :
+    `formule_accueil` est la fonction qu'appelle le moteur, les consignes de sécurité et
+    les tarifs sont les chaînes que l'agent prononce.
+
+    DEUX CHOSES SONT DITES ABSENTES, plutôt que devinées. La maquette affiche « Renvoi
+    d'appel actif — vérifié il y a 2 j » : Nelyo ne teste jamais ce renvoi, il constate
+    seulement les appels qui arrivent. Et les boutons « Modifier » n'y sont pas encore —
+    les afficher sans qu'ils fassent quelque chose serait promettre ce qui n'existe pas.
+    """
+    def chips(items, barres=()):
+        return '<div class="chips">' + "".join(
+            f'<span class="chip">{escape(str(i))}</span>' for i in items
+        ) + "".join(
+            f'<span class="chip x">{escape(str(i))}</span>' for i in barres
+        ) + "</div>"
+
+    def kv(paires):
+        return '<dl class="kv">' + "".join(
+            f"<dt>{escape(k)}</dt><dd>{escape(str(v))}</dd>" for k, v in paires
+        ) + "</dl>"
+
+    def carte(titre, corps, sous=""):
+        return ('<div class="card"><div class="card-h">'
+                f"<h3>{escape(titre)}</h3>"
+                + (f'<span class="sub" style="margin-left:auto">{escape(sous)}</span>'
+                   if sous else "")
+                + f'</div><div class="card-b">{corps}</div></div>')
+
+    etat = bloc["etat_abonnement"]
+    teinte = "p-ok" if etat == "actif" else ("p-warn" if etat == "essai" else "p-crit")
+    entete = (
+        '<div class="card"><div class="card-b numline">'
+        '<div><div class="eyebrow">Votre numéro ' + escape(produit) + "</div>"
+        f'<div class="n num">{escape(bloc["numero_relais"])}</div></div>'
+        f'<span class="pill {teinte}">Assistant {escape(etat)}</span>'
+        '<span class="pill p-marine">Annonce IA en ouverture (AI Act)</span>'
+        '<span class="pill p-mut">Renvoi d&#x27;appel : non vérifié</span>'
+        "</div></div>")
+
+    dits = "".join(
+        f'<p class="dit"><b>{escape(_QUAND.get(cle, cle.replace("_", " ")))}</b>'
+        f"{escape(texte)}</p>"
+        for cle, texte in bloc["dit"])
+
+    return _page_nelyo(
+        produit, "ia",
+        entete
+        + carte("Ce que votre assistant dit", dits,
+                "mot pour mot, ce que vos clients entendent")
+        + '<div class="grid g2">'
+        + carte("Prestations", chips(bloc["couvertes"], bloc["refusees"]),
+                f'{len(bloc["couvertes"])} acceptées')
+        + carte("Zone d'intervention",
+                chips(bloc["communes"], [f"{c} (limitrophe)"
+                                         for c in bloc["limitrophes"]]),
+                "les limitrophes sont acceptées au cas par cas")
+        + "</div>"
+        + '<div class="grid g2">'
+        + carte("Rendez-vous", kv(bloc["agenda"]))
+        + carte("Validation et SMS", kv(bloc["validation"]))
+        + "</div>"
+        + carte("Tarifs que l'assistant peut annoncer",
+                "".join(f'<p class="dit">{escape(p)}</p>' for p in bloc["tarifs"])
+                or '<p class="note">Aucun tarif communicable : l&#x27;assistant '
+                   "refusera d&#x27;annoncer un prix.</p>")
+        + carte("Sécurité",
+                "".join(f'<p class="dit">{escape(str(c))}</p>'
+                        for c in bloc["consignes"])
+                + kv(bloc["securite"]),
+                "les seules consignes que l'assistant a le droit de donner")
+        + '<p class="note">Ces réglages se modifient pour l&#x27;instant depuis '
+          "l&#x27;administration. L&#x27;édition par vous-même viendra, avec les "
+          "vérifications qui empêchent de casser l&#x27;assistant en plein appel.</p>",
+        entreprise=entreprise, prenom=prenom, commune=commune,
+        a_valider=a_valider, vue_admin=vue_admin, titre="Assistant IA")

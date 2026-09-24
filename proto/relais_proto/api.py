@@ -32,7 +32,7 @@ from .confirmation import creer_jeton, empreinte, lien
 from . import admin as admin_mdp
 from . import motdepasse
 from .depot import Introuvable, LigneArtisan
-from .engine import Conversation
+from .engine import Conversation, formule_accueil
 from .rdv import OCCUPENT, StatutRdv as _StatutRdv, TransitionInterdite
 from .registre import (Artisan, Registre, empreinte as registre_empreinte,
                        valider_config)
@@ -1610,11 +1610,6 @@ def creer_app(depot, registre: Registre, fabrique_llm, horloge=None,
                   + NOM + " s'arrête au rendez-vous validé et n'apprend jamais si "
                   "le chantier a eu lieu ni ce qu'il a rapporté. Il faudra que "
                   "vous puissiez le saisir"],
-        "ia": ["l'écran de configuration existe côté administration ; il reste à "
-               "l'ouvrir à l'artisan, avec les garde-fous qui empêchent de casser "
-               "l'agent en plein appel",
-               "l'état du renvoi d'appel (« vérifié il y a 2 j ») demande de le "
-               "tester réellement, ce qui n'est pas encore fait"],
         "factu": ["aucun paiement n'est branché",
                   "la consommation par artisan (appels, SMS) est mesurable et viendra "
                   "avec"],
@@ -1639,15 +1634,6 @@ def creer_app(depot, registre: Registre, fabrique_llm, horloge=None,
                    nelyo_vue: str = Cookie(default="", alias=admin_mdp.NOM_COOKIE_VUE),
                    authorization: str = Header(default="")) -> HTMLResponse:
         return _vue_a_venir("stats", relais_session, nelyo_admin, nelyo_vue,
-                            authorization)
-
-    @app.get("/app/assistant", response_class=HTMLResponse)
-    def page_assistant(
-            relais_session: str = Cookie(default="", alias=session.NOM_COOKIE),
-            nelyo_admin: str = Cookie(default="", alias=admin_mdp.NOM_COOKIE),
-            nelyo_vue: str = Cookie(default="", alias=admin_mdp.NOM_COOKIE_VUE),
-            authorization: str = Header(default="")) -> HTMLResponse:
-        return _vue_a_venir("ia", relais_session, nelyo_admin, nelyo_vue,
                             authorization)
 
     @app.get("/app/facturation", response_class=HTMLResponse)
@@ -1847,6 +1833,109 @@ def creer_app(depot, registre: Registre, fabrique_llm, horloge=None,
         artisan = artisan_authentifie(authorization, relais_session)
         depot.supprimer_evenement(artisan.id, ev_id)
         return RedirectResponse("/app/agenda", status_code=303)
+
+
+    @app.get("/app/assistant", response_class=HTMLResponse)
+    def page_assistant(
+            relais_session: str = Cookie(default="", alias=session.NOM_COOKIE),
+            nelyo_admin: str = Cookie(default="", alias=admin_mdp.NOM_COOKIE),
+            nelyo_vue: str = Cookie(default="", alias=admin_mdp.NOM_COOKIE_VUE),
+            authorization: str = Header(default="")) -> HTMLResponse:
+        """« Assistant IA » : ce que la machine sait, et ce qu'elle dit.
+
+        TOUT VIENT DE LA CONFIG RÉELLE — celle que le moteur lit à chaque appel. Rien
+        n'est reformulé pour l'écran : `formule_accueil` est la fonction qu'appelle
+        `Conversation.open()`, les consignes de sécurité et les phrases de tarif sont
+        les chaînes que l'agent prononce. Une page qui paraphraserait finirait par
+        décrire un assistant qui n'existe plus.
+        """
+        artisan, vue = _artisan_espace(authorization, relais_session,
+                                       nelyo_admin, nelyo_vue)
+        if artisan is None:
+            return HTMLResponse(
+                pages.connexion(NOM, "Session expirée ou révoquée. Reconnecte-toi."),
+                status_code=401)
+        ctx = _contexte(artisan)
+        cfg = artisan.config
+        ag = cfg.get("agenda", {})
+        val = cfg.get("validation", {})
+
+        def heures(jour, defaut="fermé"):
+            f = (ag.get("horaires_rdv") or {}).get(jour) or []
+            return " · ".join(f"{x['de']}–{x['a']}" for x in f) or defaut
+
+        urg = ag.get("urgences", {})
+        fenetre = (urg.get("fenetres_reservees") or [{}])[0]
+
+        # Les communes sont indexées pour la RECHERCHE : « nogent » et
+        # « nogent-sur-marne » désignent la même ville. On n'affiche donc pas les clés
+        # brutes mais une entrée par CODE POSTAL, sous son libellé le plus long — sinon
+        # l'artisan lirait sa zone en double et douterait de ce que l'agent comprend.
+        par_cp: dict[str, str] = {}
+        for nom_c, cp in (cfg.get("zone", {}).get("communes") or {}).items():
+            if len(nom_c) > len(par_cp.get(cp, "")):
+                par_cp[cp] = nom_c
+        limitrophes = set(cfg.get("zone", {}).get("codes_postaux_limitrophes") or [])
+        communes = sorted(v.title() for k, v in par_cp.items()
+                          if k not in limitrophes)
+        bordures = sorted(v.title() for k, v in par_cp.items() if k in limitrophes)
+
+        promesse = (cfg.get("accueil", {}).get("promesse_rappel") or {})
+        securite = cfg.get("securite", {})
+        transfert = cfg.get("transfert", {})
+
+        bloc = {
+            "numero_relais": artisan.numero_relais or "—",
+            "etat_abonnement": artisan.etat_abonnement,
+            # LA VRAIE phrase d'accueil, par la fonction du moteur — pas une copie.
+            # La CLÉ, pas le libellé : le français vit dans `pages.py` avec le reste
+            # de la copie. L'artisan lisait « Quand il promet un rappel (ouvree) ».
+            "dit": [("accueil", formule_accueil(cfg))]
+                   + [(q, p) for q, p in promesse.items()],
+            "couvertes": [p.replace("_", " ") for p in
+                          (cfg.get("prestations", {}).get("couvertes") or [])],
+            "refusees": [p.replace("_", " ") for p in
+                         (cfg.get("prestations", {}).get("refusees") or [])],
+            "communes": communes, "limitrophes": bordures,
+            "agenda": [
+                ("Lundi au vendredi", heures("lun-ven")),
+                ("Samedi", heures("sam")),
+                ("Dimanche", heures("dim")),
+                ("Durée d'une intervention", f"{(ag.get('durees_min') or {}).get('defaut', '—')} min"),
+                ("Trajet réservé entre deux", f"{ag.get('buffer_trajet_min', '—')} min"),
+                ("RDV que l'assistant peut prendre par jour",
+                 ag.get("max_rdv_agent_par_jour", "—")),
+                ("Urgences", "acceptées" if urg.get("acceptees") else "refusées"),
+                ("Créneau réservé aux urgences",
+                 f"{fenetre.get('de', '—')}–{fenetre.get('a', '—')} "
+                 f"({urg.get('max_par_jour', '—')} par jour)"),
+            ],
+            "validation": [
+                ("Délai pour valider un RDV", f"{val.get('delai_max_heures', '—')} h"),
+                ("Délai en urgence", f"{val.get('delai_max_urgence_heures', '—')} h"),
+                ("Validation automatique",
+                 "jamais" if val.get("auto_validation") == "jamais" else
+                 str(val.get("auto_validation"))),
+                ("Aucun SMS entre",
+                 f"{(cfg.get('sms', {}).get('plage_silence') or {}).get('de', '—')} et "
+                 f"{(cfg.get('sms', {}).get('plage_silence') or {}).get('a', '—')}"),
+            ],
+            "tarifs": [t.get("phrase") or t.get("libelle", "")
+                       for t in (cfg.get("tarifs", {}).get("communicables") or [])],
+            # DES DONNÉES, pas du HTML : `api.py` ne fabrique pas de balises — il n'y
+            # importe même pas `escape`, et c'est voulu. Une route qui se met à écrire
+            # du HTML finit par en écrire sans l'échapper.
+            "consignes": list((securite.get("consignes_autorisees") or {}).values()),
+            "securite": [
+                ("Transfert si danger",
+                 "oui" if securite.get("transfert_si_danger") else "non"),
+                ("Transfert vers vous",
+                 "actif" if transfert.get("actif") else "inactif"),
+            ],
+        }
+        return HTMLResponse(pages.assistant(
+            NOM, ctx["prenom"], ctx["entreprise"], bloc,
+            a_valider=ctx["a_valider"], commune=ctx["commune"], vue_admin=vue))
 
 
     return app

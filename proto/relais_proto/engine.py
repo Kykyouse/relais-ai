@@ -56,6 +56,24 @@ SANS_NUMERO = ("Sans numéro, je ne peux pas faire rappeler. N'hésitez pas à r
                "Bonne journée !")
 
 
+def formule_accueil(cfg: dict) -> str:
+    """CE QUE L'APPELANT ENTEND EN PREMIER. Fonction pure, appelée par `open()`.
+
+    Extraite le 24/09 pour que l'écran « Assistant IA » puisse la MONTRER à l'artisan.
+    Il paie une machine qui décroche à sa place : lui afficher une copie approchante de
+    ce qu'elle dit serait pire que de ne rien afficher — la copie divergerait, et il
+    découvrirait l'écart par un client.
+
+    L'annonce IA y est **dans le texte**, non négociable (règle n°5, AI Act art. 50) :
+    c'est pourquoi la formule par défaut la porte, et pourquoi une formule maison mal
+    relue est un risque que `_say(verbatim=True)` et les garde-fous surveillent.
+    """
+    return cfg["accueil"]["formule"] or (
+        f"Bonjour, vous êtes bien chez {cfg['entreprise']['nom']}. "
+        f"Je suis son assistant vocal — {cfg['entreprise']['prenom_patron']} est en "
+        f"intervention, mais je peux tout organiser avec vous. Que se passe-t-il ?")
+
+
 class Conversation:
     def __init__(self, config: dict, llm, calendar: CalendarStub | None = None,
                  numero_appelant: str | None = None):
@@ -613,10 +631,7 @@ class Conversation:
     # ------------------------------------------------------------- ouverture
     def open(self) -> str:
         """Première réplique (S0) — l'annonce IA est DANS le texte, non négociable."""
-        formule = self.cfg["accueil"]["formule"] or (
-            f"Bonjour, vous êtes bien chez {self.cfg['entreprise']['nom']}. "
-            f"Je suis son assistant vocal — {self._prenom} est en intervention, "
-            f"mais je peux tout organiser avec vous. Que se passe-t-il ?")
+        formule = formule_accueil(self.cfg)
         self.state = State.S1_COMPRENDRE
         # Passe par `_say` comme tout le reste (règle n°2 : aucune sortie ne contourne les
         # garde-fous). Elle y échappait — l'accueil s'écrivait directement dans le

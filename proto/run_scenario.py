@@ -4870,6 +4870,226 @@ def check_registre_lu_en_base() -> bool:
     return True
 
 
+def check_feuille_entiere() -> bool:
+    """R99 : la feuille de style arrive ENTIÈRE, et aucune page n'est définie deux fois.
+
+    Trouvé le 24/09, en relisant `pages.py` pour une autre raison. Le script qui avait
+    posé la page « Assistant IA » extrayait son CSS ainsi :
+
+        bloc.split('_STYLE_ASSISTANT = \"\"\"')[1].rsplit('\"\"\"', 1)[0]
+
+    `rsplit` coupe sur le DERNIER `\"\"\"` du fichier source — celui qui ferme la docstring
+    de `assistant()`, pas celui qui ferme le style. Le « style » inséré portait donc, en
+    plus du CSS, une fermeture de chaîne, un `def assistant` entier et l'ouverture de sa
+    docstring. `_STYLE_NELYO` se refermait au milieu d'elle-même et **tout le bloc
+    responsive tombait dans une docstring morte** : plus de barre de navigation basse,
+    plus de grilles adaptées. Sur un produit dont l'utilisateur est sur un chantier, le
+    téléphone n'est pas un cas dégradé, c'est le cas normal.
+
+    Rien ne l'a signalé. Le module s'importait, les 106 tests passaient, la page se
+    rendait, et le `def assistant` fantôme (corps réduit à sa docstring, donc renvoyant
+    `None`) était écrasé par le vrai, défini plus bas. Un défaut purement silencieux :
+    seul un œil sur la page, dans un navigateur étroit, l'aurait vu.
+
+    Deux verrous, chacun sur une moitié du défaut :
+
+    1. **le CSS servi va jusqu'au bout** — on cherche le marqueur de fin de feuille et
+       les règles de la barre mobile dans la page RENDUE, pas dans le fichier source :
+       ce qui compte est ce que le navigateur reçoit ;
+    2. **aucune fonction de `pages.py` n'est définie deux fois.** Une redéfinition est
+       toujours un accident ici — soit un script de pose rejoué, soit un copier-coller —
+       et elle est indétectable à l'exécution puisque la dernière gagne.
+    """
+    try:
+        from fastapi.testclient import TestClient
+    except ImportError:
+        print("   fastapi/httpx absents : pip install -r requirements.txt")
+        return False
+
+    import ast as _ast
+    import collections as _col
+    import pathlib as _pl
+    import re as _re_r99
+
+    from relais_proto import pages as _pages
+    from relais_proto.api import creer_app
+    from relais_proto.registre import Artisan, Registre, empreinte as emp_token
+
+    # 1. la feuille servie va jusqu'au bout
+    registre = Registre([Artisan("art-dupont", "+33189701234", emp_token("tok"), CFG,
+                                 telephone="+33612345678")],
+                        emp_token("secret-voix"))
+    depot = DepotMemoire()
+    app = creer_app(depot, registre, MockLLM, lambda: LUNDI_9H,
+                    base_url="https://nelyo.test", cookie_secure=False)
+    with TestClient(app) as julien:
+        if not connecter_par_sms(julien, depot, "06 12 34 56 78"):
+            print("   connexion par code SMS impossible")
+            return False
+        page = julien.get("/app").text
+
+    feuilles = _re_r99.findall(r"<style>(.*?)</style>", page, _re_r99.DOTALL)
+    if not feuilles:
+        print("   la page ne porte aucune feuille de style")
+        return False
+    css = "\n".join(feuilles)
+    # Le marqueur de section est le SENTINELLE : une chaîne qui se referme trop tôt le
+    # perd avant tout le reste. Les règles qui suivent sont celles qui avaient disparu.
+    for regle in ("/* ---------- responsive ---------- */",
+                  ".mobilebar{display:none}", ".mobilebar a.on{"):
+        if regle not in css:
+            print(f"   règle absente de la feuille servie : {regle!r}\n"
+                  "     (une chaîne de style s'est probablement refermée trop tôt)")
+            return False
+    # …et une docstring ne doit jamais s'y être glissée.
+    for intrus in ("def ", '"""', "return "):
+        if intrus in css:
+            print(f"   du Python a fui dans le CSS servi : {intrus!r}")
+            return False
+
+    # 2. aucune fonction de `pages.py` définie deux fois
+    source = _pl.Path(_pages.__file__).read_text(encoding="utf-8")
+    noms = [n.name for n in _ast.parse(source).body
+            if isinstance(n, _ast.FunctionDef)]
+    doubles = sorted(nom for nom, k in _col.Counter(noms).items() if k > 1)
+    if doubles:
+        print(f"   pages.py définit deux fois : {', '.join(doubles)} "
+              "(la dernière gagne, les précédentes sont mortes)")
+        return False
+
+    return True
+
+
+def check_page_assistant() -> bool:
+    """T17 : « Assistant IA » montre LA configuration qui sert, pas une description.
+
+    Geoffrey, le 24/09 : « je comprends pas pourquoi l'onglet assistant IA ne peut pas
+    déjà exister, même avec les données factices de Dupont Chauffage ». Il avait raison,
+    et ma justification confondait deux choses : MODIFIER la config (vrai travail — un
+    champ mal rempli casse un appel en cours) et la MONTRER, disponible depuis toujours
+    puisque le moteur la lit à chaque appel.
+
+    Le risque propre à cet écran n'est pas qu'il plante, c'est qu'il MENTE avec aplomb.
+    Personne ne peut vérifier ce que la machine raconte au téléphone ; l'artisan croira
+    cette page sur parole. Une page qui paraphraserait la config — « votre assistant se
+    présente et annonce qu'il est une IA » — serait juste le jour où elle est écrite,
+    puis divergerait en silence, et l'artisan découvrirait l'écart par un client
+    mécontent. D'où ce qui est verrouillé ici :
+
+    1. **l'accueil affiché est l'accueil PRONONCÉ**, au caractère près — comparé à la
+       sortie de `Conversation.open()`, jamais à une constante de test. Et vérifié sur
+       une config à formule MAISON, sinon une phrase en dur dans `pages.py` passerait le
+       test tant que la formule par défaut ne bouge pas ;
+    2. **une prestation REFUSÉE ne se lit jamais comme acceptée** — l'artisan qui lirait
+       « débouchage colonne immeuble » parmi ses prestations couvertes croirait son agent
+       en train de prendre des chantiers qu'il refuse en réalité ;
+    3. **les phrases de tarif sont les phrases**, mot pour mot : c'est le seul endroit où
+       l'agent a le droit d'annoncer un prix (T05), l'artisan doit lire exactement ce que
+       ses clients entendront ;
+    4. **le renvoi d'appel est dit NON VÉRIFIÉ.** La maquette affichait « Renvoi actif —
+       vérifié il y a 2 j » ; Nelyo ne teste jamais ce renvoi, il constate seulement les
+       appels qui arrivent. R79 à l'écran : ne dire que ce qui est SÛR. C'est en plus la
+       panne la plus probable du produit — un renvoi mal réglé, et rien n'arrive ;
+    5. **rien de doublement échappé**. Trouvé en LISANT la page rendue le 24/09 : trois
+       titres pré-échappés (« Zone d&#x27;intervention ») retraversaient `escape()` et
+       s'affichaient tels quels. Invisible à qui compte les balises.
+    """
+    try:
+        from fastapi.testclient import TestClient
+    except ImportError:
+        print("   fastapi/httpx absents : pip install -r requirements.txt")
+        return False
+
+    import copy as _copy
+    import re as _re_t17
+    from html import escape as _esc
+
+    from relais_proto.api import creer_app
+    from relais_proto.registre import Artisan, Registre, empreinte as emp_token
+
+    def page_pour(cfg: dict) -> str | None:
+        """L'écran « Assistant IA » d'un artisan dont la config est `cfg`."""
+        registre = Registre([Artisan("art-dupont", "+33189701234", emp_token("tok"),
+                                     cfg, telephone="+33612345678")],
+                            emp_token("secret-voix"))
+        depot = DepotMemoire()
+        # cookie_secure=False : les tests parlent en HTTP (cf. check_app_artisan).
+        app = creer_app(depot, registre, MockLLM, lambda: LUNDI_9H,
+                        base_url="https://nelyo.test", cookie_secure=False)
+        with TestClient(app) as julien:
+            if not connecter_par_sms(julien, depot, "06 12 34 56 78"):
+                print("   connexion par code SMS impossible")
+                return None
+            r = julien.get("/app/assistant")
+            if r.status_code != 200:
+                print(f"   /app/assistant : {r.status_code}")
+                return None
+            return r.text
+
+    page = page_pour(CFG)
+    if page is None:
+        return False
+
+    # 1. l'accueil AFFICHÉ est l'accueil PRONONCÉ. Deux configs : la seconde porte une
+    # formule maison, et c'est elle qui mord — elle tue la mutation « écrire la phrase
+    # d'accueil en dur dans pages.py », que la première laisserait vivre.
+    maison = _copy.deepcopy(CFG)
+    maison["accueil"]["formule"] = (
+        "Bonjour, assistant vocal de Dupont Chauffage — je ne suis pas un humain. "
+        "Dites-moi tout.")
+    page_maison = page_pour(maison)
+    if page_maison is None:
+        return False
+    for cfg, rendu, etiquette in ((CFG, page, "formule par défaut"),
+                                  (maison, page_maison, "formule maison")):
+        dit = Conversation(cfg, MockLLM()).open()
+        if _esc(dit) not in rendu:
+            print(f"   l'accueil affiché n'est pas l'accueil prononcé ({etiquette}) :\n"
+                  f"     prononcé : {dit!r}")
+            return False
+
+    # 2. couvertes et refusées ne se confondent pas. `chip x` est la marque du refus :
+    # la chercher NUE laisserait passer une refusée rendue comme acceptée.
+    refusees = [p.replace("_", " ") for p in CFG["prestations"]["refusees"]]
+    couvertes = [p.replace("_", " ") for p in CFG["prestations"]["couvertes"]]
+    if not refusees or not couvertes:
+        print("   la config de test n'a plus de prestations : ce test ne prouve rien")
+        return False
+    for p in refusees:
+        if f'<span class="chip x">{_esc(p)}</span>' not in page:
+            print(f"   « {p} » est refusée en config mais pas barrée à l'écran")
+            return False
+    for p in couvertes:
+        if f'<span class="chip">{_esc(p)}</span>' not in page:
+            print(f"   « {p} » est couverte en config mais absente de l'écran")
+            return False
+
+    # 3. les phrases de tarif, mot pour mot
+    for tarif in CFG["tarifs"]["communicables"]:
+        phrase = tarif.get("phrase") or tarif.get("libelle", "")
+        if phrase and _esc(phrase) not in page:
+            print(f"   phrase de tarif absente ou reformulée : {phrase!r}")
+            return False
+
+    # 4. R79 à l'écran : le renvoi d'appel n'est pas mesuré, et la page le DIT
+    if "non vérifié" not in page:
+        print("   la page ne dit pas que le renvoi d'appel n'est pas vérifié")
+        return False
+    for menteur in ("Renvoi d'appel actif", "vérifié il y a"):
+        if menteur in page or _esc(menteur) in page:
+            print(f"   la page affirme un état qu'elle ne mesure pas : {menteur!r}")
+            return False
+
+    # 5. rien de doublement échappé (trois titres l'étaient le 24/09)
+    for rendu, etiquette in ((page, "défaut"), (page_maison, "maison")):
+        if "&amp;#" in rendu:
+            print(f"   double échappement ({etiquette}) : " + ", ".join(
+                sorted(set(_re_t17.findall(r"&amp;#\w+;", rendu)))))
+            return False
+
+    return True
+
+
 def check_page_mes_appels() -> bool:
     """La page « Mes appels » : l'artisan voit ce que son agent a pris, RDV ou pas.
 
@@ -12343,6 +12563,23 @@ def run() -> int:
     if check_page_mes_appels():
         print("   → les appels SANS RDV sont enfin visibles, et aucun rappel n'est "
               "proposé là où il n'y a pas de numéro : ✅ PASS")
+    else:
+        print("   → ❌ FAIL")
+        echecs += 1
+
+    print(f"\n──── T17_page_assistant ────")
+    if check_page_assistant():
+        print("   → l'écran « Assistant IA » montre la config qui SERT : l'accueil "
+              "prononcé mot pour mot, les prestations refusées barrées, et le renvoi "
+              "d'appel dit non vérifié : ✅ PASS")
+    else:
+        print("   → ❌ FAIL")
+        echecs += 1
+
+    print(f"\n──── R99_feuille_entiere ────")
+    if check_feuille_entiere():
+        print("   → la feuille de style arrive entière jusqu'au bloc responsive, "
+              "sans Python égaré, et aucune page n'est définie deux fois : ✅ PASS")
     else:
         print("   → ❌ FAIL")
         echecs += 1

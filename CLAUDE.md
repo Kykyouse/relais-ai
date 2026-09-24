@@ -20,7 +20,7 @@ Cible V1 : plombiers/chauffagistes FR. Solo dev : Geoffrey (binôme Claude) ; ma
 ```bash
 cd proto
 pip install -r requirements.txt     # anthropic, python-dotenv (inutiles en mock)
-python run_scenario.py              # suite de non-régression (mock, sans clé, ~3 s) — 105 tests
+python run_scenario.py              # suite de non-régression (mock, sans clé, ~3 s) — 107 tests
                                     # « sans BASE » est désormais VÉRIFIÉ, pas promis (R93) :
                                     # la suite importait `serveur.py` — le câblage de prod,
                                     # qui ouvre une connexion Postgres à l'import — et
@@ -223,6 +223,9 @@ un code d'admin atterrirait dans les journaux de l'hébergeur ·
 `registre.valider_config` ce qui empêcherait une config de servir un appel — exigences
 DÉRIVÉES du modèle `dupont.json`, jamais listées à la main (dix-huit chemins sont lus sans
 `.get` dans le moteur, et une liste écrite à la main vieillit en silence) ·
+`engine.formule_accueil` ce que l'appelant entend en PREMIER, fonction pure appelée
+par `open()` — extraite le 24/09 pour que l'écran « Assistant IA » MONTRE la phrase
+réelle plutôt qu'une copie, qui divergerait en silence (T17) ·
 `actions.py` le MENU d'actions fermé par état, la validation, et le bout de prompt qui le
 décrit — une seule source pour ce que le modèle peut proposer et ce que le code accepte ·
 `engine.py` contrôleur déterministe S0–S11 · `llm.py` extracteur+formuleur (Anthropic/Mock/Resilient,
