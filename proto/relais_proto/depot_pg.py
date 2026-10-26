@@ -364,14 +364,15 @@ class DepotPostgres:
     # ---- RDV ----
     _COLS_RDV = ("id, lead_id, artisan_id, creneau, duree_min, urgence, statut, "
                  "expire_a, cree_a, notifie_a, decide_a, historique, "
-                 "confirmation_sha256")
+                 "confirmation_sha256, issue, issue_montant_eur, issue_le")
 
     @staticmethod
     def _rdv_de_ligne(l: tuple) -> Rdv:
         return Rdv(id=str(l[0]), lead_id=str(l[1]), artisan_id=l[2], creneau=l[3],
                    duree_min=l[4], urgence=l[5], statut=StatutRdv(l[6]), expire_a=l[7],
                    cree_a=l[8], notifie_a=l[9], decide_a=l[10], historique=l[11],
-                   confirmation_sha256=l[12])
+                   confirmation_sha256=l[12], issue=l[13], issue_montant_eur=l[14],
+                   issue_le=l[15])
 
     def creer_rdv(self, *, lead_id: str, hold: dict, lead_donnees: dict, cfg: dict,
                   maintenant: dt.datetime) -> Rdv:
@@ -381,10 +382,11 @@ class DepotPostgres:
                               cfg=cfg, maintenant=maintenant)
         self._executer(
             f"insert into rdv ({self._COLS_RDV}) values "
-            "(%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s)",
+            "(%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s)",
             (rdv.id, rdv.lead_id, rdv.artisan_id, _json(rdv.creneau), rdv.duree_min,
              rdv.urgence, rdv.statut.value, rdv.expire_a, rdv.cree_a, rdv.notifie_a,
-             rdv.decide_a, _json(rdv.historique), rdv.confirmation_sha256))
+             rdv.decide_a, _json(rdv.historique), rdv.confirmation_sha256,
+             rdv.issue, rdv.issue_montant_eur, rdv.issue_le))
         return rdv
 
     def rdv(self, rdv_id: str) -> Rdv:
@@ -398,10 +400,12 @@ class DepotPostgres:
         if not self._executer(
                 "update rdv set statut = %s, expire_a = %s, notifie_a = %s, "
                 "decide_a = %s, historique = %s, creneau = %s, "
-                "confirmation_sha256 = %s where id = %s",
+                "confirmation_sha256 = %s, issue = %s, issue_montant_eur = %s, "
+                "issue_le = %s where id = %s",
                 (rdv.statut.value, rdv.expire_a, rdv.notifie_a, rdv.decide_a,
                  _json(rdv.historique), _json(rdv.creneau),
-                 rdv.confirmation_sha256, rdv.id)):
+                 rdv.confirmation_sha256, rdv.issue, rdv.issue_montant_eur,
+                 rdv.issue_le, rdv.id)):
             raise Introuvable(rdv.id)
 
     def rdvs_en_attente(self, artisan_id: str) -> list[Rdv]:

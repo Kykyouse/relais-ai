@@ -517,7 +517,12 @@ a{color:var(--marine)}
   letter-spacing:.2px}
 .logo small{display:block;font-size:10.5px;letter-spacing:.08em;text-transform:uppercase;
   opacity:.65;font-weight:500}
-nav{padding:6px 12px;display:flex;flex-direction:column;gap:2px}
+/* SCOPÉ à la barre latérale, exprès (R100) : une règle `nav{…}` nue matchait AUSSI la
+   <nav class="mobilebar"> du bas d'écran — qui héritait de flex-direction:column et
+   s'empilait verticalement sur 270 px de haut, sur mobile, c'est-à-dire sur l'appareil
+   normal de l'artisan. La règle du média query redéclare display et position, mais pas
+   flex-direction : ce qui n'est pas redéclaré FUIT. */
+.side nav{padding:6px 12px;display:flex;flex-direction:column;gap:2px}
 .nav-item{display:flex;align-items:center;gap:11px;padding:9px 12px;border-radius:8px;
   color:inherit;text-decoration:none;font:500 14px/1 "Instrument Sans",sans-serif}
 .nav-item svg{width:17px;height:17px;flex:0 0 17px;opacity:.8}
@@ -843,7 +848,7 @@ def _page_nelyo(produit: str, vue: str, corps: str, *, entreprise: str = "",
           '<svg viewBox="0 0 24 24" fill="none" stroke="#fff" stroke-width="2.2" '
           'stroke-linecap="round"><path d="M5 4v6a7 7 0 0 0 14 0V4"/>'
           '<path d="M12 17v3"/></svg></span>'
-        + f"<div><b>{escape(produit)}</b><small>Ne ratez plus rien</small></div></a>"
+        + f"<div><b>{escape(produit)}</b><small>Vos RDV, même sur chantier</small></div></a>"
         + f"<nav>{liens}</nav>{pied_lateral}</aside>"
         + '<div class="main"><header class="topbar">'
         + f"<h1>{escape(titre or _TITRES.get(vue, ''))}</h1>"
@@ -1107,6 +1112,142 @@ def page_a_venir(produit: str, vue: str, entreprise: str, prenom: str,
         f"<ul>{points}</ul></div></div>",
         entreprise=entreprise, prenom=prenom, commune=commune,
         a_valider=a_valider, vue_admin=vue_admin)
+
+
+def stats(produit: str, prenom: str, entreprise: str, ca_eur: int, gagnes: int,
+          gagnes_sans_montant: int, perdus: int, tuiles: list[tuple],
+          a_declarer: list[dict], declares: list[dict], a_valider: int = 0,
+          commune: str = "", vue_admin: str = "") -> str:
+    """« Statistiques » : ce que Nelyo rapporte — en déclarations de l'artisan, jamais
+    en inventions.
+
+    L'écart fermé ici datait du 22/09 : la maquette fait du « CA récupéré » la métrique
+    reine, et le produit s'arrêtait au rendez-vous validé — afficher un chiffre
+    d'affaires aurait été l'inventer. La règle de cet écran est donc la même que celle
+    de l'écran « Assistant IA » (T17) : **rien n'est affirmé qui ne soit su.**
+
+      1. le CA affiché est la SOMME DES DÉCLARATIONS de l'artisan (« chantier gagné,
+         N euros », migration 015) — et la page le dit en toutes lettres sous le
+         chiffre, pour que personne ne croie à un calcul savant ;
+      2. un chantier gagné SANS montant saisi compte pour zéro euro et la page dit
+         combien sont dans ce cas — sinon le CA baisse en silence à chaque artisan
+         pressé ;
+      3. le taux de transformation n'est calculé QUE sur les RDV déclarés : des RDV
+         passés sans déclaration ne sont ni des gagnés ni des perdus, ce sont des
+         inconnus, et ils sont affichés comme tels (c'est la liste « à déclarer ») ;
+      4. en mode support (vue_admin), les formulaires de déclaration n'apparaissent
+         pas : la lecture seule est STRUCTURELLE côté serveur (T14), l'écran ne promet
+         donc pas un geste que le POST refuserait.
+
+    La sélection de période « du … au … » de la maquette viendra quand il y aura assez
+    de données pour qu'une période se discute ; V1 : depuis le début, et la page le dit.
+    """
+    corps = []
+
+    # ---- la métrique reine, et d'où elle sort ----
+    quali = (f"{gagnes} chantier{'s' if gagnes > 1 else ''} déclaré"
+             f"{'s' if gagnes > 1 else ''} gagné{'s' if gagnes > 1 else ''}"
+             + (f", dont {gagnes_sans_montant} sans montant saisi"
+                if gagnes_sans_montant else ""))
+    corps.append(
+        '<div class="card" style="background:var(--marine-deep);border:0">'
+        '<div class="card-b" style="color:#fff">'
+        '<span style="font-size:12px;letter-spacing:.04em;text-transform:uppercase;'
+        'opacity:.75">CA récupéré par ' + escape(produit) + " — depuis le début</span>"
+        f'<div class="num" style="font-size:34px;font-weight:700;margin:2px 0">'
+        f"{_eur(ca_eur)}</div>"
+        '<p style="margin:0;font-size:12.5px;opacity:.75">'
+        f"Somme des montants que <b>vous</b> avez déclarés ({escape(quali)}). "
+        + escape(produit) + " n&#x27;invente jamais ce chiffre.</p>"
+        "</div></div>")
+
+    if tuiles:
+        corps.append('<div class="grid g4">' + "".join(
+            f'<div class="card stat"><div class="card-b">'
+            f'<span class="num">{n}</span><span class="lbl">{escape(libelle)}</span>'
+            "</div></div>"
+            for libelle, n in tuiles) + "</div>")
+
+    # ---- la saisie qui fabrique le chiffre ----
+    if a_declarer:
+        lignes = []
+        for r in a_declarer:
+            ident = escape(r["id"])
+            if vue_admin:
+                acte = ('<span class="pill p-mut">Déclaration réservée à '
+                        "l&#x27;artisan</span>")
+            else:
+                acte = (
+                    '<div class="valid-act">'
+                    f'<form method="post" action="/app/{ident}/issue">'
+                    '<input type="hidden" name="issue" value="gagne">'
+                    '<input name="montant" inputmode="numeric" autocomplete="off" '
+                    'placeholder="Montant € (optionnel)" '
+                    'style="min-height:38px;border:1px solid var(--line);'
+                    'border-radius:8px;padding:0 10px;background:var(--surface-2);'
+                    'color:var(--ink);width:170px;margin-right:6px">'
+                    '<button class="btn btn-cu" type="submit">Chantier gagné</button>'
+                    "</form>"
+                    f'<form method="post" action="/app/{ident}/issue">'
+                    '<input type="hidden" name="issue" value="perdu">'
+                    '<button class="btn" type="submit">Sans suite</button></form>'
+                    "</div>")
+            lignes.append(
+                '<div class="valid-item">'
+                f'<div class="valid-info"><b>{escape(r["client"])}</b>'
+                f'<div class="d">{escape(r["motif"])}</div></div>'
+                f'<div class="valid-slot">{escape(r["creneau"])}'
+                "<div class=\"d\">RDV validé — que s&#x27;est-il passé ensuite ?</div>"
+                f"</div>{acte}</div>")
+        corps.append(
+            '<div class="card" style="border-left:3px solid var(--cuivre)">'
+            '<div class="card-h"><h3>Chantier gagné ?</h3>'
+            f'<span class="pill p-warn">{len(a_declarer)} RDV passé'
+            f"{'s' if len(a_declarer) > 1 else ''} sans déclaration</span>"
+            '<span class="sub" style="margin-left:auto">C&#x27;est cette saisie qui '
+            "fait le chiffre ci-dessus</span></div>" + "".join(lignes) + "</div>")
+    else:
+        corps.append(
+            '<div class="card"><div class="vide">'
+            '<p class="gros">Rien à déclarer.</p>'
+            "<p>Quand un RDV validé sera passé, il apparaîtra ici pour que vous "
+            "disiez s&#x27;il est devenu un chantier.</p></div></div>")
+
+    # ---- transformation : seulement sur ce qui est déclaré ----
+    declares_n = gagnes + perdus
+    if declares_n:
+        taux = round(100 * gagnes / declares_n)
+        corps.append(
+            '<div class="card"><div class="card-b">'
+            f'<span class="num" style="font-size:26px;font-weight:700">{taux} %</span>'
+            '<span class="lbl" style="color:var(--muted);font-size:12.5px;'
+            'display:block">Transformation RDV → chantier — calculée sur les '
+            f"{declares_n} RDV déclarés, pas sur les inconnus</span></div></div>")
+
+    if declares:
+        items = "".join(
+            '<li><time>' + escape(d["quand"]) + "</time>"
+            '<span class="dot" style="background:var(--'
+            + ("ok" if d["issue"] == "gagne" else "faint") + ')"></span>'
+            f'<span><b>{escape(d["client"])}</b> — '
+            + ("chantier gagné" + (f" · {_eur(d['montant'])}" if d["montant"] else
+                                   " · montant non saisi")
+               if d["issue"] == "gagne" else "sans suite")
+            + "</span></li>"
+            for d in declares)
+        corps.append(
+            '<div class="card"><div class="card-h"><h3>Déjà déclarés</h3></div>'
+            f'<ul class="feed">{items}</ul></div>')
+
+    return _page_nelyo(produit, "stats", "".join(corps), entreprise=entreprise,
+                       prenom=prenom, commune=commune, a_valider=a_valider,
+                       vue_admin=vue_admin)
+
+
+def _eur(montant: int) -> str:
+    """1480 → « 1 480 € ». L'espace fine insécable des maquettes est un espace
+    insécable simple ici : même rendu, et un copier-coller qui survit."""
+    return f"{montant:,}".replace(",", " ") + " €"
 
 
 def _actions_evenement(e: dict, jour_iso: str) -> str:

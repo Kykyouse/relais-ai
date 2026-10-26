@@ -5,7 +5,7 @@
 
 ---
 
-# ÉTAT AU 24/09/2026 — à lire en premier
+# ÉTAT AU 26/10/2026 — à lire en premier
 
 > **Ce bloc se REMPLACE, il ne s'empile pas.** Les entrées datées plus bas sont le journal
 > chronologique (le pourquoi des décisions) ; ce bloc-ci est le où-on-en-est.
@@ -19,7 +19,14 @@ base et s'édite dans `/admin`. La compréhension est au LLM sous contrat fermé
 **68/70** au banc d'extraction et **57/57** en éval réelle ×3 ; **107 tests** de
 non-régression. Il reste **un seul mur** : aucun numéro n'est joignable depuis la France.
 
-## Ce qui tourne (rejoué le 24/09)
+Depuis le 26/10 le projet est **piloté depuis Claude Cowork** : le dépôt se lit et s'écrit
+par le pont fichiers, et la suite de non-régression tourne dans son environnement cloud —
+**107/107 rejoués le 26/10**, possible uniquement parce que R93 a rendu la suite
+indépendante de toute clé et de toute base. Claude Code redevient un exécutant ponctuel,
+sur ordre de mission écrit. Reste sur les machines de Geoffrey : `git` (commit/push),
+les évals LLM réelles (la clé API ne voyage pas) et `run_depot_pg` (Supabase).
+
+## Ce qui tourne (rejoué le 26/10 — y compris dans le cloud Cowork)
 
 ```bash
 cd proto
@@ -90,7 +97,8 @@ pause** (DNS qui ne résout plus, pooler qui répond `tenant/user not found`). B
 | **Anti-double-réservation** | ✅ **22/09** | R98 + mutation ; c'était un défaut EN PRODUCTION |
 | **Trois portes vers la session artisan** (code SMS, mot de passe, lien) | ✅ **23/09** | T16 ; l'artisan s'enregistre dans son appareil et ne se reconnecte plus |
 | **Écran « Assistant IA » : ce que la machine dit, mot pour mot** | ✅ **24/09** | T17 + 4 mutations ; l'accueil affiché EST `formule_accueil(cfg)` |
-| **Statistiques, facturation, site vitrine** | ❌ | rien de commencé |
+| **Écran Statistiques + issue de chantier (CA déclaré)** | ✅ **26/10** | T18 + contrat dépôt ; migration 015 (à appliquer : dev puis prod) |
+| **Facturation, site vitrine (code)** | ❌ | facturation : rien ; site vitrine : maquette v5 seulement |
 | Éval LLM réelle, 19 personas × 3 | ✅ 57/57 le 09/09 | à rejouer après R94 |
 
 ## Le fait structurant de la période (01–02/09) : le curseur a bougé
@@ -124,6 +132,38 @@ c'est celui que rien d'autre ne remplace. Les deux défauts sont tombés en impo
 
 Deuxième leçon, de R94 : **un commentaire ne s'exécute pas.** La règle violée était écrite,
 correcte, trois lignes au-dessus du code qui la contredisait.
+
+## La maquette v5 (octobre) et l'écart qu'elle ouvre
+
+`docs/maquette/nelyo-maquette.html` a bougé en octobre (5 versions, pilotées en Cowork) :
+
+- « Appels » devient **« Demandes »**, multi-canal : appels / formulaire du site / emails
+  (colonne Canal, filtres, qualification par SMS pour un prospect venu du formulaire) ;
+- le **CA récupéré** devient la métrique reine (puis : RDV récupérés, chantiers gagnés,
+  valeur moyenne d'un chantier, taux de transformation) — chiffres mis en COHÉRENCE
+  interne le 25/10 (18 750 € = 9 chantiers × 2 083 €, funnel 158→106→24→22→9) ;
+- **page d'accueil publique complète**, structure inspirée du concurrent monstandard.ai
+  (analysé le 25/10) : démo à écouter / appeler / être rappelé, section ROI comparative,
+  témoignages chiffrés, bloc confiance (UE, IA annoncée, « vous gardez la main »,
+  « jamais de prix inventé »), FAQ, bandeau final. La maquette S'OUVRE sur le site
+  vitrine ; « Se connecter » entre dans l'app, « Se déconnecter » en sort ;
+- **agenda** : calendrier mensuel interactif (clic sur une date → la semaine se recale) ;
+- **statistiques** : sélection libre de période « du … au … » (calendrier de plage),
+  les raccourcis Ce mois / 3 mois / 12 mois / Tout ne sont que des préréglages.
+
+**L'écart à trancher avant de coder les statistiques** : la décision du 22/09 dit
+« aucun chiffre inventé — le produit s'arrête au rendez-vous validé et n'apprend jamais
+si le chantier a eu lieu ni ce qu'il a rapporté ». La maquette v5 fait du CA récupéré la
+métrique reine. Les deux ne tiennent ensemble qu'avec une brique nouvelle : **l'artisan
+confirme le chantier gagné et son montant** (carte « Chantier gagné ? » après le RDV,
+montant optionnel). Sans elle, l'écran Statistiques mentirait avec aplomb — exactement
+ce que T17 interdit. À décider : cette brique, ou une métrique reine qui s'arrête au
+RDV validé.
+
+Veille au passage : monstandard.ai vend 197–497 €/mois + setup 297–997 € + minutes
+comptées ; le « 149 € tout compris, illimité, sans setup » de Nelyo est un angle frontal.
+Eux ont le transfert d'urgences en direct (à évaluer pour la V2) et un blog SEO
+(« standard téléphonique plombier » — sujet pour le cousin).
 
 ## Ce qui est encore un double (et non un manque caché)
 
@@ -229,6 +269,10 @@ correcte, trois lignes au-dessus du code qui la contredisait.
    acheté**) → structure & Kbis → Sender ID OVH (~72 h). Le jour du domaine propre,
    renseigner `RELAIS_BASE_URL` sur `nelyo-api` : le repli `RENDER_EXTERNAL_URL` s'efface
    tout seul.
+11. ~~« CA récupéré » vs « aucun chiffre inventé »~~ — **tranché et codé le 26/10**
+   (Geoffrey : « fais la brique ») : le CA est une DÉCLARATION de l'artisan (migration
+   015, T18). Reste à ÉTENDRE : période « du … au … » de la maquette, et un rappel
+   doux (push/SMS) quand des RDV passés attendent leur déclaration.
 
 ## Prochaine étape
 
@@ -244,6 +288,9 @@ correcte, trois lignes au-dessus du code qui la contredisait.
 4. **Rejouer l'éval ×3** (dette n°8).
 5. Puis, par valeur décroissante : les petites dettes de conversation, la plateforme
    (onboarding, dashboard, facturation, agenda), `appel_muet`, le worker de rattrapage.
+6. ~~Trancher l'écart « CA récupéré »~~ — **fait le 26/10** (voir l'entrée datée) :
+   appliquer la migration 015 en dev (`run_depot_pg --migrer`) puis en prod au
+   prochain déploiement.
 
 En parallèle, à préparer sans coder : la **réception SMS** (révision OUI/NON), une fois les
 trois questions OVH tranchées.
@@ -265,6 +312,61 @@ Le mode d'emploi des sondes et le détail de la récolte du 25/08 sont dans les 
 datées ; l'en-tête de `vapi.py` porte le format de fil SSE. **Les lire avant de toucher au
 chantier voix.**
 
+
+---
+
+## 26/10 — La brique « chantier gagné », et un bug de CSS visible seulement au rendu
+
+Première session de développement pilotée ET exécutée depuis Cowork (Geoffrey : « fais
+la brique qui vaut le coup selon toi »). Render n'était pas joignable depuis le cloud
+(proxy sortant) — sans conséquence : le code déployé est dans le dépôt, et les pages se
+rendent en local.
+
+### L'issue de chantier (migration 015) — l'écart du 22/09 fermé par le seul moyen honnête
+
+Le CA devient une DÉCLARATION : sur un RDV **validé** dont le créneau est passé (date
+locale, règle n°7), l'artisan déclare « chantier gagné » (montant en euros, optionnel,
+saisi — jamais interprété : « 1 480 € » est nettoyé, « abc » est refusé avec la raison)
+ou « sans suite ». Ce n'est PAS un 7ᵉ statut : VALIDE reste terminal, l'issue est une
+annotation de l'artisan par-dessus — re-déclarable (correction), chaque déclaration
+journalisée dans l'historique du RDV. L'écran `/app/stats` sort de « à venir » : la
+métrique reine est la somme de ces déclarations, la page le dit en toutes lettres, le
+taux de transformation n'est calculé QUE sur les RDV déclarés, et la liste « Chantier
+gagné ? » (validés passés sans déclaration) vit SOUS le total — la cause du chiffre
+visible avec le chiffre. En mode support : aucun formulaire (T14 à l'écran).
+
+Verrouillé par **T18** (domaine + route + écran + sérialisation d'avant-migration) et
+par le **contrat du dépôt** (aller-retour de l'issue sur les DEUX implémentations — un
+adaptateur qui perd ces champs fait mentir le tableau de bord en silence). Piège de
+routage appris au passage : `/app/{rdv_id}/issue` doit être déclarée AVANT
+`/app/{rdv_id}/{action}`, sinon « issue » tombe dans `{action}` → 404.
+
+### R100 — la barre mobile s'empilait verticalement, depuis le 22/09, en production
+
+Trouvé en RENDANT la page au viewport mobile (capture d'écran Cowork) : la règle
+`nav{…flex-direction:column…}` écrite pour la barre LATÉRALE matchait aussi la
+`<nav class="mobilebar">` — le média query redéclare display et position mais pas
+flex-direction, et ce qui n'est pas redéclaré FUIT. Résultat : une barre de ~270 px
+empilée verticalement, sur l'appareil NORMAL de l'artisan, sur toutes les pages, depuis
+le 22/09. Aucun des 108 tests ne pouvait le voir : ils lisent le HTML, pas le rendu.
+Corrigé (`.side nav`), verrouillé textuellement par R100 (aucun sélecteur d'élément nu
+nav/aside/header dans la feuille), et **leçon de méthode : une page nouvelle se REGARDE
+sur mobile avant livraison** — c'est le même angle mort que R99, et il ne se ferme
+qu'avec un rendu.
+
+Au passage : le slogan de la barre latérale suit la maquette v5 (« Vos RDV, même sur
+chantier » remplace « Ne ratez plus rien »).
+
+**Suite : 109/109** (107 + T18 + R100), rejouée en entier dans le cloud Cowork.
+
+### À faire par Geoffrey au prochain passage
+
+1. `git add -A && git commit` sur **wip**, push (le journal, les 7 fichiers de proto/,
+   la maquette v5 de docs/maquette/ y sont déjà écrits).
+2. `cd proto && python run_scenario.py` — confirmer 109/109 sur ta machine.
+3. `python run_depot_pg.py --migrer` — applique la 015 sur la base de DEV.
+4. La prod recevra la 015 au prochain déploiement (merge wip→main puis `--migrer` avec
+   les variables de prod, comme d'habitude).
 
 ---
 

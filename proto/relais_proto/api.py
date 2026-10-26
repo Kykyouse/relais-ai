@@ -974,6 +974,37 @@ def creer_app(depot, registre: Registre, fabrique_llm, horloge=None,
         reponse.delete_cookie(session.NOM_COOKIE, path="/")
         return reponse
 
+    @app.post("/app/{rdv_id}/issue")
+    def declarer_issue_chantier(rdv_id: str,
+                                artisan: Artisan = Depends(artisan_authentifie),
+                                issue: str = Form(default=""),
+                                montant: str = Form(default="")):
+        """L'artisan déclare l'issue d'un RDV validé : gagné (montant optionnel) ou
+        sans suite. Même motif que `agir` : une action, une redirection — et un refus
+        du domaine rend une PAGE, pas un JSON.
+
+        Le montant arrive d'un champ texte libre : on NETTOIE (espaces, « € ») puis on
+        exige des chiffres — mais on ne devine pas. « ~1500 », « 1 500,50 » ou
+        « mille » sont refusés avec la raison : une saisie d'argent qui passe par une
+        interprétation silencieuse finit par afficher un CA que personne n'a tapé.
+        """
+        rdv = _rdv_de_l_artisan(rdv_id, artisan)
+        montant_eur = None
+        brut = (montant or "").replace(" ", "").replace("€", "").replace(" ", "")
+        if issue == "gagne" and brut:
+            if not brut.isdigit():
+                return HTMLResponse(pages.action_impossible(
+                    NOM, "Le montant doit être un nombre entier d'euros "
+                         "(par exemple : 1480)."), status_code=422)
+            montant_eur = int(brut)
+        try:
+            rdv.declarer_issue(issue, montant_eur, maintenant())
+        except (TransitionInterdite, ValueError) as exc:
+            return HTMLResponse(pages.action_impossible(NOM, str(exc)),
+                                status_code=409)
+        depot.sauver_rdv(rdv)
+        return RedirectResponse("/app/stats", status_code=303)
+
     @app.post("/app/{rdv_id}/{action}")
     def agir(rdv_id: str, action: str,
              artisan: Artisan = Depends(artisan_authentifie),
@@ -1600,16 +1631,11 @@ def creer_app(depot, registre: Registre, fabrique_llm, horloge=None,
             entreprise=ctx["entreprise"], a_valider=ctx["a_valider"],
             categorie=categorie, commune=ctx["commune"]))
 
-    # Les quatre vues qui n'ont pas encore leurs données. Elles existent pour que la
-    # navigation de la maquette soit entière — un onglet qui mène à une 404 est pire
-    # qu'un onglet absent — et elles disent CE QUI MANQUE, précisément.
+    # La vue qui n'a pas encore ses données. Elle existe pour que la navigation de la
+    # maquette soit entière — un onglet qui mène à une 404 est pire qu'un onglet
+    # absent — et elle dit CE QUI MANQUE, précisément. (« stats » en est sortie le
+    # 26/10 : la migration 015 lui a donné ses données.)
     _A_VENIR = {
-        "stats": ["l'entonnoir (appels → qualifiés → RDV) est calculable dès "
-                  "aujourd'hui et viendra en premier",
-                  "le chiffre d'affaires et les chantiers signés ne le sont PAS : "
-                  + NOM + " s'arrête au rendez-vous validé et n'apprend jamais si "
-                  "le chantier a eu lieu ni ce qu'il a rapporté. Il faudra que "
-                  "vous puissiez le saisir"],
         "factu": ["aucun paiement n'est branché",
                   "la consommation par artisan (appels, SMS) est mesurable et viendra "
                   "avec"],
@@ -1633,8 +1659,71 @@ def creer_app(depot, registre: Registre, fabrique_llm, horloge=None,
                    nelyo_admin: str = Cookie(default="", alias=admin_mdp.NOM_COOKIE),
                    nelyo_vue: str = Cookie(default="", alias=admin_mdp.NOM_COOKIE_VUE),
                    authorization: str = Header(default="")) -> HTMLResponse:
-        return _vue_a_venir("stats", relais_session, nelyo_admin, nelyo_vue,
-                            authorization)
+        """« Statistiques » : la métrique reine est le CA DÉCLARÉ par l'artisan.
+
+        L'écran était « à venir » depuis le 22/09, bloqué par une règle juste : le
+        produit s'arrête au rendez-vous validé, afficher un chiffre d'affaires serait
+        l'inventer. La migration 015 a levé le blocage par le seul moyen honnête — le
+        chiffre est une SAISIE (« chantier gagné, N euros »), et cette page est à la
+        fois là où il s'affiche et là où il se fabrique : la liste « Chantier gagné ? »
+        (RDV validés dont le créneau est passé, sans déclaration) vit sous le total,
+        pour que la cause du chiffre soit visible avec le chiffre.
+
+        Tous les compteurs sortent des MÊMES lignes (`rdvs_entre` sur une fenêtre
+        ouverte + `leads`), comme sur l'accueil : des chiffres qui ne s'additionnent
+        pas entre eux condamnent le tableau entier.
+        """
+        artisan, vue = _artisan_espace(authorization, relais_session,
+                                       nelyo_admin, nelyo_vue)
+        if artisan is None:
+            return HTMLResponse(
+                pages.connexion(NOM, "Session expirée ou révoquée. Reconnecte-toi."),
+                status_code=401)
+        ctx = _contexte(artisan)
+        cfg = artisan.config
+        t = maintenant()
+        ajd = temps.en_local(t, cfg).date().isoformat()
+
+        rdvs = depot.rdvs_entre(artisan.id, "2000-01-01", "2100-12-31")
+        valides = [r for r in rdvs if r.statut is _StatutRdv.VALIDE]
+        gagnes = [r for r in valides if r.issue == "gagne"]
+        perdus = [r for r in valides if r.issue == "perdu"]
+        ca = sum(r.issue_montant_eur or 0 for r in gagnes)
+
+        def _client(r) -> dict:
+            s = depot.lead(r.lead_id).donnees.get("slots") or {}
+            return {"client": s.get("nom") or "Client",
+                    "motif": s.get("prestation") or "intervention"}
+
+        # à déclarer : validé, créneau passé (en DATE LOCALE de l'artisan — règle n°7 :
+        # la date du créneau est une heure de pendule, elle se compare à aujourd'hui
+        # local, pas à un instant UTC), aucune issue encore déclarée.
+        a_declarer = [
+            {**_client(r), "id": r.id, "creneau": r.creneau.get("label") or
+             r.creneau.get("date") or ""}
+            for r in sorted((r for r in valides if r.issue is None
+                             and (r.creneau.get("date") or "9999") < ajd),
+                            key=lambda r: r.creneau.get("date") or "", reverse=True)
+        ][:20]
+
+        declares = [
+            {**_client(r), "issue": r.issue, "montant": r.issue_montant_eur,
+             "quand": _heure(r.issue_le, cfg) if r.issue_le else "—"}
+            for r in sorted((r for r in valides if r.issue is not None),
+                            key=lambda r: r.issue_le or r.cree_a, reverse=True)
+        ][:20]
+
+        tuiles = [
+            ("Demandes prises en charge", len(depot.leads(artisan.id, limite=500))),
+            ("RDV validés", len(valides)),
+            ("Chantiers gagnés (déclarés)", len(gagnes)),
+            ("Sans suite (déclarés)", len(perdus)),
+        ]
+        return HTMLResponse(pages.stats(
+            NOM, ctx["prenom"], ctx["entreprise"], ca, len(gagnes),
+            sum(1 for r in gagnes if not r.issue_montant_eur), len(perdus),
+            tuiles, a_declarer, declares, a_valider=ctx["a_valider"],
+            commune=ctx["commune"], vue_admin=vue))
 
     @app.get("/app/facturation", response_class=HTMLResponse)
     def page_facturation(

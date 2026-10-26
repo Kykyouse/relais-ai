@@ -1,5 +1,5 @@
 <title>Maquette Nelyo</title>
-<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Bricolage+Grotesque:opsz,wght@12..96,500;12..96,600;12..96,700&family=Instrument+Sans:wght@400;500;600&display=swap">
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Bricolage+Grotesque:opsz,wght@12..96,500;12..96,600;12..96,700;12..96,800&family=Instrument+Sans:wght@400;500;600&display=swap">
 <style>
 :root{
   --marine:#1E3D5C; --marine-deep:#16304A; --marine-soft:#E8EFF5;
@@ -38,14 +38,15 @@
 body{margin:0;background:var(--paper);color:var(--ink);font:400 14.5px/1.5 "Instrument Sans",system-ui,-apple-system,sans-serif}
 h1,h2,h3,.num{font-family:"Bricolage Grotesque","Instrument Sans",system-ui,sans-serif}
 .num{font-variant-numeric:tabular-nums}
-.app{display:flex;min-height:100vh}
+.app{display:none;min-height:100vh}
+body.show-app .app{display:flex}
 /* ---------- sidebar ---------- */
 .side{width:228px;flex:0 0 228px;background:var(--sidebar);color:var(--sidebar-ink);display:flex;flex-direction:column;position:sticky;top:0;height:100vh}
 .logo{display:flex;align-items:center;gap:10px;padding:22px 20px 18px;color:#fff}
 .logo-mark{width:32px;height:32px;border-radius:9px;background:var(--cuivre);display:grid;place-items:center;flex:0 0 32px}
 .logo-mark svg{width:18px;height:18px}
 .logo b{font-family:"Bricolage Grotesque";font-size:19px;font-weight:700;letter-spacing:.2px}
-.logo small{display:block;font-size:10.5px;letter-spacing:.08em;text-transform:uppercase;opacity:.65;font-weight:500}
+.logo small{display:block;font-size:10px;letter-spacing:.07em;text-transform:uppercase;opacity:.65;font-weight:500}
 nav{padding:6px 12px;display:flex;flex-direction:column;gap:2px}
 .nav-item{display:flex;align-items:center;gap:11px;padding:9px 12px;border-radius:8px;color:inherit;cursor:pointer;border:0;background:none;font:500 14px/1 "Instrument Sans",sans-serif;text-align:left;width:100%}
 .nav-item svg{width:17px;height:17px;flex:0 0 17px;opacity:.8}
@@ -53,6 +54,7 @@ nav{padding:6px 12px;display:flex;flex-direction:column;gap:2px}
 .nav-item.on{background:rgba(255,255,255,.12);color:var(--sidebar-active)}
 .nav-item.on svg{opacity:1}
 .nav-item .cnt{margin-left:auto;background:var(--cuivre);color:#fff;font-size:11px;font-weight:600;border-radius:99px;padding:1px 7px}
+.nav-sep{margin:10px 12px 4px;border-top:1px solid rgba(255,255,255,.09)}
 .side-foot{margin-top:auto;padding:14px 16px;border-top:1px solid rgba(255,255,255,.09)}
 .artisan{display:flex;gap:10px;align-items:center}
 .avatar{width:34px;height:34px;border-radius:50%;background:var(--cuivre-soft);color:var(--cuivre);display:grid;place-items:center;font-weight:600;font-size:13px;flex:0 0 34px}
@@ -69,7 +71,7 @@ nav{padding:6px 12px;display:flex;flex-direction:column;gap:2px}
 .content{padding:24px 28px 48px;display:flex;flex-direction:column;gap:20px;max-width:1180px;width:100%;margin:0 auto}
 section.view{display:none;flex-direction:column;gap:20px}
 section.view.on{display:flex}
-/* ---------- shared bits ---------- */
+/* ---------- shared ---------- */
 .card{background:var(--surface);border:1px solid var(--line);border-radius:var(--r);box-shadow:var(--shadow)}
 .card-h{display:flex;align-items:center;gap:10px;padding:15px 18px;border-bottom:1px solid var(--line)}
 .card-h h3{margin:0;font-size:15px;font-weight:600}
@@ -89,12 +91,13 @@ section.view.on{display:flex}
 .grid{display:grid;gap:16px}
 .g4{grid-template-columns:repeat(4,1fr)}.g3{grid-template-columns:repeat(3,1fr)}.g2{grid-template-columns:repeat(2,1fr)}
 .eyebrow{font-size:11px;letter-spacing:.08em;text-transform:uppercase;color:var(--faint);font-weight:600}
+.canal{display:inline-grid;place-items:center;width:28px;height:28px;border-radius:8px;background:var(--surface-2);border:1px solid var(--line);color:var(--muted)}
+.canal svg{width:14px;height:14px}
 /* ---------- accueil ---------- */
 .hello h1{font-size:24px;margin:0 0 2px;text-wrap:balance}
 .hello p{margin:0;color:var(--muted)}
-.roi{background:linear-gradient(120deg,var(--marine-deep),#1E466B 70%);color:#fff;border:0;display:flex;flex-wrap:wrap;gap:24px;align-items:center;padding:22px 24px;border-radius:var(--r)}
-:root[data-theme="dark"] .roi,body .roi{box-shadow:var(--shadow)}
-.roi .big{font-family:"Bricolage Grotesque";font-size:38px;font-weight:700;line-height:1.05}
+.roi{background:linear-gradient(120deg,var(--marine-deep),#1E466B 70%);color:#fff;border:0;display:flex;flex-wrap:wrap;gap:24px;align-items:center;padding:22px 24px;border-radius:var(--r);box-shadow:var(--shadow)}
+.roi .big{font-family:"Bricolage Grotesque";font-size:40px;font-weight:700;line-height:1.05}
 .roi .big small{font-size:16px;font-weight:600;opacity:.85}
 .roi .lab{font-size:12px;letter-spacing:.07em;text-transform:uppercase;opacity:.7;font-weight:600}
 .roi .mult{margin-left:auto;text-align:right}
@@ -119,11 +122,13 @@ section.view.on{display:flex}
 .feed li:last-child{border-bottom:0}
 .feed time{color:var(--faint);font-size:12px;font-variant-numeric:tabular-nums;flex:0 0 42px}
 .feed .dot{width:7px;height:7px;border-radius:50%;flex:0 0 7px;align-self:center}
-/* ---------- appels ---------- */
+/* ---------- demandes ---------- */
 .filters{display:flex;gap:8px;flex-wrap:wrap;align-items:center}
-.fbtn{border:1px solid var(--line);background:var(--surface);border-radius:99px;padding:6px 14px;font:500 13px "Instrument Sans";color:var(--muted);cursor:pointer}
+.fbtn{border:1px solid var(--line);background:var(--surface);border-radius:99px;padding:6px 14px;font:500 13px "Instrument Sans";color:var(--muted);cursor:pointer;display:inline-flex;align-items:center;gap:6px}
+.fbtn svg{width:13px;height:13px}
 .fbtn.on{background:var(--marine);border-color:var(--marine);color:#fff}
 :root[data-theme="dark"] .fbtn.on{color:var(--marine-deep)}
+.fsep{width:1px;height:20px;background:var(--line);margin:0 4px}
 table.calls{width:100%;border-collapse:collapse;font-size:13.5px}
 .calls th{font-size:11px;letter-spacing:.07em;text-transform:uppercase;color:var(--faint);text-align:left;padding:11px 14px;border-bottom:1px solid var(--line);font-weight:600}
 .calls td{padding:12px 14px;border-bottom:1px solid var(--line);vertical-align:middle}
@@ -137,19 +142,46 @@ table.calls{width:100%;border-collapse:collapse;font-size:13.5px}
 .b-cl{background:var(--surface);border:1px solid var(--line);border-top-right-radius:3px;align-self:flex-end}
 .bulle .who{display:block;font-size:10.5px;letter-spacing:.06em;text-transform:uppercase;color:var(--faint);margin-bottom:2px;font-weight:600}
 /* ---------- agenda ---------- */
+.agenda-wrap{display:grid;grid-template-columns:276px 1fr;gap:14px;align-items:start}
+.minical{background:var(--surface);border:1px solid var(--line);border-radius:var(--r);box-shadow:var(--shadow);padding:14px;position:sticky;top:14px}
+.mc-head{display:flex;align-items:center;justify-content:space-between;margin-bottom:10px}
+.mc-head b{font-family:"Bricolage Grotesque","Instrument Sans",sans-serif;font-size:15px;text-transform:capitalize}
+.mc-btn{border:1px solid var(--line);background:var(--surface);color:var(--muted);border-radius:8px;width:28px;height:28px;cursor:pointer;font-size:11px;line-height:1}
+.mc-btn:hover{border-color:var(--marine);color:var(--marine)}
+.mc-grid{display:grid;grid-template-columns:repeat(7,1fr);gap:2px;text-align:center}
+.mc-grid .wd{font-size:10.5px;font-weight:600;color:var(--faint);padding:4px 0;letter-spacing:.04em}
+.mc-d{position:relative;border:0;background:none;color:var(--ink);font:500 12.5px "Instrument Sans",sans-serif;font-variant-numeric:tabular-nums;padding:0;height:34px;border-radius:8px;cursor:pointer}
+.mc-d:hover{background:var(--surface-2)}
+.mc-d.out{color:var(--faint);opacity:.55}
+.mc-d.today{box-shadow:inset 0 0 0 1.5px var(--cuivre)}
+.mc-d.sel{background:var(--marine);color:#fff}
+.mc-d.sel.today{box-shadow:inset 0 0 0 1.5px var(--cuivre)}
+.mc-d .dot{position:absolute;left:50%;transform:translateX(-50%);bottom:4px;width:4px;height:4px;border-radius:50%;background:var(--cuivre)}
+.mc-d.sel .dot{background:#fff}
+.mc-foot{margin-top:12px;font-size:11.5px;color:var(--faint);display:flex;gap:6px;align-items:center;flex-wrap:wrap}
+.mc-foot .dot{width:5px;height:5px;border-radius:50%;background:var(--cuivre);display:inline-block}
+.mc-foot .ring{width:11px;height:11px;border-radius:4px;box-shadow:inset 0 0 0 1.5px var(--cuivre);display:inline-block}
+.range{position:relative}
+.rangepop{position:absolute;top:calc(100% + 8px);left:0;z-index:30;background:var(--surface);border:1px solid var(--line);border-radius:12px;box-shadow:var(--shadow);padding:14px;width:296px;display:none}
+.rangepop.open{display:block}
+.mc-d.in-range{background:var(--marine-soft);border-radius:0}
+.mc-d.r-start,.mc-d.r-end{background:var(--marine);color:#fff}
+.mc-d.r-start{border-radius:8px 0 0 8px}
+.mc-d.r-end{border-radius:0 8px 8px 0}
+.mc-d.r-start.r-end{border-radius:8px}
+.rp-foot{display:flex;gap:10px;justify-content:space-between;align-items:center;margin-top:12px;font-size:12px;color:var(--faint)}
 .week{display:grid;grid-template-columns:repeat(6,1fr);gap:10px}
 .day{background:var(--surface);border:1px solid var(--line);border-radius:var(--r);min-height:280px;display:flex;flex-direction:column}
+.day.day-sel{border-color:var(--marine);box-shadow:0 0 0 1px var(--marine)}
 .day-h{padding:10px 12px;border-bottom:1px solid var(--line);font-weight:600;font-size:13px}
 .day-h span{color:var(--faint);font-weight:400;display:block;font-size:11.5px}
 .day-b{padding:8px;display:flex;flex-direction:column;gap:7px}
 .evt{border-radius:8px;padding:8px 10px;font-size:12.5px;line-height:1.35;border:1px solid transparent}
 .evt time{display:block;font-size:11px;font-weight:600;opacity:.75;font-variant-numeric:tabular-nums}
 .evt b{font-size:12.5px}
-.e-ok{background:var(--marine-soft);border-color:transparent;color:var(--ink)}
-.e-ok .bar{background:var(--marine)}
+.e-ok{background:var(--marine-soft);color:var(--ink)}
 .e-wait{background:var(--cuivre-soft);border:1px dashed var(--cuivre);color:var(--ink)}
-.e-urg{position:relative}
-.e-urg::after{content:"URGENCE";font-size:9px;letter-spacing:.06em;font-weight:700;color:var(--crit);position:absolute;top:7px;right:8px}
+.e-urg::before{content:"URGENCE";display:block;font-size:9px;letter-spacing:.06em;font-weight:700;color:var(--crit)}
 .e-slot{background:none;border:1px dashed var(--line);color:var(--faint);text-align:center;font-size:11.5px}
 .legend{display:flex;gap:18px;flex-wrap:wrap;font-size:12.5px;color:var(--muted);align-items:center}
 .sw{width:12px;height:12px;border-radius:4px;display:inline-block;vertical-align:-2px;margin-right:6px}
@@ -182,6 +214,107 @@ svg text{font-family:"Instrument Sans",sans-serif}
 .gauge i{display:block;height:100%;background:var(--chart-1);border-radius:99px}
 ul.incl{margin:10px 0 0;padding:0;list-style:none;color:var(--muted);font-size:13px;display:flex;flex-direction:column;gap:5px}
 ul.incl li::before{content:"✓";color:var(--ok);font-weight:700;margin-right:8px}
+/* ---------- landing (site vitrine) ---------- */
+#landing{display:block;background:var(--paper)}
+body.show-app #landing{display:none}
+.l-nav{display:flex;align-items:center;gap:12px;padding:16px 6vw;background:var(--surface);border-bottom:1px solid var(--line);position:sticky;top:env(safe-area-inset-top,0px);z-index:5}
+.l-nav .links{margin-left:auto;display:flex;gap:22px;font-size:13.5px;font-weight:500;color:var(--muted);align-items:center}
+.l-nav .links span{cursor:pointer}
+.hero{display:grid;grid-template-columns:1.1fr .9fr;gap:48px;align-items:center;padding:64px 6vw 56px;max-width:1240px;margin:0 auto}
+.hero h1{font-size:clamp(30px,4.2vw,52px);font-weight:800;line-height:1.08;margin:14px 0 18px;text-wrap:balance}
+.hero h1 em{font-style:normal;color:var(--cuivre)}
+.hero .sub{font-size:16.5px;color:var(--muted);max-width:52ch;margin:0 0 26px;line-height:1.6}
+.cta-row{display:flex;gap:12px;flex-wrap:wrap}
+.btn-xl{padding:13px 22px;font-size:15px;border-radius:10px}
+.hero-note{margin-top:14px;font-size:12.5px;color:var(--faint)}
+.phone{background:var(--surface);border:1px solid var(--line);border-radius:26px;box-shadow:var(--shadow);padding:18px 16px 20px;max-width:360px;margin-left:auto;position:relative}
+.phone .ph-top{display:flex;align-items:center;gap:9px;padding-bottom:12px;border-bottom:1px solid var(--line);margin-bottom:12px;font-size:13px}
+.phone .ph-top .st{margin-left:auto;font-size:11px;color:var(--ok);font-weight:600}
+.phone .flux{display:flex;flex-direction:column;gap:9px}
+.ring-badge{position:absolute;top:-14px;left:-14px;background:var(--cuivre);color:#fff;font-size:11.5px;font-weight:700;border-radius:99px;padding:6px 12px;box-shadow:var(--shadow)}
+.proof{background:var(--marine-deep);color:#fff}
+.proof .wrap{max-width:1240px;margin:0 auto;padding:30px 6vw;display:flex;gap:40px;flex-wrap:wrap;justify-content:space-between}
+.proof .it b{font-family:"Bricolage Grotesque";font-size:30px;font-weight:700;display:block}
+.proof .it span{font-size:12.5px;opacity:.75}
+.l-sec{max-width:1240px;margin:0 auto;padding:56px 6vw}
+.l-sec h2{font-size:clamp(22px,2.6vw,32px);font-weight:700;margin:0 0 8px;text-wrap:balance}
+.l-sec .lead{color:var(--muted);margin:0 0 30px;max-width:60ch}
+.steps{display:grid;grid-template-columns:repeat(3,1fr);gap:16px}
+.step{background:var(--surface);border:1px solid var(--line);border-radius:var(--r);padding:22px;box-shadow:var(--shadow)}
+.step .nbr{width:34px;height:34px;border-radius:50%;background:var(--cuivre-soft);color:var(--cuivre);display:grid;place-items:center;font:700 15px "Bricolage Grotesque";margin-bottom:12px}
+.step h3{margin:0 0 6px;font-size:16px}
+.step p{margin:0;color:var(--muted);font-size:13.5px}
+.canaux{display:flex;gap:14px;flex-wrap:wrap;margin-top:18px}
+.canaux .c{display:flex;align-items:center;gap:9px;background:var(--surface);border:1px solid var(--line);border-radius:99px;padding:9px 16px;font-weight:600;font-size:13.5px}
+.l-price{background:var(--surface);border:1px solid var(--line);border-radius:14px;box-shadow:var(--shadow);max-width:430px;margin:0 auto;padding:28px;text-align:center}
+.l-price .pp{font-family:"Bricolage Grotesque";font-size:44px;font-weight:800}
+.l-price .pp small{font-size:15px;color:var(--muted);font-weight:500}
+.l-foot{border-top:1px solid var(--line);color:var(--faint);font-size:12.5px;padding:22px 6vw;display:flex;gap:18px;flex-wrap:wrap;max-width:1240px;margin:0 auto}
+html{scroll-behavior:smooth}
+#landing .l-sec,#landing .l-dark{scroll-margin-top:72px}
+.l-nav .links a{color:inherit;text-decoration:none}
+a.btn{text-decoration:none;display:inline-flex;align-items:center;justify-content:center}
+.l-badge{display:inline-flex;align-items:center;gap:8px;border:1px solid var(--cuivre);color:var(--cuivre);border-radius:99px;padding:6px 14px;font-size:11.5px;font-weight:700;letter-spacing:.06em;text-transform:uppercase}
+.checks{display:flex;gap:16px;flex-wrap:wrap;margin-top:14px;font-size:12.5px;color:var(--faint)}
+.checks span::before{content:"✓";color:var(--ok);font-weight:700;margin-right:6px}
+/* démo interactive */
+.demo3{display:grid;grid-template-columns:repeat(3,1fr);gap:16px}
+.dcard{background:var(--surface);border:1px solid var(--line);border-radius:var(--r);padding:22px;box-shadow:var(--shadow);display:flex;flex-direction:column;gap:12px}
+.dcard h3{margin:0;font-size:16px}
+.dcard p{margin:0;color:var(--muted);font-size:13.5px;line-height:1.55}
+.chips{display:flex;gap:8px;flex-wrap:wrap}
+.chips button{border:1px solid var(--line);background:var(--surface-2);color:var(--ink);border-radius:99px;padding:6px 12px;font:600 12px "Instrument Sans",sans-serif;cursor:pointer}
+.chips button.on{background:var(--marine);border-color:var(--marine);color:#fff}
+.player{display:flex;align-items:center;gap:10px;background:var(--surface-2);border:1px solid var(--line);border-radius:10px;padding:10px 12px;margin-top:auto}
+.play{width:34px;height:34px;flex:0 0 34px;border-radius:50%;border:0;background:var(--cuivre);color:#fff;font-size:12px;cursor:pointer;display:grid;place-items:center}
+.track{flex:1;height:5px;border-radius:99px;background:var(--line);overflow:hidden}
+.track i{display:block;height:100%;width:0;background:var(--cuivre)}
+.player .dur{font-size:11.5px;color:var(--faint);font-variant-numeric:tabular-nums}
+.bignum{font-family:"Bricolage Grotesque","Instrument Sans",sans-serif;font-size:25px;font-weight:800}
+.cb-form{display:flex;gap:8px;margin-top:auto}
+.cb-form input{flex:1;min-width:0;border:1px solid var(--line);background:var(--surface-2);color:var(--ink);border-radius:10px;padding:11px 12px;font:500 13.5px "Instrument Sans",sans-serif}
+.cb-ok{color:var(--ok);font-weight:600;font-size:13px}
+/* section sombre ROI */
+.l-dark{background:var(--marine-deep);color:#fff}
+.l-dark h2{color:#fff}
+.l-dark .lead{color:rgba(255,255,255,.65)}
+.vs{display:grid;grid-template-columns:1fr 1fr;gap:16px;max-width:880px}
+.vs-card{border-radius:14px;padding:24px;border:1px solid rgba(255,255,255,.14)}
+.vs-card.bad{background:rgba(255,255,255,.04)}
+.vs-card.good{background:rgba(192,107,69,.16);border-color:var(--cuivre)}
+.vs-card h3{margin:0 0 16px;font-size:15px}
+.vs-card dl{margin:0;display:grid;grid-template-columns:1fr auto;gap:10px 14px;font-size:13.5px}
+.vs-card dt{opacity:.68}
+.vs-card dd{margin:0;font-weight:700;text-align:right;font-variant-numeric:tabular-nums;white-space:nowrap}
+.vs-card .total{border-top:1px solid rgba(255,255,255,.18);margin-top:16px;padding-top:13px;display:flex;justify-content:space-between;gap:12px;font-weight:800;font-family:"Bricolage Grotesque","Instrument Sans",sans-serif;font-size:16px}
+.vs-note{margin:22px 0 0;font-size:13.5px;opacity:.78;max-width:62ch}
+/* témoignages */
+.temoins{display:grid;grid-template-columns:repeat(3,1fr);gap:16px}
+.tcard{background:var(--surface);border:1px solid var(--line);border-radius:var(--r);padding:22px;box-shadow:var(--shadow);display:flex;flex-direction:column;gap:13px}
+.tcard blockquote{margin:0;font-size:14px;line-height:1.55}
+.tcard .who{display:flex;align-items:center;gap:10px;font-size:12.5px;color:var(--muted);margin-top:auto}
+.tcard .who b{display:block;color:var(--ink);font-size:13px}
+.tbadge{align-self:flex-start;background:var(--ok-bg);color:var(--ok);font-weight:700;font-size:12px;border-radius:99px;padding:5px 11px}
+/* confiance */
+.trust{display:grid;grid-template-columns:repeat(4,1fr);gap:16px}
+.titem{background:var(--surface);border:1px solid var(--line);border-radius:var(--r);padding:18px;box-shadow:var(--shadow)}
+.titem .ico{font-size:20px}
+.titem b{display:block;margin:8px 0 4px;font-size:14px}
+.titem p{margin:0;color:var(--muted);font-size:12.5px;line-height:1.5}
+/* faq */
+.faq{max-width:760px}
+.faq details{background:var(--surface);border:1px solid var(--line);border-radius:10px;padding:0 18px;margin-bottom:10px}
+.faq summary{cursor:pointer;font-weight:600;font-size:14.5px;padding:15px 0;list-style:none;display:flex;align-items:center;gap:12px}
+.faq summary::-webkit-details-marker{display:none}
+.faq summary::after{content:"+";margin-left:auto;font-family:"Bricolage Grotesque","Instrument Sans",sans-serif;font-size:19px;color:var(--cuivre);flex:0 0 auto}
+.faq details[open] summary::after{content:"–"}
+.faq details p{margin:0;padding:0 0 16px;color:var(--muted);font-size:13.5px;line-height:1.6}
+/* bandeau final */
+.l-cta{background:linear-gradient(120deg,var(--cuivre),var(--cuivre-deep));color:#fff}
+.l-cta .in{max-width:1240px;margin:0 auto;padding:56px 6vw;text-align:center}
+.l-cta h2{font-size:clamp(24px,3vw,36px);margin:0 0 10px;text-wrap:balance}
+.l-cta p{margin:0 auto 24px;opacity:.92;max-width:52ch}
+.l-cta .cta-row{justify-content:center}
 /* ---------- responsive ---------- */
 .mobilebar{display:none}
 @media (max-width:940px){
@@ -192,16 +325,26 @@ ul.incl li::before{content:"✓";color:var(--ok);font-weight:700;margin-right:8p
   .g4,.g3{grid-template-columns:repeat(2,1fr)}
   .g2{grid-template-columns:1fr}
   .week{grid-template-columns:repeat(2,1fr)}
+  .agenda-wrap{grid-template-columns:1fr}
+  .minical{position:static;max-width:340px}
   .valid-act{margin-left:0;width:100%}
   .frow{grid-template-columns:96px 1fr 64px}
   .roi .mult{margin-left:0;text-align:left}
-  .mobilebar{display:flex;position:fixed;bottom:0;left:0;right:0;background:var(--surface);border-top:1px solid var(--line);z-index:20;justify-content:space-around;padding:6px 4px calc(6px + env(safe-area-inset-bottom,0px))}
+  .hero{grid-template-columns:1fr;padding:40px 16px;gap:32px}
+  .phone{margin:0 auto}
+  .steps{grid-template-columns:1fr}
+  .demo3,.temoins,.vs{grid-template-columns:1fr}
+  .trust{grid-template-columns:repeat(2,1fr)}
+  .l-sec{padding:40px 16px}
+  .l-nav{padding:14px 16px}
+  .l-nav .links span{display:none}
+  body.show-app .mobilebar{display:flex;position:fixed;bottom:0;left:0;right:0;background:var(--surface);border-top:1px solid var(--line);z-index:20;justify-content:space-around;padding:6px 4px calc(6px + env(safe-area-inset-bottom,0px))}
   .mobilebar button{border:0;background:none;color:var(--faint);font:500 10px "Instrument Sans";display:flex;flex-direction:column;align-items:center;gap:3px;cursor:pointer;padding:4px 8px}
   .mobilebar button.on{color:var(--cuivre)}
   .mobilebar svg{width:19px;height:19px}
-  table.calls th:nth-child(6),table.calls td:nth-child(6),table.calls th:nth-child(4),table.calls td:nth-child(4){display:none}
+  table.calls th:nth-child(5),table.calls td:nth-child(5),table.calls th:nth-child(7),table.calls td:nth-child(7){display:none}
 }
-@media (max-width:520px){.g4,.g3{grid-template-columns:1fr}.week{grid-template-columns:1fr}}
+@media (max-width:520px){.g4,.g3{grid-template-columns:1fr}.week{grid-template-columns:1fr}.trust{grid-template-columns:1fr}}
 </style>
 
 <div class="app">
@@ -209,15 +352,17 @@ ul.incl li::before{content:"✓";color:var(--ok);font-weight:700;margin-right:8p
 <aside class="side">
   <div class="logo">
     <span class="logo-mark"><svg viewBox="0 0 24 24" fill="none" stroke="#fff" stroke-width="2.2" stroke-linecap="round"><path d="M5 4v6a7 7 0 0 0 14 0V4"/><path d="M12 17v3"/></svg></span>
-    <div><b>Nelyo</b><small>Ne ratez plus rien</small></div>
+    <div><b>Nelyo</b><small>Vos RDV, même sur chantier</small></div>
   </div>
   <nav id="nav">
-    <button class="nav-item on" data-v="accueil"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><path d="M3 11 12 4l9 7"/><path d="M5 10v10h14V10"/></svg>Aujourd'hui<span class="cnt">2</span></button>
-    <button class="nav-item" data-v="appels"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><path d="M5 4h4l2 5-2.5 1.5a12 12 0 0 0 5 5L15 13l5 2v4a2 2 0 0 1-2 2A16 16 0 0 1 3 6a2 2 0 0 1 2-2z"/></svg>Appels</button>
+    <button class="nav-item on" data-v="accueil"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><path d="M3 11 12 4l9 7"/><path d="M5 10v10h14V10"/></svg>Tableau de bord<span class="cnt">2</span></button>
+    <button class="nav-item" data-v="demandes"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><path d="M3 13h5l2 3h4l2-3h5"/><path d="M5 5h14l2 8v6H3v-6z"/></svg>Demandes</button>
     <button class="nav-item" data-v="agenda"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><rect x="3" y="5" width="18" height="16" rx="2"/><path d="M8 3v4M16 3v4M3 10h18"/></svg>Agenda</button>
     <button class="nav-item" data-v="stats"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><path d="M4 20V10M10 20V4M16 20v-7M21 20H3"/></svg>Statistiques</button>
     <button class="nav-item" data-v="ia"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><circle cx="12" cy="12" r="3"/><path d="M12 2v3M12 19v3M2 12h3M19 12h3M4.9 4.9l2.1 2.1M17 17l2.1 2.1M19.1 4.9 17 7M7 17l-2.1 2.1"/></svg>Assistant IA</button>
     <button class="nav-item" data-v="factu"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><rect x="3" y="6" width="18" height="13" rx="2"/><path d="M3 10h18M7 15h4"/></svg>Facturation</button>
+    <div class="nav-sep"></div>
+    <button class="nav-item" id="to-landing"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M9 21H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h4"/><path d="M16 17l5-5-5-5"/><path d="M21 12H9"/></svg>Se déconnecter</button>
   </nav>
   <div class="side-foot">
     <div class="artisan"><span class="avatar">JD</span><div><b>Dupont Chauffage</b><span>Julien · Nogent-sur-Marne</span></div></div>
@@ -227,8 +372,8 @@ ul.incl li::before{content:"✓";color:var(--ok);font-weight:700;margin-right:8p
 <!-- ======================= MAIN ======================= -->
 <div class="main">
   <header class="topbar">
-    <h1 id="pagetitle">Aujourd'hui</h1>
-    <div class="searchbox">⌕&nbsp; Rechercher un appel, un client…</div>
+    <h1 id="pagetitle">Tableau de bord</h1>
+    <div class="searchbox">⌕&nbsp; Rechercher une demande, un client…</div>
     <button class="bell" aria-label="Notifications"><svg width="17" height="17" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><path d="M6 9a6 6 0 0 1 12 0c0 5 2 6 2 6H4s2-1 2-6"/><path d="M10 20a2 2 0 0 0 4 0"/></svg><i></i></button>
     <span class="avatar" style="width:32px;height:32px;font-size:12px">JD</span>
   </header>
@@ -239,21 +384,21 @@ ul.incl li::before{content:"✓";color:var(--ok);font-weight:700;margin-right:8p
   <section class="view on" id="v-accueil">
     <div class="hello">
       <h1>Bonjour Julien 👋</h1>
-      <p>Lundi 21 septembre · Votre assistant a répondu à <b>3 appels</b> pendant que vous étiez sur chantier.</p>
+      <p>Lundi 21 septembre · Votre assistant a pris en charge <b>3 demandes</b> pendant que vous étiez sur chantier — 2 par téléphone, 1 depuis votre site.</p>
     </div>
 
     <div class="card" style="border-left:3px solid var(--cuivre)">
       <div class="card-h"><h3>À valider</h3><span class="pill p-warn">2 rendez-vous en attente</span><span class="sub" style="margin-left:auto">Sans réponse de votre part, le client est prévenu qu'on le rappelle</span></div>
       <div class="valid-item">
         <span class="score s5">5</span>
-        <div class="valid-info"><b>Mme Garcia</b> · 06 12 34 56 78<div class="d">Fuite active sous évier · Nogent-sur-Marne · Propriétaire</div></div>
+        <div class="valid-info"><b>Mme Garcia</b> · 06 12 34 56 78 <span class="canal" title="Appel téléphonique"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M5 4h4l2 5-2.5 1.5a12 12 0 0 0 5 5L15 13l5 2v4a2 2 0 0 1-2 2A16 16 0 0 1 3 6a2 2 0 0 1 2-2z"/></svg></span><div class="d">Fuite active sous évier · Nogent-sur-Marne · Propriétaire</div></div>
         <div class="valid-slot">Demain 8 h – 10 h<div class="d">Créneau réservé par l'assistant</div></div>
         <span class="pill p-crit">expire dans 42 min</span>
         <div class="valid-act"><button class="btn btn-cu">Valider</button><button class="btn">Modifier l'horaire</button><button class="btn btn-ghost-crit">Refuser</button></div>
       </div>
       <div class="valid-item">
         <span class="score s4">4</span>
-        <div class="valid-info"><b>M. Katz</b> · 06 99 88 77 66<div class="d">WC bouché · Créteil · Demande urgente</div></div>
+        <div class="valid-info"><b>M. Katz</b> · 06 99 88 77 66 <span class="canal" title="Appel téléphonique"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M5 4h4l2 5-2.5 1.5a12 12 0 0 0 5 5L15 13l5 2v4a2 2 0 0 1-2 2A16 16 0 0 1 3 6a2 2 0 0 1 2-2z"/></svg></span><div class="d">WC bouché · Créteil · Demande urgente</div></div>
         <div class="valid-slot">Demain 14 h – 16 h<div class="d">Créneau réservé par l'assistant</div></div>
         <span class="pill p-warn">expire dans 3 h 10</span>
         <div class="valid-act"><button class="btn btn-cu">Valider</button><button class="btn">Modifier l'horaire</button><button class="btn btn-ghost-crit">Refuser</button></div>
@@ -261,61 +406,66 @@ ul.incl li::before{content:"✓";color:var(--ok);font-weight:700;margin-right:8p
     </div>
 
     <div class="roi">
-      <div><div class="lab">CA récupéré ce mois par Nelyo</div><div class="big num">4 850 €<small> confirmés</small></div></div>
-      <div><div class="lab">Pipeline en attente</div><div class="big num" style="font-size:24px;opacity:.85">2 300 €</div></div>
-      <div class="mult"><b>× 32</b><div class="lab">votre abonnement</div></div>
+      <div><div class="lab">CA récupéré ce mois par Nelyo</div><div class="big num">18 750 €<small> confirmés</small></div></div>
+      <div><div class="lab">Pipeline en attente</div><div class="big num" style="font-size:24px;opacity:.85">6 300 €</div></div>
+      <div class="mult"><b>× 125</b><div class="lab">votre abonnement</div></div>
     </div>
 
     <div class="grid g4">
-      <div class="card stat"><div class="card-b"><span class="num">127</span><span class="lbl">Appels traités en sept.</span><span class="delta">+18 % vs août</span></div></div>
-      <div class="card stat"><div class="card-b"><span class="num">0</span><span class="lbl">Appel resté sans réponse</span><span class="delta">100 % de prise en charge</span></div></div>
-      <div class="card stat"><div class="card-b"><span class="num">24</span><span class="lbl">RDV pris par l'assistant</span><span class="delta">+6 vs août</span></div></div>
-      <div class="card stat"><div class="card-b"><span class="num">9</span><span class="lbl">Chantiers signés</span><span class="delta">38 % de conversion</span></div></div>
+      <div class="card stat"><div class="card-b"><span class="num">24</span><span class="lbl">RDV récupérés</span><span class="delta">+6 vs août</span></div></div>
+      <div class="card stat"><div class="card-b"><span class="num">9</span><span class="lbl">Chantiers gagnés</span><span class="delta">+2 vs août</span></div></div>
+      <div class="card stat"><div class="card-b"><span class="num">2 083 €</span><span class="lbl">Valeur moyenne d'un chantier</span></div></div>
+      <div class="card stat"><div class="card-b"><span class="num">38 %</span><span class="lbl">Taux de transformation RDV → chantier</span><span class="delta">+4 pts</span></div></div>
     </div>
 
     <div class="card">
       <div class="card-h"><h3>Activité récente</h3></div>
       <ul class="feed">
         <li><time>14:32</time><span class="dot" style="background:var(--ok)"></span><span><b>RDV validé</b> — Mme Petit, chauffe-eau, mardi 8 h – 10 h. SMS de confirmation envoyé.</span></li>
-        <li><time>13:05</time><span class="dot" style="background:var(--cuivre)"></span><span><b>Nouvel appel qualifié</b> — M. Katz, WC bouché à Créteil. Créneau proposé, en attente de votre validation.</span></li>
+        <li><time>13:05</time><span class="dot" style="background:var(--cuivre)"></span><span><b>Appel qualifié</b> — M. Katz, WC bouché à Créteil. Créneau proposé, en attente de votre validation.</span></li>
+        <li><time>12:10</time><span class="dot" style="background:var(--cuivre)"></span><span><b>Formulaire site</b> — Mme Lambert, devis salle de bain à Vincennes. Qualification engagée par SMS.</span></li>
         <li><time>11:48</time><span class="dot" style="background:var(--crit)"></span><span><b>Lead prioritaire</b> — M. Brun (client existant) souhaite vous parler. À rappeler en priorité.</span></li>
         <li><time>09:15</time><span class="dot" style="background:var(--faint)"></span><span><b>Hors zone</b> — Demande de devis PAC à Champigny, refusée poliment.</span></li>
       </ul>
     </div>
   </section>
 
-  <!-- ============ VUE : APPELS ============ -->
-  <section class="view" id="v-appels">
+  <!-- ============ VUE : DEMANDES ============ -->
+  <section class="view" id="v-demandes">
     <div class="filters">
-      <button class="fbtn on">Tous <b>127</b></button><button class="fbtn">RDV pris</button><button class="fbtn">À rappeler</button><button class="fbtn">Prioritaires</button><button class="fbtn">Hors zone</button>
+      <button class="fbtn on">Toutes <b>158</b></button>
+      <button class="fbtn"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M5 4h4l2 5-2.5 1.5a12 12 0 0 0 5 5L15 13l5 2v4a2 2 0 0 1-2 2A16 16 0 0 1 3 6a2 2 0 0 1 2-2z"/></svg>Appels <b>127</b></button>
+      <button class="fbtn"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="9"/><path d="M3 12h18M12 3a15 15 0 0 1 0 18M12 3a15 15 0 0 0 0 18"/></svg>Site web <b>22</b></button>
+      <button class="fbtn"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="3" y="5" width="18" height="14" rx="2"/><path d="m3 7 9 6 9-6"/></svg>Emails <b>9</b></button>
+      <span class="fsep"></span>
+      <button class="fbtn">RDV pris</button><button class="fbtn">À rappeler</button><button class="fbtn">Prioritaires</button><button class="fbtn">Hors zone</button>
       <span style="margin-left:auto" class="chip">Septembre 2026 ▾</span>
     </div>
     <div class="card" style="overflow-x:auto">
       <table class="calls">
-        <thead><tr><th>Heure</th><th>Appelant</th><th>Motif</th><th>Commune</th><th>Score</th><th>Durée</th><th>Issue</th></tr></thead>
+        <thead><tr><th>Canal</th><th>Reçue</th><th>Prospect</th><th>Motif</th><th>Commune</th><th>Score</th><th>Durée</th><th>Issue</th></tr></thead>
         <tbody>
-          <tr><td class="num">14:32</td><td class="caller"><b>Mme Petit</b><span>06 44 55 66 77</span></td><td>Chauffe-eau en panne</td><td>Saint-Maur</td><td><span class="score s5" style="width:30px;height:30px">5</span></td><td class="num">2:41</td><td><span class="pill p-ok">RDV validé</span></td></tr>
-          <tr><td class="num">13:05</td><td class="caller"><b>M. Katz</b><span>06 99 88 77 66</span></td><td>WC bouché</td><td>Créteil</td><td><span class="score s4" style="width:30px;height:30px">4</span></td><td class="num">3:12</td><td><span class="pill p-warn">En attente</span></td></tr>
-        </tbody>
-        <tbody>
-          <tr><td class="num">11:48</td><td class="caller"><b>M. Brun</b><span>06 21 43 65 87</span></td><td>Intervention à revoir</td><td>Nogent</td><td><span class="score s1" style="width:30px;height:30px">1</span></td><td class="num">1:05</td><td><span class="pill p-crit">Prioritaire</span></td></tr>
-          <tr class="open"><td class="num">10:20</td><td class="caller"><b>Mme Garcia</b><span>06 12 34 56 78</span></td><td>Fuite sous évier</td><td>Nogent</td><td><span class="score s5" style="width:30px;height:30px">5</span></td><td class="num">2:24</td><td><span class="pill p-warn">En attente</span></td></tr>
+          <tr><td><span class="canal"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M5 4h4l2 5-2.5 1.5a12 12 0 0 0 5 5L15 13l5 2v4a2 2 0 0 1-2 2A16 16 0 0 1 3 6a2 2 0 0 1 2-2z"/></svg></span></td><td class="num">14:32</td><td class="caller"><b>Mme Petit</b><span>06 44 55 66 77</span></td><td>Chauffe-eau en panne</td><td>Saint-Maur</td><td><span class="score s5" style="width:30px;height:30px">5</span></td><td class="num">2:41</td><td><span class="pill p-ok">RDV validé</span></td></tr>
+          <tr><td><span class="canal"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M5 4h4l2 5-2.5 1.5a12 12 0 0 0 5 5L15 13l5 2v4a2 2 0 0 1-2 2A16 16 0 0 1 3 6a2 2 0 0 1 2-2z"/></svg></span></td><td class="num">13:05</td><td class="caller"><b>M. Katz</b><span>06 99 88 77 66</span></td><td>WC bouché</td><td>Créteil</td><td><span class="score s4" style="width:30px;height:30px">4</span></td><td class="num">3:12</td><td><span class="pill p-warn">En attente</span></td></tr>
+          <tr><td><span class="canal"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="9"/><path d="M3 12h18M12 3a15 15 0 0 1 0 18M12 3a15 15 0 0 0 0 18"/></svg></span></td><td class="num">12:10</td><td class="caller"><b>Mme Lambert</b><span>formulaire du site</span></td><td>Devis salle de bain</td><td>Vincennes</td><td><span class="score s3" style="width:30px;height:30px">3</span></td><td class="num">—</td><td><span class="pill p-marine">Qualification SMS</span></td></tr>
         </tbody>
       </table>
       <div class="transcript">
-        <span class="eyebrow">Transcript — Mme Garcia · 10:20 · les consignes de sécurité ont été données</span>
-        <div class="bulle b-cl"><span class="who">Client</span>Bonjour, j'ai une fuite sous l'évier de la cuisine, ça goutte dans le placard, c'est urgent !</div>
-        <div class="bulle b-ia"><span class="who">Assistant Nelyo</span>Je comprends, on va s'occuper de vous rapidement. Si vous le pouvez, coupez l'arrivée d'eau en attendant. Vous êtes sur quelle commune ?</div>
-        <div class="bulle b-cl"><span class="who">Client</span>Nogent-sur-Marne, le 94130. Vous pouvez venir demain matin ?</div>
-        <div class="bulle b-ia"><span class="who">Assistant Nelyo</span>Je vous réserve demain entre 8 h et 10 h. Vous recevrez un SMS de confirmation de Julien d'ici 1 heure.</div>
-        <div><button class="btn">Voir l'appel complet</button> <button class="btn">Écouter l'audio · 2:24</button></div>
+        <span class="eyebrow">Formulaire site — Mme Lambert · 12:10 · l'assistant poursuit la qualification par SMS</span>
+        <div class="bulle b-cl"><span class="who">Formulaire</span>« Bonjour, nous souhaitons refaire notre salle de bain (env. 5 m²). Pouvez-vous nous faire un devis ? — Mme Lambert, Vincennes, 06 77 12 48 90 »</div>
+        <div class="bulle b-ia"><span class="who">SMS Nelyo</span>Bonjour Mme Lambert, merci pour votre demande ! Pour préparer la visite de Julien : votre salle de bain actuelle a-t-elle une baignoire ou une douche ? Vous pouvez répondre directement à ce SMS 😊</div>
+        <div class="bulle b-cl"><span class="who">SMS client</span>Une baignoire, qu'on voudrait remplacer par une douche à l'italienne.</div>
+        <div><button class="btn">Voir l'échange complet</button></div>
       </div>
       <table class="calls">
         <tbody>
-          <tr><td class="num">09:15</td><td class="caller"><b>M. Lefèvre</b><span>07 12 32 13 56</span></td><td>Devis pompe à chaleur</td><td>Champigny</td><td><span class="score s1" style="width:30px;height:30px">0</span></td><td class="num">1:12</td><td><span class="pill p-mut">Hors zone</span></td></tr>
-          <tr><td class="num">Hier</td><td class="caller"><b>M. Diallo</b><span>07 88 11 22 33</span></td><td>Entretien chaudière</td><td>Nogent</td><td><span class="score s4" style="width:30px;height:30px">4</span></td><td class="num">2:05</td><td><span class="pill p-ok">RDV validé · samedi</span></td></tr>
-          <tr><td class="num">Hier</td><td class="caller"><b>M. Roussel</b><span>06 54 23 45 67</span></td><td>Robinet qui fuit</td><td>Neuilly-Plaisance</td><td><span class="score s3" style="width:30px;height:30px">3</span></td><td class="num">4:48</td><td><span class="pill p-marine">À rappeler</span></td></tr>
-          <tr><td class="num">Hier</td><td class="caller"><b>Numéro masqué</b><span>—</span></td><td>Appel muet</td><td>—</td><td><span class="score s1" style="width:30px;height:30px">1</span></td><td class="num">0:22</td><td><span class="pill p-mut">Message répondeur</span></td></tr>
+          <tr><td><span class="canal"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="3" y="5" width="18" height="14" rx="2"/><path d="m3 7 9 6 9-6"/></svg></span></td><td class="num">11:52</td><td class="caller"><b>M. Carvalho</b><span>contact@dupont-chauffage.fr</span></td><td>Photos radiateur qui fuit</td><td>Le Perreux</td><td><span class="score s3" style="width:30px;height:30px">3</span></td><td class="num">—</td><td><span class="pill p-marine">À rappeler</span></td></tr>
+          <tr><td><span class="canal"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M5 4h4l2 5-2.5 1.5a12 12 0 0 0 5 5L15 13l5 2v4a2 2 0 0 1-2 2A16 16 0 0 1 3 6a2 2 0 0 1 2-2z"/></svg></span></td><td class="num">11:48</td><td class="caller"><b>M. Brun</b><span>06 21 43 65 87</span></td><td>Intervention à revoir</td><td>Nogent</td><td><span class="score s1" style="width:30px;height:30px">1</span></td><td class="num">1:05</td><td><span class="pill p-crit">Prioritaire</span></td></tr>
+          <tr><td><span class="canal"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M5 4h4l2 5-2.5 1.5a12 12 0 0 0 5 5L15 13l5 2v4a2 2 0 0 1-2 2A16 16 0 0 1 3 6a2 2 0 0 1 2-2z"/></svg></span></td><td class="num">10:20</td><td class="caller"><b>Mme Garcia</b><span>06 12 34 56 78</span></td><td>Fuite sous évier</td><td>Nogent</td><td><span class="score s5" style="width:30px;height:30px">5</span></td><td class="num">2:24</td><td><span class="pill p-warn">En attente</span></td></tr>
+          <tr><td><span class="canal"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M5 4h4l2 5-2.5 1.5a12 12 0 0 0 5 5L15 13l5 2v4a2 2 0 0 1-2 2A16 16 0 0 1 3 6a2 2 0 0 1 2-2z"/></svg></span></td><td class="num">09:15</td><td class="caller"><b>M. Lefèvre</b><span>07 12 32 13 56</span></td><td>Devis pompe à chaleur</td><td>Champigny</td><td><span class="score s1" style="width:30px;height:30px">0</span></td><td class="num">1:12</td><td><span class="pill p-mut">Hors zone</span></td></tr>
+          <tr><td><span class="canal"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M5 4h4l2 5-2.5 1.5a12 12 0 0 0 5 5L15 13l5 2v4a2 2 0 0 1-2 2A16 16 0 0 1 3 6a2 2 0 0 1 2-2z"/></svg></span></td><td class="num">Hier</td><td class="caller"><b>M. Diallo</b><span>07 88 11 22 33</span></td><td>Entretien chaudière</td><td>Nogent</td><td><span class="score s4" style="width:30px;height:30px">4</span></td><td class="num">2:05</td><td><span class="pill p-ok">RDV validé · samedi</span></td></tr>
+          <tr><td><span class="canal"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="9"/><path d="M3 12h18M12 3a15 15 0 0 1 0 18M12 3a15 15 0 0 0 0 18"/></svg></span></td><td class="num">Hier</td><td class="caller"><b>M. Yilmaz</b><span>formulaire du site</span></td><td>Remplacement chaudière</td><td>Saint-Maur</td><td><span class="score s4" style="width:30px;height:30px">4</span></td><td class="num">—</td><td><span class="pill p-ok">RDV validé</span></td></tr>
+          <tr><td><span class="canal"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M5 4h4l2 5-2.5 1.5a12 12 0 0 0 5 5L15 13l5 2v4a2 2 0 0 1-2 2A16 16 0 0 1 3 6a2 2 0 0 1 2-2z"/></svg></span></td><td class="num">Hier</td><td class="caller"><b>Numéro masqué</b><span>—</span></td><td>Appel muet</td><td>—</td><td><span class="score s1" style="width:30px;height:30px">1</span></td><td class="num">0:22</td><td><span class="pill p-mut">Message répondeur</span></td></tr>
         </tbody>
       </table>
     </div>
@@ -324,68 +474,74 @@ ul.incl li::before{content:"✓";color:var(--ok);font-weight:700;margin-right:8p
   <!-- ============ VUE : AGENDA ============ -->
   <section class="view" id="v-agenda">
     <div class="filters">
-      <button class="fbtn">◀</button><span class="chip" style="font-weight:600">Semaine du 21 au 26 septembre</span><button class="fbtn">▶</button>
+      <button class="fbtn" id="wk-prev" aria-label="Semaine précédente">◀</button><span class="chip" style="font-weight:600" id="wk-label">Semaine du 21 au 26 septembre</span><button class="fbtn" id="wk-next" aria-label="Semaine suivante">▶</button>
+      <button class="fbtn" id="wk-today">Aujourd'hui</button>
       <span style="margin-left:auto" class="legend">
         <span><span class="sw" style="background:var(--marine)"></span>Validé</span>
         <span><span class="sw" style="background:var(--cuivre-soft);border:1px dashed var(--cuivre)"></span>En attente</span>
         <span><span class="sw" style="border:1px dashed var(--line)"></span>Fenêtre urgences</span>
       </span>
     </div>
-    <div class="week">
-      <div class="day"><div class="day-h">Lundi <span>21 sept · aujourd'hui</span></div><div class="day-b">
-        <div class="evt e-ok"><time>08:00 – 10:00</time><b>M. Fontaine</b> — chaudière, Le Perreux</div>
-        <div class="evt e-ok"><time>14:00 – 15:30</time><b>Mme Nkomo</b> — radiateurs, Vincennes</div>
-        <div class="evt e-slot">17 h – 19 h réservé urgences</div>
-      </div></div>
-      <div class="day"><div class="day-h">Mardi <span>22 sept</span></div><div class="day-b">
-        <div class="evt e-wait e-urg"><time>08:00 – 10:00</time><b>Mme Garcia</b> — fuite évier, Nogent</div>
-        <div class="evt e-ok"><time>10:30 – 12:00</time><b>Mme Petit</b> — chauffe-eau, Saint-Maur</div>
-        <div class="evt e-wait"><time>14:00 – 16:00</time><b>M. Katz</b> — WC, Créteil</div>
-      </div></div>
-      <div class="day"><div class="day-h">Mercredi <span>23 sept</span></div><div class="day-b">
-        <div class="evt e-ok"><time>09:00 – 11:00</time><b>Chantier Morel</b> — pose PAC, j. 2/3</div>
-        <div class="evt e-slot">17 h – 19 h réservé urgences</div>
-      </div></div>
-      <div class="day"><div class="day-h">Jeudi <span>24 sept</span></div><div class="day-b">
-        <div class="evt e-ok"><time>09:00 – 11:00</time><b>Chantier Morel</b> — pose PAC, j. 3/3</div>
-        <div class="evt e-ok"><time>14:00 – 15:00</time><b>M. Weber</b> — devis SDB, Nogent</div>
-      </div></div>
-      <div class="day"><div class="day-h">Vendredi <span>25 sept</span></div><div class="day-b">
-        <div class="evt e-slot">Journée libre — l'assistant propose ces créneaux en priorité</div>
-      </div></div>
-      <div class="day"><div class="day-h">Samedi <span>26 sept · 9 h – 13 h</span></div><div class="day-b">
-        <div class="evt e-ok"><time>09:00 – 10:00</time><b>M. Diallo</b> — entretien chaudière</div>
-      </div></div>
+    <div class="agenda-wrap">
+      <div class="minical">
+        <div class="mc-head"><button class="mc-btn" id="mc-prev" aria-label="Mois précédent">◀</button><b id="mc-title">septembre 2026</b><button class="mc-btn" id="mc-next" aria-label="Mois suivant">▶</button></div>
+        <div class="mc-grid" id="mc-grid"></div>
+        <div class="mc-foot"><span class="dot"></span> intervention planifiée&nbsp;&nbsp;<span class="ring"></span> aujourd'hui</div>
+      </div>
+      <div class="week" id="week"></div>
     </div>
   </section>
 
   <!-- ============ VUE : STATS ============ -->
   <section class="view" id="v-stats">
-    <div class="filters"><span class="eyebrow">Période</span><button class="fbtn on">Ce mois</button><button class="fbtn">3 mois</button><button class="fbtn">12 mois</button><button class="fbtn">Tout</button></div>
+    <div class="filters"><span class="eyebrow">Période</span>
+      <button class="fbtn preset on">Ce mois</button><button class="fbtn preset">3 mois</button><button class="fbtn preset">12 mois</button><button class="fbtn preset">Tout</button>
+      <span class="fsep"></span>
+      <div class="range">
+        <button class="fbtn" id="range-btn">📅 Du 1 sept. au 30 sept. 2026 ▾</button>
+        <div class="rangepop" id="rangepop">
+          <div class="mc-head"><button class="mc-btn" id="rp-prev" aria-label="Mois précédent">◀</button><b id="rp-title">septembre 2026</b><button class="mc-btn" id="rp-next" aria-label="Mois suivant">▶</button></div>
+          <div class="mc-grid" id="rp-grid"></div>
+          <div class="rp-foot"><span id="rp-hint"></span><button class="btn btn-cu" id="rp-ok" style="padding:7px 14px">Appliquer</button></div>
+        </div>
+      </div>
+    </div>
+
+    <div class="roi">
+      <div><div class="lab">CA récupéré par Nelyo — <span id="roi-period">septembre</span></div><div class="big num">18 750 €<small> confirmés</small></div></div>
+      <div><div class="lab">Depuis le début</div><div class="big num" style="font-size:24px;opacity:.85">61 400 €</div></div>
+      <div class="mult"><b>× 125</b><div class="lab">votre abonnement ce mois</div></div>
+    </div>
+    <div class="grid g4">
+      <div class="card stat"><div class="card-b"><span class="num">24</span><span class="lbl">RDV récupérés</span><span class="delta">+6 vs août</span></div></div>
+      <div class="card stat"><div class="card-b"><span class="num">9</span><span class="lbl">Chantiers gagnés</span><span class="delta">+2 vs août</span></div></div>
+      <div class="card stat"><div class="card-b"><span class="num">2 083 €</span><span class="lbl">Valeur moyenne d'un chantier</span></div></div>
+      <div class="card stat"><div class="card-b"><span class="num">38 %</span><span class="lbl">Transformation RDV → chantier</span><span class="delta">+4 pts</span></div></div>
+    </div>
 
     <div class="grid g2">
-      <div class="card"><div class="card-h"><h3>Du premier appel au chantier</h3><span class="sub">septembre</span></div>
+      <div class="card"><div class="card-h"><h3>De la demande au chantier</h3><span class="sub">septembre</span></div>
         <div class="card-b funnel">
-          <div class="frow"><span>Appels traités</span><div><div class="bar" style="width:100%"></div></div><span class="v num">127</span></div>
-          <div class="frow"><span>Prospects qualifiés</span><div><div class="bar" style="width:70%;opacity:.85"></div></div><span class="v num">89<small>70 %</small></span></div>
-          <div class="frow"><span>RDV pris</span><div><div class="bar" style="width:50%;opacity:.7"></div></div><span class="v num">64<small>72 %</small></span></div>
-          <div class="frow"><span>RDV honorés</span><div><div class="bar" style="width:46%;opacity:.55"></div></div><span class="v num">58<small>91 %</small></span></div>
-          <div class="frow"><span>Chantiers signés</span><div><div class="bar" style="width:19%;background:var(--chart-2);opacity:1"></div></div><span class="v num">24<small>18 750 €</small></span></div>
+          <div class="frow"><span>Demandes reçues</span><div><div class="bar" style="width:100%"></div></div><span class="v num">158</span></div>
+          <div class="frow"><span>Prospects qualifiés</span><div><div class="bar" style="width:67%;opacity:.85"></div></div><span class="v num">106<small>67 %</small></span></div>
+          <div class="frow"><span>RDV pris</span><div><div class="bar" style="width:15%;opacity:.7"></div></div><span class="v num">24<small>23 %</small></span></div>
+          <div class="frow"><span>RDV honorés</span><div><div class="bar" style="width:14%;opacity:.55"></div></div><span class="v num">22<small>92 %</small></span></div>
+          <div class="frow"><span>Chantiers signés</span><div><div class="bar" style="width:6%;background:var(--chart-2);opacity:1"></div></div><span class="v num">9<small>18 750 €</small></span></div>
         </div>
       </div>
       <div class="card"><div class="card-h"><h3>CA récupéré par mois</h3><span class="sub">euros confirmés par vous</span></div>
         <div class="card-b chart-wrap">
-          <svg viewBox="0 0 460 210" width="100%" role="img" aria-label="CA récupéré par mois, de mai à septembre, culminant à 4850 euros en septembre">
+          <svg viewBox="0 0 460 210" width="100%" role="img" aria-label="CA récupéré par mois, de mai à septembre, culminant à 18 750 euros en septembre">
             <g stroke="var(--chart-grid)" stroke-width="1"><line x1="40" y1="170" x2="450" y2="170"/><line x1="40" y1="110" x2="450" y2="110"/><line x1="40" y1="50" x2="450" y2="50"/></g>
-            <g fill="var(--faint)" font-size="10" text-anchor="end"><text x="34" y="173">0</text><text x="34" y="113">2,5 k</text><text x="34" y="53">5 k</text></g>
+            <g fill="var(--faint)" font-size="10" text-anchor="end"><text x="34" y="173">0</text><text x="34" y="113">10 k</text><text x="34" y="53">20 k</text></g>
             <g class="bars" fill="var(--chart-2)">
-              <rect x="55"  y="141" width="52" height="29" rx="4" data-t="Mai — 1 200 €"/>
-              <rect x="137" y="112" width="52" height="58" rx="4" data-t="Juin — 2 400 €"/>
-              <rect x="219" y="96"  width="52" height="74" rx="4" data-t="Juillet — 3 100 €"/>
-              <rect x="301" y="69"  width="52" height="101" rx="4" data-t="Août — 4 200 €"/>
-              <rect x="383" y="54"  width="52" height="116" rx="4" data-t="Septembre — 4 850 €"/>
+              <rect x="55"  y="139" width="52" height="31" rx="4" data-t="Mai — 5 100 €"/>
+              <rect x="137" y="120" width="52" height="50" rx="4" data-t="Juin — 8 400 €"/>
+              <rect x="219" y="99"  width="52" height="71" rx="4" data-t="Juillet — 11 900 €"/>
+              <rect x="301" y="66"  width="52" height="104" rx="4" data-t="Août — 17 250 €"/>
+              <rect x="383" y="57"  width="52" height="113" rx="4" data-t="Septembre — 18 750 €"/>
             </g>
-            <text x="409" y="44" font-size="12" font-weight="700" fill="var(--ink)" text-anchor="middle" class="num">4 850 €</text>
+            <text x="409" y="47" font-size="12" font-weight="700" fill="var(--ink)" text-anchor="middle" class="num">18 750 €</text>
             <g fill="var(--muted)" font-size="11" text-anchor="middle"><text x="81" y="188">mai</text><text x="163" y="188">juin</text><text x="245" y="188">juil</text><text x="327" y="188">août</text><text x="409" y="188">sept</text></g>
           </svg>
         </div>
@@ -393,38 +549,51 @@ ul.incl li::before{content:"✓";color:var(--ok);font-weight:700;margin-right:8p
     </div>
 
     <div class="grid g2">
-      <div class="card"><div class="card-h"><h3>Appels par semaine</h3><span class="sub">12 dernières semaines</span></div>
-        <div class="card-b chart-wrap">
-          <svg viewBox="0 0 460 190" width="100%" role="img" aria-label="Appels par semaine sur 12 semaines, en hausse de 19 à 34">
-            <g stroke="var(--chart-grid)" stroke-width="1"><line x1="36" y1="150" x2="452" y2="150"/><line x1="36" y1="95" x2="452" y2="95"/><line x1="36" y1="40" x2="452" y2="40"/></g>
-            <g fill="var(--faint)" font-size="10" text-anchor="end"><text x="30" y="153">0</text><text x="30" y="98">20</text><text x="30" y="43">40</text></g>
-            <path d="M46 98 84 103 122 92 160 95 198 84 236 87 274 76 312 70 350 73 388 62 426 59 446 56 L446 150 46 150 Z" fill="var(--chart-1)" opacity=".12"/>
-            <path d="M46 98 84 103 122 92 160 95 198 84 236 87 274 76 312 70 350 73 388 62 426 59 446 56" fill="none" stroke="var(--chart-1)" stroke-width="2" stroke-linejoin="round"/>
-            <g class="pts" fill="var(--chart-1)">
-              <circle cx="46" cy="98" r="4" data-t="Sem. 27 — 19 appels"/><circle cx="122" cy="92" r="4" data-t="Sem. 29 — 21 appels"/><circle cx="198" cy="84" r="4" data-t="Sem. 31 — 24 appels"/><circle cx="274" cy="76" r="4" data-t="Sem. 33 — 27 appels"/><circle cx="350" cy="73" r="4" data-t="Sem. 35 — 28 appels"/><circle cx="446" cy="56" r="5" stroke="var(--surface)" stroke-width="2" data-t="Sem. 38 — 34 appels"/>
-            </g>
-            <text x="446" y="42" font-size="12" font-weight="700" fill="var(--ink)" text-anchor="end" class="num">34</text>
-            <g fill="var(--muted)" font-size="11"><text x="46" y="170">juil.</text><text x="236" y="170" text-anchor="middle">août</text><text x="446" y="170" text-anchor="end">sept.</text></g>
-          </svg>
+      <div class="card"><div class="card-h"><h3>Demandes par canal</h3><span class="sub">septembre</span></div>
+        <div class="card-b">
+          <div class="hbar"><span>📞 Appels</span><div><div class="t" style="width:100%"></div></div><span class="v num">127</span></div>
+          <div class="hbar"><span>🌐 Site web</span><div><div class="t" style="width:17%"></div></div><span class="v num">22</span></div>
+          <div class="hbar"><span>✉️ Emails</span><div><div class="t" style="width:7%"></div></div><span class="v num">9</span></div>
+          <p style="margin:12px 0 0;font-size:12.5px;color:var(--faint)">Toutes les demandes suivent le même parcours : qualification → créneau → votre validation.</p>
         </div>
       </div>
       <div class="card"><div class="card-h"><h3>Demandes par prestation</h3><span class="sub">septembre</span></div>
         <div class="card-b">
-          <div class="hbar"><span>Fuites</span><div><div class="t" style="width:100%"></div></div><span class="v num">34</span></div>
-          <div class="hbar"><span>Chaudières</span><div><div class="t" style="width:82%"></div></div><span class="v num">28</span></div>
-          <div class="hbar"><span>Entretiens</span><div><div class="t" style="width:65%"></div></div><span class="v num">22</span></div>
-          <div class="hbar"><span>WC / évacuation</span><div><div class="t" style="width:53%"></div></div><span class="v num">18</span></div>
-          <div class="hbar"><span>Devis PAC / SDB</span><div><div class="t" style="width:44%"></div></div><span class="v num">15</span></div>
-          <div class="hbar"><span>Autres</span><div><div class="t" style="width:29%;opacity:.5"></div></div><span class="v num">10</span></div>
+          <div class="hbar"><span>Fuites</span><div><div class="t" style="width:100%"></div></div><span class="v num">38</span></div>
+          <div class="hbar"><span>Chaudières</span><div><div class="t" style="width:84%"></div></div><span class="v num">32</span></div>
+          <div class="hbar"><span>Entretiens</span><div><div class="t" style="width:63%"></div></div><span class="v num">24</span></div>
+          <div class="hbar"><span>WC / évacuation</span><div><div class="t" style="width:55%"></div></div><span class="v num">21</span></div>
+          <div class="hbar"><span>Devis PAC / SDB</span><div><div class="t" style="width:50%"></div></div><span class="v num">19</span></div>
+          <div class="hbar"><span>Autres</span><div><div class="t" style="width:63%;opacity:.5"></div></div><span class="v num">24</span></div>
         </div>
       </div>
     </div>
 
-    <div class="grid g4">
-      <div class="card stat"><div class="card-b"><span class="num">100 %</span><span class="lbl">Appels pris en charge</span></div></div>
-      <div class="card stat"><div class="card-b"><span class="num">2:24</span><span class="lbl">Durée moyenne d'appel</span></div></div>
-      <div class="card stat"><div class="card-b"><span class="num">5 %</span><span class="lbl">RDV non honorés</span><span class="delta">– 3 pts grâce aux rappels SMS</span></div></div>
-      <div class="card stat"><div class="card-b"><span class="num">42 min</span><span class="lbl">Délai moyen de validation</span></div></div>
+    <div class="grid g2">
+      <div class="card"><div class="card-h"><h3>Demandes par semaine</h3><span class="sub">12 dernières semaines, tous canaux</span></div>
+        <div class="card-b chart-wrap">
+          <svg viewBox="0 0 460 190" width="100%" role="img" aria-label="Demandes par semaine sur 12 semaines, en hausse de 22 à 41">
+            <g stroke="var(--chart-grid)" stroke-width="1"><line x1="36" y1="150" x2="452" y2="150"/><line x1="36" y1="95" x2="452" y2="95"/><line x1="36" y1="40" x2="452" y2="40"/></g>
+            <g fill="var(--faint)" font-size="10" text-anchor="end"><text x="30" y="153">0</text><text x="30" y="98">25</text><text x="30" y="43">50</text></g>
+            <path d="M46 102 84 106 122 96 160 99 198 88 236 90 274 79 312 73 350 76 388 64 426 61 446 60 L446 150 46 150 Z" fill="var(--chart-1)" opacity=".12"/>
+            <path d="M46 102 84 106 122 96 160 99 198 88 236 90 274 79 312 73 350 76 388 64 426 61 446 60" fill="none" stroke="var(--chart-1)" stroke-width="2" stroke-linejoin="round"/>
+            <g class="pts" fill="var(--chart-1)">
+              <circle cx="46" cy="102" r="4" data-t="Sem. 27 — 22 demandes"/><circle cx="160" cy="99" r="4" data-t="Sem. 30 — 23 demandes"/><circle cx="274" cy="79" r="4" data-t="Sem. 33 — 32 demandes"/><circle cx="388" cy="64" r="4" data-t="Sem. 36 — 39 demandes"/><circle cx="446" cy="60" r="5" stroke="var(--surface)" stroke-width="2" data-t="Sem. 38 — 41 demandes"/>
+            </g>
+            <text x="446" y="46" font-size="12" font-weight="700" fill="var(--ink)" text-anchor="end" class="num">41</text>
+            <g fill="var(--muted)" font-size="11"><text x="46" y="170">juil.</text><text x="236" y="170" text-anchor="middle">août</text><text x="446" y="170" text-anchor="end">sept.</text></g>
+          </svg>
+        </div>
+      </div>
+      <div class="card"><div class="card-h"><h3>Qualité de service</h3></div>
+        <div class="card-b"><dl class="kv">
+          <dt>Demandes prises en charge</dt><dd>100 %</dd>
+          <dt>Durée moyenne d'un appel</dt><dd>2:24</dd>
+          <dt>RDV non honorés (no-show)</dt><dd>5 % <span style="color:var(--ok)">· –3 pts grâce aux rappels SMS</span></dd>
+          <dt>Votre délai moyen de validation</dt><dd>42 min</dd>
+          <dt>Demandes transférées en direct</dt><dd>3</dd>
+        </dl></div>
+      </div>
     </div>
   </section>
 
@@ -433,6 +602,7 @@ ul.incl li::before{content:"✓";color:var(--ok);font-weight:700;margin-right:8p
     <div class="card"><div class="card-b numline">
       <div><div class="eyebrow">Votre numéro Nelyo</div><div class="n num">09 70 26 14 88</div></div>
       <span class="pill p-ok">Renvoi d'appel actif — vérifié il y a 2 j</span>
+      <span class="pill p-ok">Formulaire site connecté</span>
       <span class="pill p-marine">Annonce IA conforme (AI Act)</span>
       <span style="margin-left:auto;display:flex;align-items:center;gap:10px;font-weight:600;font-size:13.5px">Assistant actif <span class="switch"></span></span>
     </div></div>
@@ -450,6 +620,14 @@ ul.incl li::before{content:"✓";color:var(--ok);font-weight:700;margin-right:8p
           <span class="chip x">Créteil (limitrophe)</span><span class="chip x">Neuilly-Plaisance (limitrophe)</span>
         </div>
       </div>
+      <div class="card"><div class="card-h"><h3>Canaux connectés</h3><button class="btn" style="margin-left:auto">Gérer</button></div>
+        <div class="card-b"><dl class="kv">
+          <dt>📞 Appels (renvoi conditionnel)</dt><dd style="color:var(--ok)">Actif</dd>
+          <dt>🌐 Formulaire de votre site</dt><dd style="color:var(--ok)">Connecté</dd>
+          <dt>✉️ Email contact@dupont-chauffage.fr</dt><dd style="color:var(--ok)">Surveillé</dd>
+          <dt>💬 WhatsApp</dt><dd style="color:var(--faint)">Bientôt</dd>
+        </dl></div>
+      </div>
       <div class="card"><div class="card-h"><h3>Rendez-vous &amp; urgences</h3><button class="btn" style="margin-left:auto">Modifier</button></div>
         <div class="card-b"><dl class="kv">
           <dt>Horaires de RDV</dt><dd>Lun–ven 8 h – 18 h · Sam 9 h – 13 h</dd>
@@ -466,11 +644,10 @@ ul.incl li::before{content:"✓";color:var(--ok);font-weight:700;margin-right:8p
           <div style="color:var(--faint);font-size:12.5px;border-top:1px solid var(--line);padding-top:10px">Pour tout le reste, l'assistant ne donne jamais de prix : « ça dépendra de ce que Julien constatera sur place ».</div>
         </div>
       </div>
-    </div>
-
-    <div class="card"><div class="card-h"><h3>Message d'accueil</h3><button class="btn" style="margin-left:auto">Personnaliser</button></div>
-      <div class="card-b"><div class="accueil-msg">« Bonjour, vous êtes bien chez Dupont Chauffage. Je suis son assistant vocal — Julien est en intervention, mais je peux tout organiser avec vous. Que se passe-t-il ? »</div>
-      <p style="margin:10px 0 0;font-size:12.5px;color:var(--faint)">L'annonce « assistant vocal » est obligatoire (réglementation IA européenne) — elle est vérifiée automatiquement à chaque modification.</p></div>
+      <div class="card"><div class="card-h"><h3>Message d'accueil</h3><button class="btn" style="margin-left:auto">Personnaliser</button></div>
+        <div class="card-b"><div class="accueil-msg">« Bonjour, vous êtes bien chez Dupont Chauffage. Je suis son assistant vocal — Julien est en intervention, mais je peux tout organiser avec vous. Que se passe-t-il ? »</div>
+        <p style="margin:10px 0 0;font-size:12.5px;color:var(--faint)">L'annonce « assistant vocal » est obligatoire (réglementation IA européenne) — vérifiée automatiquement à chaque modification.</p></div>
+      </div>
     </div>
   </section>
 
@@ -480,7 +657,7 @@ ul.incl li::before{content:"✓";color:var(--ok);font-weight:700;margin-right:8p
       <div class="card"><div class="card-h"><h3>Votre abonnement</h3><span class="pill p-ok">Actif</span></div>
         <div class="card-b">
           <div class="plan"><span style="font-weight:600">Nelyo Pro</span><span class="price num">149 €<small> HT / mois</small></span></div>
-          <ul class="incl"><li>Appels entrants illimités</li><li>1 numéro dédié inclus</li><li>200 SMS / mois inclus</li><li>Validation &amp; agenda illimités</li></ul>
+          <ul class="incl"><li>Demandes illimitées — appels, site, emails</li><li>1 numéro dédié inclus</li><li>200 SMS / mois inclus</li><li>Validation &amp; agenda illimités</li></ul>
           <p style="font-size:12.5px;color:var(--muted);margin:12px 0 0">Ce mois-ci, Nelyo vous a rapporté <b style="color:var(--ok)">32 fois</b> son prix.</p>
         </div>
       </div>
@@ -516,10 +693,188 @@ ul.incl li::before{content:"✓";color:var(--ok);font-weight:700;margin-right:8p
 </div><!-- /main -->
 </div><!-- /app -->
 
+<!-- ======================= SITE VITRINE ======================= -->
+<div id="landing">
+  <div class="l-nav">
+    <span class="logo-mark" style="width:30px;height:30px"><svg viewBox="0 0 24 24" fill="none" stroke="#fff" stroke-width="2.2" stroke-linecap="round" style="width:16px;height:16px"><path d="M5 4v6a7 7 0 0 0 14 0V4"/><path d="M12 17v3"/></svg></span>
+    <b style="font-family:'Bricolage Grotesque';font-size:18px">Nelyo</b>
+    <div class="links"><a href="#l-fonctionnement">Fonctionnement</a><a href="#l-demo">Démo</a><a href="#l-tarif">Tarif</a><a href="#l-faq">FAQ</a><button class="btn js-app" id="to-app">Se connecter</button><button class="btn btn-cu">Essayer gratuitement</button></div>
+  </div>
+
+  <div class="hero">
+    <div>
+      <span class="l-badge">L'assistant IA des artisans du bâtiment</span>
+      <h1>Vos appels. Vos RDV.<br><em>Même quand vous êtes sur chantier.</em></h1>
+      <p class="sub">Un prospect appelle pendant que vous avez les mains dans une chaudière ? Nelyo répond, qualifie la demande et réserve le rendez-vous. Vous validez d'un pouce — <b>vos prospects ne partent plus chez le concurrent.</b></p>
+      <div class="cta-row"><button class="btn btn-cu btn-xl">Essayer gratuitement 30 jours</button><a class="btn btn-xl" href="#l-demo">Écouter une démo d'appel</a></div>
+      <div class="checks"><span>Sans engagement</span><span>Vous gardez votre numéro</span><span>Installé en 10 minutes</span><span>Sans carte bancaire</span></div>
+    </div>
+    <div class="phone">
+      <span class="ring-badge">📞 Vous n'avez pas décroché</span>
+      <div class="ph-top"><span class="avatar" style="width:28px;height:28px;font-size:11px">N</span><b>Assistant Nelyo</b><span class="st">● en ligne, 24h/24</span></div>
+      <div class="flux">
+        <div class="bulle b-cl"><span class="who">Prospect · 19h42</span>Bonjour, j'ai une fuite sous l'évier, c'est urgent !</div>
+        <div class="bulle b-ia"><span class="who">Assistant</span>Je comprends, on va s'occuper de vous. Si possible, coupez l'arrivée d'eau. Vous êtes sur quelle commune ?</div>
+        <div class="bulle b-cl"><span class="who">Prospect</span>Nogent-sur-Marne. Vous pouvez venir demain matin ?</div>
+        <div class="bulle b-ia"><span class="who">Assistant</span>Je vous réserve demain entre 8 h et 10 h ✓ Vous recevrez un SMS de confirmation.</div>
+        <div class="bulle" style="background:var(--ok-bg);color:var(--ok);align-self:center;font-weight:600;font-size:12.5px">RDV validé par l'artisan en 1 tap → +1 chantier</div>
+      </div>
+    </div>
+  </div>
+
+  <div class="proof"><div class="wrap">
+    <div class="it"><b>19 h 42</b><span>l'heure où vous perdez des chantiers — plus maintenant</span></div>
+    <div class="it"><b class="num">0</b><span>demande laissée sans réponse — appel, site ou email</span></div>
+    <div class="it"><b class="num">× 32</b><span>retour moyen sur l'abonnement, mesuré en € signés</span></div>
+    <div class="it"><b>1 tap</b><span>pour valider un rendez-vous, depuis le chantier</span></div>
+  </div></div>
+
+  <div class="l-sec" id="l-demo">
+    <h2>Testez Nelyo maintenant</h2>
+    <p class="lead">Trois façons d'entendre ce que vos clients entendront — avant même de créer un compte.</p>
+    <div class="demo3">
+      <div class="dcard">
+        <h3>🎧 Écouter un appel</h3>
+        <p>Des extraits réels de l'assistant au travail, selon le type de demande.</p>
+        <div class="chips">
+          <button class="on" data-dur="0:48">Urgence fuite</button>
+          <button data-dur="1:12">Prise de RDV</button>
+          <button data-dur="0:35">Hors zone</button>
+        </div>
+        <div class="player"><button class="play" aria-label="Écouter l'extrait">▶</button><span class="track"><i></i></span><span class="dur">0:48</span></div>
+      </div>
+      <div class="dcard">
+        <h3>📞 Appeler notre démo</h3>
+        <p>Posez-lui une vraie panne : fuite, chaudière en rideau, WC bouché. L'assistant décroche en une sonnerie et se présente comme IA.</p>
+        <div class="bignum num" style="margin-top:auto">01 99 00 06 42</div>
+        <p style="font-size:12px;color:var(--faint)">Ligne de démonstration · 24 h/24, 7 j/7</p>
+      </div>
+      <div class="dcard">
+        <h3>🔁 Pas le temps d'appeler ?</h3>
+        <p>Laissez votre numéro : c'est Nelyo qui vous rappelle dans la journée — la démonstration commence dès que vous décrochez.</p>
+        <div class="cb-form" id="cb-form"><input type="tel" placeholder="Votre numéro de téléphone"><button class="btn btn-cu" id="cb-btn">Être rappelé</button></div>
+      </div>
+    </div>
+  </div>
+
+  <div class="l-sec" id="l-fonctionnement" style="padding-top:0">
+    <h2>Vous travaillez. Nelyo décroche.</h2>
+    <p class="lead">Aucun changement d'habitude : vous gardez votre numéro, vos clients ne voient aucune différence — sauf qu'on leur répond, enfin, à tous les coups.</p>
+    <div class="steps">
+      <div class="step"><div class="nbr">1</div><h3>Activez le renvoi d'appel</h3><p>Un code à composer, une fois. Quand vous ne décrochez pas, l'appel bascule vers votre assistant Nelyo. Vous reprenez la main quand vous voulez.</p></div>
+      <div class="step"><div class="nbr">2</div><h3>L'assistant répond et qualifie</h3><p>Besoin, commune, urgence, coordonnées : l'assistant s'annonce comme IA, pose les bonnes questions et réserve un créneau selon VOS règles — jamais un prix inventé, jamais une promesse en votre nom.</p></div>
+      <div class="step"><div class="nbr">3</div><h3>Vous validez en 1 tap</h3><p>Notification sur votre téléphone : valider, déplacer ou refuser. Le client reçoit son SMS de confirmation, votre agenda se remplit, et chaque chantier gagné est compté en euros.</p></div>
+    </div>
+    <div class="canaux">
+      <span class="eyebrow" style="align-self:center">Tous vos canaux :</span>
+      <span class="c">📞 Appels manqués</span><span class="c">🌐 Formulaire de votre site</span><span class="c">✉️ Emails entrants</span><span class="c" style="color:var(--faint)">💬 WhatsApp — bientôt</span>
+    </div>
+  </div>
+
+  <div class="l-dark" id="l-roi">
+    <div class="l-sec">
+      <h2>Combien vous coûtent vos appels manqués ?</h2>
+      <p class="lead">Pendant une intervention, impossible de décrocher. Et un prospect qui tombe sur la messagerie ne laisse pas de message — il rappelle le concurrent.</p>
+      <div class="vs">
+        <div class="vs-card bad">
+          <h3>Sans assistant</h3>
+          <dl>
+            <dt>Appels manqués en intervention</dt><dd>6 / sem.</dd>
+            <dt>Qui raccrochent sans message</dt><dd>7 sur 10</dd>
+            <dt>Chantiers perdus</dt><dd>≈ 5 / mois</dd>
+            <dt>Soir &amp; week-end</dt><dd>personne</dd>
+          </dl>
+          <div class="total"><span>CA qui part ailleurs</span><span class="num">≈ 3 900 € / mois</span></div>
+        </div>
+        <div class="vs-card good">
+          <h3>Avec Nelyo</h3>
+          <dl>
+            <dt>Abonnement, tout compris</dt><dd>149 € / mois</dd>
+            <dt>Réponse</dt><dd>1 sonnerie, 24/7</dd>
+            <dt>Demandes</dt><dd>appels + site + emails</dd>
+            <dt>Décision</dt><dd>vous, en 1 tap</dd>
+          </dl>
+          <div class="total"><span>CA récupéré</span><span>visible en € signés</span></div>
+        </div>
+      </div>
+      <p class="vs-note">En moyenne, nos artisans signent <b>×32 leur abonnement</b> en chantiers récupérés — et le chiffre exact s'affiche en permanence dans leur tableau de bord.</p>
+      <div class="cta-row" style="margin-top:18px"><button class="btn btn-cu btn-xl js-app">Voir le tableau de bord</button></div>
+    </div>
+  </div>
+
+  <div class="l-sec" id="l-temoignages">
+    <h2>Ils ne perdent plus de chantiers</h2>
+    <p class="lead">Plombiers et chauffagistes, comme vous — souvent injoignables, jamais plus silencieux.</p>
+    <div class="temoins">
+      <div class="tcard">
+        <span class="tbadge">+22 RDV récupérés en septembre</span>
+        <blockquote>« Avant, tout ce qui appelait pendant mes interventions partait chez le concurrent. Maintenant l'assistant prend le RDV, et moi je valide depuis le chantier. »</blockquote>
+        <div class="who"><span class="avatar">KM</span><div><b>Karim M.</b>Plombier · Créteil</div></div>
+      </div>
+      <div class="tcard">
+        <span class="tbadge">×125 son abonnement</span>
+        <blockquote>« Je vois en euros ce que ça me rapporte. Le tableau de bord affiche 18 750 € récupérés le mois dernier — je sais exactement pourquoi je paie. »</blockquote>
+        <div class="who"><span class="avatar">JD</span><div><b>Julien D.</b>Chauffagiste · Nogent-sur-Marne</div></div>
+      </div>
+      <div class="tcard">
+        <span class="tbadge">0 appel manqué depuis mars</span>
+        <blockquote>« L'IA s'annonce comme assistante et les clients jouent le jeu. Et rien ne part sans moi : elle s'occupe de tout, c'est moi qui décide. »</blockquote>
+        <div class="who"><span class="avatar">SL</span><div><b>Sofiane L.</b>Plombier-chauffagiste · Vincennes</div></div>
+      </div>
+    </div>
+  </div>
+
+  <div class="l-sec" id="l-confiance" style="padding-top:0">
+    <h2>Conçu pour inspirer confiance</h2>
+    <p class="lead">À vos clients comme à vous : des règles strictes, écrites dans le produit.</p>
+    <div class="trust">
+      <div class="titem"><span class="ico">🇪🇺</span><b>Hébergé en Europe</b><p>Données stockées dans l'UE, conformes au RGPD. Export et suppression sur simple demande.</p></div>
+      <div class="titem"><span class="ico">🤖</span><b>IA annoncée</b><p>L'assistant se présente comme IA dès les premières secondes de l'appel, comme la loi l'exige.</p></div>
+      <div class="titem"><span class="ico">✅</span><b>Vous gardez la main</b><p>Aucun RDV confirmé, aucun SMS envoyé au client sans votre validation en 1 tap.</p></div>
+      <div class="titem"><span class="ico">🚫</span><b>Jamais de prix inventé</b><p>L'assistant n'annonce que les tarifs que vous avez autorisés. Aucun devis improvisé en votre nom.</p></div>
+    </div>
+  </div>
+
+  <div class="l-sec" id="l-tarif" style="padding-top:0">
+    <h2>Un prix simple. Un retour mesurable.</h2>
+    <p class="lead">Votre tableau de bord affiche en permanence ce que Nelyo vous rapporte — en euros signés, pas en minutes d'appel.</p>
+    <div class="l-price">
+      <div class="eyebrow">Nelyo Pro</div>
+      <div class="pp num">149 €<small> HT / mois</small></div>
+      <ul class="incl" style="text-align:left;max-width:300px;margin:14px auto 0"><li>Demandes illimitées, tous canaux</li><li>Numéro dédié + 200 SMS / mois</li><li>Validation, agenda, statistiques</li><li>Pas de frais d'installation, pas de minutes comptées</li><li>30 jours d'essai, sans engagement</li></ul>
+      <button class="btn btn-cu btn-xl" style="margin-top:20px;width:100%">Commencer l'essai gratuit</button>
+      <p style="font-size:12px;color:var(--faint);margin:10px 0 0">Un seul chantier récupéré rembourse plusieurs mois d'abonnement.</p>
+    </div>
+  </div>
+
+  <div class="l-sec" id="l-faq" style="padding-top:0">
+    <h2>Questions fréquentes</h2>
+    <div class="faq" style="margin-top:22px">
+      <details><summary>Est-ce que mon numéro change ?</summary><p>Non. Nelyo s'active par renvoi d'appel conditionnel : l'assistant ne décroche que si vous ne répondez pas. Un code à composer pour l'activer, un autre pour l'arrêter — vous reprenez la main quand vous voulez.</p></details>
+      <details><summary>Les clients savent-ils qu'ils parlent à une IA ?</summary><p>Oui, l'assistant se présente comme IA dès le début de l'appel — c'est une obligation légale et une question de confiance. En pratique, les appelants jouent le jeu : ce qu'ils veulent, c'est une réponse et un rendez-vous, pas une messagerie.</p></details>
+      <details><summary>Comment les rendez-vous sont-ils pris ?</summary><p>L'assistant propose des créneaux selon vos règles — zones d'intervention, horaires, fenêtres réservées aux urgences — dans un agenda tampon. Rien n'est confirmé au client avant que vous ayez validé en 1 tap ; il reçoit alors son SMS de confirmation.</p></details>
+      <details><summary>Et si l'assistant ne comprend pas une demande ?</summary><p>Il ne force jamais. Si la demande sort de son périmètre, il prend les coordonnées, promet un rappel, et vous êtes notifié immédiatement avec le résumé et l'audio de l'appel.</p></details>
+      <details><summary>Donne-t-il des prix au téléphone ?</summary><p>Uniquement ceux que vous avez explicitement autorisés, comme un tarif de déplacement. Jamais d'estimation improvisée, jamais d'engagement en votre nom.</p></details>
+      <details><summary>D'où viennent les demandes ?</summary><p>Appels manqués, formulaire de votre site et emails entrants : tout arrive au même endroit, qualifié de la même façon — besoin, commune, urgence, coordonnées. WhatsApp arrive bientôt.</p></details>
+      <details><summary>Et si je veux arrêter ?</summary><p>Sans engagement : vous désactivez le renvoi d'appel et tout s'arrête. Vos données vous appartiennent et restent exportables.</p></details>
+    </div>
+  </div>
+
+  <div class="l-cta">
+    <div class="in">
+      <h2>Prêt à ne plus perdre de chantiers ?</h2>
+      <p>30 jours d'essai gratuit. Installé en 10 minutes, sans changer de numéro — et dès demain, chaque appel manqué devient un RDV à valider.</p>
+      <div class="cta-row"><button class="btn btn-xl" style="background:#fff;color:var(--cuivre-deep);border:0">Essayer gratuitement 30 jours</button><a class="btn btn-xl" href="#l-demo" style="background:none;color:#fff;border:1px solid rgba(255,255,255,.55)">Écouter la démo</a></div>
+    </div>
+  </div>
+
+  <div class="l-foot"><span>© 2026 Nelyo</span><span>Mentions légales</span><span>CGV</span><span>Confidentialité &amp; RGPD</span><span style="margin-left:auto">Fait en France 🇫🇷</span></div>
+</div>
+
 <!-- barre mobile -->
 <div class="mobilebar" id="mnav">
   <button class="on" data-v="accueil"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M3 11 12 4l9 7M5 10v10h14V10"/></svg>Accueil</button>
-  <button data-v="appels"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M5 4h4l2 5-2.5 1.5a12 12 0 0 0 5 5L15 13l5 2v4a2 2 0 0 1-2 2A16 16 0 0 1 3 6a2 2 0 0 1 2-2z"/></svg>Appels</button>
+  <button data-v="demandes"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M3 13h5l2 3h4l2-3h5"/><path d="M5 5h14l2 8v6H3v-6z"/></svg>Demandes</button>
   <button data-v="agenda"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="3" y="5" width="18" height="16" rx="2"/><path d="M8 3v4M16 3v4M3 10h18"/></svg>Agenda</button>
   <button data-v="stats"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M4 20V10M10 20V4M16 20v-7"/></svg>Stats</button>
   <button data-v="ia"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="3"/><path d="M12 2v3M12 19v3M2 12h3M19 12h3"/></svg>IA</button>
@@ -529,7 +884,7 @@ ul.incl li::before{content:"✓";color:var(--ok);font-weight:700;margin-right:8p
 <div class="tip" id="tip"></div>
 
 <script>
-const TITRES={accueil:"Aujourd'hui",appels:"Appels",agenda:"Agenda",stats:"Statistiques",ia:"Assistant IA",factu:"Facturation"};
+const TITRES={accueil:"Tableau de bord",demandes:"Demandes",agenda:"Agenda",stats:"Statistiques",ia:"Assistant IA",factu:"Facturation"};
 function go(v){
   document.querySelectorAll("section.view").forEach(s=>s.classList.toggle("on",s.id==="v-"+v));
   document.querySelectorAll("[data-v]").forEach(b=>b.classList.toggle("on",b.dataset.v===v));
@@ -537,6 +892,150 @@ function go(v){
   window.scrollTo({top:0});
 }
 document.querySelectorAll("[data-v]").forEach(b=>b.addEventListener("click",()=>go(b.dataset.v)));
+document.getElementById("to-landing").addEventListener("click",()=>{document.body.classList.remove("show-app");window.scrollTo({top:0});});
+document.querySelectorAll(".js-app").forEach(b=>b.addEventListener("click",()=>{document.body.classList.add("show-app");window.scrollTo({top:0});}));
+/* landing : extraits audio factices */
+document.querySelectorAll(".chips button").forEach(ch=>ch.addEventListener("click",()=>{
+  ch.parentElement.querySelectorAll("button").forEach(b=>b.classList.toggle("on",b===ch));
+  const pl=ch.closest(".dcard").querySelector(".player");
+  pl.querySelector(".dur").textContent=ch.dataset.dur;
+  const f=pl.querySelector(".track i"); f.style.transition="none"; f.style.width="0";
+  pl.querySelector(".play").textContent="▶";
+}));
+document.querySelectorAll(".play").forEach(p=>p.addEventListener("click",()=>{
+  const f=p.parentElement.querySelector(".track i");
+  if(p.textContent!=="▶"){f.style.transition="none";f.style.width="0";p.textContent="▶";clearTimeout(p._t);return;}
+  p.textContent="❚❚"; f.style.transition="width 6s linear";
+  requestAnimationFrame(()=>f.style.width="100%");
+  p._t=setTimeout(()=>{f.style.transition="none";f.style.width="0";p.textContent="▶";},6200);
+}));
+/* landing : rappel (maquette) */
+const cbb=document.getElementById("cb-btn");
+if(cbb)cbb.addEventListener("click",()=>{document.getElementById("cb-form").innerHTML='<span class="cb-ok">✓ Bien reçu — Nelyo vous rappelle dans la journée.</span>';});
+/* ===== Agenda : calendrier interactif ===== */
+const AUJ=new Date(2026,8,21); // lundi 21 septembre 2026, le « aujourd'hui » de la maquette
+const ev=(t,b,d,k,urg)=>({t,b,d,k,urg});
+const EVTS={
+  "2026-09-15":[ev("09:00 – 12:00","Mme Royer","remplacement chauffe-eau, Joinville","ok")],
+  "2026-09-17":[ev("08:30 – 10:00","M. Benali","radiateur froid, Champigny","ok"),ev("14:00 – 15:00","Mme Costa","devis SDB, Nogent","ok")],
+  "2026-09-18":[ev("10:00 – 12:00","Syndic Les Lilas","entretien 8 chaudières, j. 1/2","ok")],
+  "2026-09-21":[ev("08:00 – 10:00","M. Fontaine","chaudière, Le Perreux","ok"),ev("14:00 – 15:30","Mme Nkomo","radiateurs, Vincennes","ok")],
+  "2026-09-22":[ev("08:00 – 10:00","Mme Garcia","fuite évier, Nogent","wait",true),ev("10:30 – 12:00","Mme Petit","chauffe-eau, Saint-Maur","ok"),ev("14:00 – 16:00","M. Katz","WC, Créteil","wait")],
+  "2026-09-23":[ev("09:00 – 11:00","Chantier Morel","pose PAC, j. 2/3","ok")],
+  "2026-09-24":[ev("09:00 – 11:00","Chantier Morel","pose PAC, j. 3/3","ok"),ev("14:00 – 15:00","M. Weber","devis SDB, Nogent","ok")],
+  "2026-09-26":[ev("09:00 – 10:00","M. Diallo","entretien chaudière","ok")],
+  "2026-09-28":[ev("08:00 – 09:30","Mme Lambert","visite SDB, Vincennes","wait"),ev("11:00 – 12:00","M. Brun","reprise intervention, Nogent","ok")],
+  "2026-09-29":[ev("09:00 – 12:00","Chantier Girard","pose chaudière, j. 1/2","ok")],
+  "2026-09-30":[ev("09:00 – 12:00","Chantier Girard","pose chaudière, j. 2/2","ok"),ev("14:30 – 15:30","M. Carvalho","radiateur qui fuit, Le Perreux","wait")],
+  "2026-10-02":[ev("10:00 – 11:00","M. Weber","signature devis SDB","ok")],
+  "2026-10-05":[ev("08:00 – 12:00","Syndic Les Lilas","entretien 8 chaudières, j. 2/2","ok")],
+};
+const JOURS=["Dimanche","Lundi","Mardi","Mercredi","Jeudi","Vendredi","Samedi"];
+const MOIS=["janvier","février","mars","avril","mai","juin","juillet","août","septembre","octobre","novembre","décembre"];
+const MOIS_C=["janv.","févr.","mars","avr.","mai","juin","juil.","août","sept.","oct.","nov.","déc."];
+const iso=d=>d.getFullYear()+"-"+String(d.getMonth()+1).padStart(2,"0")+"-"+String(d.getDate()).padStart(2,"0");
+const memeJour=(a,b)=>iso(a)===iso(b);
+const lundiDe=d=>{const x=new Date(d);x.setDate(x.getDate()-((x.getDay()+6)%7));return x};
+let selDate=new Date(AUJ), calMois=new Date(AUJ.getFullYear(),AUJ.getMonth(),1);
+
+function renderWeek(){
+  const lun=lundiDe(selDate), sam=new Date(lun); sam.setDate(lun.getDate()+5);
+  document.getElementById("wk-label").textContent="Semaine du "+lun.getDate()+(lun.getMonth()!==sam.getMonth()?" "+MOIS[lun.getMonth()]:"")+" au "+sam.getDate()+" "+MOIS[sam.getMonth()];
+  const wk=document.getElementById("week"); wk.innerHTML="";
+  for(let i=0;i<6;i++){
+    const d=new Date(lun); d.setDate(lun.getDate()+i);
+    const evts=EVTS[iso(d)]||[];
+    let sub=d.getDate()+" "+MOIS_C[d.getMonth()];
+    if(memeJour(d,AUJ)) sub+=" · aujourd'hui";
+    if(i===5) sub+=" · 9 h – 13 h";
+    const day=document.createElement("div");
+    day.className="day"+(memeJour(d,selDate)?" day-sel":"");
+    day.innerHTML='<div class="day-h">'+JOURS[d.getDay()]+' <span>'+sub+'</span></div>';
+    const body=document.createElement("div"); body.className="day-b";
+    evts.forEach(e=>{
+      const el=document.createElement("div");
+      el.className="evt e-"+e.k+(e.urg?" e-urg":"");
+      el.innerHTML="<time>"+e.t+"</time><b>"+e.b+"</b> — "+e.d;
+      body.appendChild(el);
+    });
+    if(!evts.length){
+      const s=document.createElement("div"); s.className="evt e-slot";
+      s.textContent=d<AUJ?"Aucune intervention":"Journée libre — l'assistant propose ces créneaux en priorité";
+      body.appendChild(s);
+    }
+    if(i===0||i===2){const s=document.createElement("div");s.className="evt e-slot";s.textContent="17 h – 19 h réservé urgences";body.appendChild(s);}
+    day.appendChild(body); wk.appendChild(day);
+  }
+}
+function renderCal(){
+  document.getElementById("mc-title").textContent=MOIS[calMois.getMonth()]+" "+calMois.getFullYear();
+  const g=document.getElementById("mc-grid"); g.innerHTML="";
+  ["L","M","M","J","V","S","D"].forEach(w=>{const s=document.createElement("span");s.className="wd";s.textContent=w;g.appendChild(s)});
+  const start=lundiDe(new Date(calMois.getFullYear(),calMois.getMonth(),1));
+  for(let i=0;i<42;i++){
+    const d=new Date(start); d.setDate(start.getDate()+i);
+    if(i%7===0 && i>0 && d.getMonth()!==calMois.getMonth() && d>calMois) break;
+    const b=document.createElement("button"); b.type="button";
+    b.className="mc-d"+(d.getMonth()!==calMois.getMonth()?" out":"")+(memeJour(d,AUJ)?" today":"")+(memeJour(d,selDate)?" sel":"");
+    b.innerHTML=d.getDate()+(EVTS[iso(d)]?'<span class="dot"></span>':"");
+    b.addEventListener("click",()=>{selDate=new Date(d);calMois=new Date(d.getFullYear(),d.getMonth(),1);renderCal();renderWeek();});
+    g.appendChild(b);
+  }
+}
+function allerA(d){selDate=new Date(d);calMois=new Date(d.getFullYear(),d.getMonth(),1);renderCal();renderWeek();}
+document.getElementById("mc-prev").addEventListener("click",()=>{calMois=new Date(calMois.getFullYear(),calMois.getMonth()-1,1);renderCal();});
+document.getElementById("mc-next").addEventListener("click",()=>{calMois=new Date(calMois.getFullYear(),calMois.getMonth()+1,1);renderCal();});
+document.getElementById("wk-prev").addEventListener("click",()=>{const d=new Date(selDate);d.setDate(d.getDate()-7);allerA(d);});
+document.getElementById("wk-next").addEventListener("click",()=>{const d=new Date(selDate);d.setDate(d.getDate()+7);allerA(d);});
+document.getElementById("wk-today").addEventListener("click",()=>allerA(AUJ));
+renderCal(); renderWeek();
+/* ===== Stats : sélection libre de période (du … au …) ===== */
+const rBtn=document.getElementById("range-btn"), rPop=document.getElementById("rangepop");
+let rMois=new Date(2026,8,1), rA=new Date(2026,8,1), rB=new Date(2026,8,30), rPick=0;
+const fmtJ=d=>d.getDate()+" "+MOIS_C[d.getMonth()]+(d.getFullYear()!==rB.getFullYear()?" "+d.getFullYear():"");
+function rLabel(custom){
+  rBtn.textContent="📅 Du "+fmtJ(rA)+" au "+fmtJ(rB)+" "+rB.getFullYear()+" ▾";
+  if(custom)document.getElementById("roi-period").textContent="du "+fmtJ(rA)+" au "+fmtJ(rB);
+}
+function renderRange(){
+  document.getElementById("rp-title").textContent=MOIS[rMois.getMonth()]+" "+rMois.getFullYear();
+  const g=document.getElementById("rp-grid"); g.innerHTML="";
+  ["L","M","M","J","V","S","D"].forEach(w=>{const s=document.createElement("span");s.className="wd";s.textContent=w;g.appendChild(s)});
+  const start=lundiDe(new Date(rMois.getFullYear(),rMois.getMonth(),1));
+  for(let i=0;i<42;i++){
+    const d=new Date(start); d.setDate(start.getDate()+i);
+    if(i%7===0 && i>0 && d.getMonth()!==rMois.getMonth() && d>rMois) break;
+    const b=document.createElement("button"); b.type="button"; b.textContent=d.getDate();
+    let cls="mc-d"+(d.getMonth()!==rMois.getMonth()?" out":"");
+    if(iso(d)===iso(rA)) cls+=" r-start";
+    if(iso(d)===iso(rB)) cls+=" r-end";
+    if(d>rA && d<rB) cls+=" in-range";
+    b.className=cls;
+    b.addEventListener("click",()=>{
+      if(rPick===0){rA=new Date(d);rB=new Date(d);rPick=1;}
+      else{if(d<rA){rA=new Date(d);}else{rB=new Date(d);}rPick=0;}
+      renderRange();
+    });
+    g.appendChild(b);
+  }
+  document.getElementById("rp-hint").textContent=rPick?"Choisissez la date de fin":"Du "+fmtJ(rA)+" au "+fmtJ(rB);
+}
+rBtn.addEventListener("click",()=>{rPop.classList.toggle("open");if(rPop.classList.contains("open"))renderRange();});
+document.getElementById("rp-prev").addEventListener("click",()=>{rMois=new Date(rMois.getFullYear(),rMois.getMonth()-1,1);renderRange();});
+document.getElementById("rp-next").addEventListener("click",()=>{rMois=new Date(rMois.getFullYear(),rMois.getMonth()+1,1);renderRange();});
+document.getElementById("rp-ok").addEventListener("click",()=>{
+  rPop.classList.remove("open"); rLabel(true);
+  document.querySelectorAll(".preset").forEach(b=>b.classList.remove("on"));
+});
+document.addEventListener("pointerdown",e=>{if(!e.target.closest(".range"))rPop.classList.remove("open");});
+const PRESETS={"Ce mois":[new Date(2026,8,1),new Date(2026,8,30),"septembre"],"3 mois":[new Date(2026,6,1),new Date(2026,8,30),"juillet – septembre"],"12 mois":[new Date(2025,9,1),new Date(2026,8,30),"12 derniers mois"],"Tout":[new Date(2026,4,1),new Date(2026,8,30),"depuis le début"]};
+document.querySelectorAll(".preset").forEach(b=>b.addEventListener("click",()=>{
+  document.querySelectorAll(".preset").forEach(x=>x.classList.toggle("on",x===b));
+  const[pa,pb,lbl]=PRESETS[b.textContent.trim()];
+  rA=new Date(pa); rB=new Date(pb); rMois=new Date(pb.getFullYear(),pb.getMonth(),1); rPick=0;
+  rLabel(false); document.getElementById("roi-period").textContent=lbl;
+}));
+rLabel(false);
 /* tooltips graphiques */
 const tip=document.getElementById("tip");
 document.querySelectorAll("[data-t]").forEach(el=>{

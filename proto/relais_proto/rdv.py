@@ -37,6 +37,22 @@ class StatutRdv(str, Enum):
 
 TERMINAUX = frozenset({StatutRdv.VALIDE, StatutRdv.REFUSE, StatutRdv.EXPIRE})
 
+# ISSUE DE CHANTIER (migration 015, 26/10) — orthogonale au statut, délibérément.
+#
+# Le produit s'arrêtait au rendez-vous validé : il n'apprenait jamais si le chantier a eu
+# lieu ni ce qu'il a rapporté, et l'écran Statistiques ne pouvait donc PAS afficher un
+# chiffre d'affaires sans l'inventer (décision du 22/09 : « aucun chiffre inventé »).
+# L'issue est la réponse : une DÉCLARATION de l'artisan, jamais un calcul. « gagne »
+# (avec un montant en euros, optionnel) ou « perdu ». Ce n'est pas un septième statut :
+# VALIDE reste terminal — le cycle de vie du RDV vis-à-vis du CLIENT est clos, l'issue
+# est de la comptabilité de l'ARTISAN par-dessus. En faire un statut aurait rouvert le
+# graphe et chaque `in TERMINAUX` du code.
+ISSUES = frozenset({"gagne", "perdu"})
+# Borne de saisie, pas de métier : au-delà, c'est plus vraisemblablement une faute de
+# frappe (un zéro de trop) qu'un chantier. L'artisan qui facture un million passera par
+# le support — et on sera contents de lui parler.
+MONTANT_MAX_EUR = 1_000_000
+
 # CE QUI OCCUPE LE CRÉNEAU — et ce n'est PAS le complément de `TERMINAUX` (R98).
 #
 # Un RDV validé est terminal — il n'y a plus rien à décider — mais il occupe bel et bien
@@ -156,6 +172,12 @@ class Rdv:
     # dans un SMS, il vaut capacité — une fuite de base ne doit pas permettre de confirmer
     # des rendez-vous à la place des clients.
     confirmation_sha256: str | None = None
+    # issue de chantier (cf. ISSUES plus haut) : déclarée par l'artisan, re-déclarable
+    # (une correction, pas un engagement — la dernière déclaration compte, chacune est
+    # journalisée dans l'historique).
+    issue: str | None = None
+    issue_montant_eur: int | None = None
+    issue_le: dt.datetime | None = None
     historique: list[dict] = field(default_factory=list)
 
     CHAMPS_CRENEAU = ("date", "de", "a", "label", "urgence")
@@ -265,6 +287,43 @@ class Rdv:
         self.decide_a = maintenant
         self.confirmation_sha256 = None   # usage unique : le lien ne resservira pas
 
+    def declarer_issue(self, issue: str, montant_eur: int | None,
+                       maintenant: dt.datetime, par: str = "artisan") -> None:
+        """L'artisan déclare ce que le RDV est devenu : chantier gagné ou perdu.
+
+        Trois règles, toutes en domaine :
+          1. uniquement sur un RDV VALIDÉ — un refusé ou un expiré n'a pas eu de
+             chantier à gagner, et un tampon n'est pas encore un rendez-vous ;
+          2. le montant n'a de sens que sur « gagne », c'est un ENTIER d'euros saisi
+             par l'artisan, borné (cf. MONTANT_MAX_EUR). Jamais calculé, jamais déduit :
+             le chiffre d'affaires affiché ailleurs est la somme de CES déclarations,
+             et de rien d'autre ;
+          3. re-déclarable : corriger une erreur de saisie est légitime (ce n'est pas
+             une transition du cycle de vie, le client n'est pas concerné). La dernière
+             déclaration compte, chacune reste dans l'historique.
+        """
+        maintenant = temps.exige_instant(maintenant, "maintenant")
+        if self.statut is not StatutRdv.VALIDE:
+            raise TransitionInterdite(
+                f"RDV {self.id} : issue déclarable uniquement sur un RDV validé "
+                f"(statut actuel : {self.statut.value})")
+        if issue not in ISSUES:
+            raise ValueError(f"issue inconnue : {issue!r} (attendu : {sorted(ISSUES)})")
+        if montant_eur is not None:
+            if issue != "gagne":
+                raise ValueError("un montant n'a de sens que sur un chantier gagné")
+            if (isinstance(montant_eur, bool) or not isinstance(montant_eur, int)
+                    or not 1 <= montant_eur <= MONTANT_MAX_EUR):
+                raise ValueError(
+                    f"montant invalide : {montant_eur!r} (entier d'euros, "
+                    f"entre 1 et {MONTANT_MAX_EUR})")
+        self.issue = issue
+        self.issue_montant_eur = montant_eur if issue == "gagne" else None
+        self.issue_le = maintenant
+        self.historique.append({"issue": issue, "montant_eur": self.issue_montant_eur,
+                                "par": par,
+                                "horodatage": maintenant.isoformat(timespec="seconds")})
+
     def expirer(self, maintenant: dt.datetime, par: str = "systeme") -> None:
         if not self.est_echu(maintenant):
             raise TransitionInterdite(
@@ -273,13 +332,16 @@ class Rdv:
         self.decide_a = maintenant
 
     # ---- persistance (le dépôt stocke des dicts, jamais l'instance vivante) ----
-    HORODATAGES = ("expire_a", "cree_a", "notifie_a", "decide_a")
+    # `issue_le` y figure : les dicts SÉRIALISÉS AVANT la migration 015 ne portent pas
+    # la clé, d'où le `.get` dans from_dict — un RDV d'avant l'issue se relit sans issue.
+    HORODATAGES = ("expire_a", "cree_a", "notifie_a", "decide_a", "issue_le")
 
     def to_dict(self) -> dict:
         d = {"id": self.id, "lead_id": self.lead_id, "artisan_id": self.artisan_id,
              "creneau": dict(self.creneau), "duree_min": self.duree_min,
              "urgence": self.urgence, "statut": self.statut.value,
              "confirmation_sha256": self.confirmation_sha256,
+             "issue": self.issue, "issue_montant_eur": self.issue_montant_eur,
              "historique": [dict(h) for h in self.historique]}
         for c in self.HORODATAGES:
             h = getattr(self, c)
@@ -288,10 +350,12 @@ class Rdv:
 
     @classmethod
     def from_dict(cls, d: dict) -> Rdv:
-        horodatages = {c: temps.depuis_iso(d[c]) if d[c] else None
+        horodatages = {c: temps.depuis_iso(d[c]) if d.get(c) else None
                        for c in cls.HORODATAGES}
         return cls(id=d["id"], lead_id=d["lead_id"], artisan_id=d["artisan_id"],
                    creneau=dict(d["creneau"]), duree_min=d["duree_min"],
                    urgence=d["urgence"], statut=StatutRdv(d["statut"]),
                    confirmation_sha256=d.get("confirmation_sha256"),
+                   issue=d.get("issue"),
+                   issue_montant_eur=d.get("issue_montant_eur"),
                    historique=[dict(h) for h in d["historique"]], **horodatages)

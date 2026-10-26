@@ -5090,6 +5090,225 @@ def check_page_assistant() -> bool:
     return True
 
 
+def check_issue_chantier() -> bool:
+    """T18 : l'issue de chantier — le CA est une DÉCLARATION, et l'écran qui l'affiche
+    est l'écran qui la fabrique.
+
+    Ferme l'écart ouvert par la maquette v5 (26/10) : « CA récupéré » en métrique reine
+    d'un côté, décision du 22/09 « aucun chiffre inventé » de l'autre. La réconciliation
+    est la migration 015 : l'artisan déclare « chantier gagné, N euros » ou « sans
+    suite » sur un RDV validé passé, et l'écran Statistiques n'affiche que la somme de
+    ces déclarations. Ce qui est verrouillé ici :
+
+    1. **l'issue n'existe que sur un RDV VALIDÉ** — tampon, notifié, refusé : refusés
+       par le domaine, pas par l'interface ;
+    2. **le montant est une saisie bornée, jamais une interprétation** : « abc » rend
+       un 422 avec la raison, « 1 480 € » est nettoyé (espaces, €) puis exigé entier —
+       un CA que personne n'a tapé ne doit pas pouvoir s'afficher ;
+    3. **re-déclarable** : corriger « gagné » en « sans suite » est permis, le montant
+       ne survit pas à la correction, et chaque déclaration reste dans l'historique ;
+    4. **la liste « Chantier gagné ? » ne contient que les RDV validés PASSÉS**
+       (date de créneau comparée au jour local de l'artisan — règle n°7) ;
+    5. **la sérialisation fait l'aller-retour**, y compris sur un dict d'AVANT la
+       migration (clés absentes → pas d'issue), sinon chaque RDV existant casserait ;
+    6. **en mode support, aucun formulaire de déclaration** : la page ne promet pas un
+       geste que `artisan_authentifie` refuse structurellement (T14).
+    """
+    try:
+        from fastapi.testclient import TestClient
+    except ImportError:
+        print("   fastapi/httpx absents : pip install -r requirements.txt")
+        return False
+
+    from relais_proto import pages as _pages
+    from relais_proto.api import creer_app
+    from relais_proto.envoi import EnvoyeurJournal
+    from relais_proto.registre import Artisan, Registre, empreinte as emp_token
+
+    # ---- 1/ le domaine ----
+    depot = DepotMemoire()
+    _, rdv = _appel_avec_rdv(depot, "T01_urgence_fuite", LUNDI_9H)
+    t1 = LUNDI_9H + dt.timedelta(minutes=1)
+    try:
+        rdv.declarer_issue("gagne", 1480, t1)
+        print("   issue acceptée sur un RDV tampon")
+        return False
+    except TransitionInterdite:
+        pass
+    rdv.notifier(LUNDI_9H)
+    rdv.valider(t1)
+    for issue, montant, motif in (
+            ("annule", None, "issue hors vocabulaire acceptée"),
+            ("perdu", 500, "montant accepté sur un perdu"),
+            ("gagne", 0, "montant nul accepté"),
+            ("gagne", True, "booléen accepté comme montant"),
+            ("gagne", 2_000_000, "montant au-delà de la borne accepté")):
+        try:
+            rdv.declarer_issue(issue, montant, t1)
+            print(f"   {motif}")
+            return False
+        except ValueError:
+            pass
+    rdv.declarer_issue("gagne", 1480, t1)
+    if (rdv.issue, rdv.issue_montant_eur, rdv.issue_le) != ("gagne", 1480, t1):
+        print(f"   déclaration non posée : {rdv.issue!r} {rdv.issue_montant_eur!r}")
+        return False
+    rdv.declarer_issue("perdu", None, t1 + dt.timedelta(minutes=2))
+    if rdv.issue != "perdu" or rdv.issue_montant_eur is not None:
+        print("   la correction ne remplace pas la déclaration (ou le montant survit)")
+        return False
+    if sum(1 for h in rdv.historique if "issue" in h) != 2:
+        print("   les déclarations ne sont pas journalisées")
+        return False
+    relu = Rdv.from_dict(rdv.to_dict())
+    if (relu.issue, relu.issue_montant_eur, relu.issue_le) != (
+            rdv.issue, rdv.issue_montant_eur, rdv.issue_le):
+        print("   l'issue ne survit pas à la sérialisation")
+        return False
+    ancien = rdv.to_dict()
+    for cle in ("issue", "issue_montant_eur", "issue_le"):
+        ancien.pop(cle, None)   # un dict sérialisé AVANT la migration 015
+    if Rdv.from_dict(ancien).issue is not None:
+        print("   un dict d'avant la migration ne se relit pas sans issue")
+        return False
+    refuse = _appel_avec_rdv(depot, "T01_urgence_fuite", LUNDI_9H)[1]
+    refuse.notifier(LUNDI_9H)
+    refuse.refuser(t1)
+    try:
+        refuse.declarer_issue("gagne", 100, t1)
+        print("   issue acceptée sur un RDV refusé")
+        return False
+    except TransitionInterdite:
+        pass
+
+    # ---- 2/ l'écran et la route ----
+    registre = Registre([Artisan("art-dupont", "+33189701234", emp_token("tok"), CFG,
+                                 telephone="+33612345678")],
+                        emp_token("secret-voix"))
+    depot = DepotMemoire()
+    pendule = [LUNDI_9H]
+    app = creer_app(depot, registre, MockLLM, lambda: pendule[0],
+                    base_url="https://nelyo.test", cookie_secure=False,
+                    envoyeur=EnvoyeurJournal())
+
+    _, passe = _appel_avec_rdv(depot, "T01_urgence_fuite", LUNDI_9H)
+    passe.notifier(LUNDI_9H)
+    passe.valider(LUNDI_9H + dt.timedelta(minutes=1))
+    depot.sauver_rdv(passe)
+    # un second RDV validé dont le créneau est LOIN DEVANT : il compte dans les tuiles,
+    # mais n'a rien à faire dans « Chantier gagné ? » — on ne déclare pas l'avenir.
+    _, futur = _appel_avec_rdv(depot, "T01_urgence_fuite",
+                               LUNDI_9H + dt.timedelta(minutes=5))
+    futur.notifier(LUNDI_9H + dt.timedelta(minutes=5))
+    futur.valider(LUNDI_9H + dt.timedelta(minutes=6))
+    futur.creneau["date"] = (LUNDI_9H + dt.timedelta(days=90)).date().isoformat()
+    depot.sauver_rdv(futur)
+
+    pendule[0] = LUNDI_9H + dt.timedelta(days=30)   # les créneaux de `passe` sont passés
+    with TestClient(app) as julien:
+        if not connecter_par_sms(julien, depot, "06 12 34 56 78"):
+            print("   connexion par code SMS impossible")
+            return False
+        r = julien.get("/app/stats")
+        if r.status_code != 200:
+            print(f"   /app/stats : {r.status_code}")
+            return False
+        if "Chantier gagné ?" not in r.text or "1 RDV passé sans déclaration" not in r.text:
+            print("   la liste à déclarer ne montre pas le RDV passé (et lui seul)")
+            return False
+        if f'action="/app/{futur.id}/issue"' in r.text:
+            print("   un RDV futur est proposé à la déclaration")
+            return False
+
+        # montant illisible : refusé avec la raison, rien n'est écrit
+        r = julien.post(f"/app/{passe.id}/issue",
+                        data={"issue": "gagne", "montant": "abc"})
+        if r.status_code != 422 or depot.rdv(passe.id).issue is not None:
+            print(f"   montant illisible : {r.status_code}, "
+                  f"issue={depot.rdv(passe.id).issue!r}")
+            return False
+
+        # saisie réaliste : « 1 480 € » avec espaces — nettoyée, pas interprétée
+        r = julien.post(f"/app/{passe.id}/issue",
+                        data={"issue": "gagne", "montant": "1 480 €"},
+                        follow_redirects=False)
+        if r.status_code != 303:
+            print(f"   déclaration gagné : {r.status_code}")
+            return False
+        if depot.rdv(passe.id).issue_montant_eur != 1480:
+            print(f"   montant persisté : {depot.rdv(passe.id).issue_montant_eur!r}")
+            return False
+        r = julien.get("/app/stats")
+        if "1 480 €" not in r.text:
+            print("   le CA déclaré n'apparaît pas sur la page")
+            return False
+        if "Rien à déclarer" not in r.text:
+            print("   le RDV déclaré reste dans la liste à déclarer")
+            return False
+        if "100 %" not in r.text:
+            print("   transformation absente (1 gagné sur 1 déclaré = 100 %)")
+            return False
+
+        # correction : gagné → sans suite ; le montant ne survit pas, le CA retombe
+        r = julien.post(f"/app/{passe.id}/issue", data={"issue": "perdu"},
+                        follow_redirects=False)
+        if r.status_code != 303 or depot.rdv(passe.id).issue != "perdu" \
+                or depot.rdv(passe.id).issue_montant_eur is not None:
+            print("   la correction en « sans suite » n'est pas passée")
+            return False
+        r = julien.get("/app/stats")
+        if "1 480 €" in r.text:
+            print("   le CA affiche encore un montant corrigé")
+            return False
+
+    # ---- 3/ mode support : pas de formulaire ----
+    page = _pages.stats("Nelyo", "Julien", "Dupont Chauffage", 0, 0, 0, 0, [],
+                        [{"id": "r1", "client": "Mme Garcia", "motif": "fuite",
+                          "creneau": "mardi 8 h – 10 h"}], [],
+                        vue_admin="Dupont Chauffage")
+    if "/issue" in page or "Chantier gagné</button>" in page:
+        print("   le mode support affiche des formulaires de déclaration")
+        return False
+    if "réservée à l" not in page:
+        print("   le mode support ne dit pas pourquoi il n'y a pas de boutons")
+        return False
+    return True
+
+
+def check_selecteurs_non_scopes() -> bool:
+    """R100 : aucune règle de la feuille de l'espace artisan ne vise un élément nu
+    que le gabarit emploie PLUSIEURS fois dans des rôles différents.
+
+    Trouvé le 26/10 en RENDANT la page Statistiques sur un viewport mobile (Cowork,
+    capture d'écran) : `nav{…flex-direction:column…}`, écrite pour la barre LATÉRALE,
+    matchait aussi la `<nav class="mobilebar">` du bas d'écran. La règle du média query
+    redéclare display, position et padding — mais pas flex-direction, et ce qui n'est
+    pas redéclaré fuit : la barre du bas s'empilait verticalement sur ~270 px de haut.
+    Sur mobile. Depuis le 22/09, sur toutes les pages de l'espace. Aucun des 108 tests
+    ne pouvait le voir : ils lisent le HTML, pas le rendu — d'où ce verrou TEXTUEL, le
+    même esprit que R99 : à défaut de rendre le CSS, interdire la forme qui a mordu.
+
+    La règle : `nav`, `aside`, `header` n'apparaissent comme sélecteurs qu'avec un
+    scope (`.side nav`) ou une classe (`nav.mobilebar`). Un élément utilisé une seule
+    fois (body, main) peut rester nu.
+    """
+    import re as _re
+    from relais_proto.pages import _STYLE_NELYO
+
+    # les sélecteurs : ce qui précède chaque « { », bloc média compris, moins les corps
+    feuilles = _re.sub(r"/\*.*?\*/", "", _STYLE_NELYO, flags=_re.S)
+    selecteurs = []
+    for bloc in _re.findall(r"(?:^|\})([^{}]+)\{", feuilles):
+        selecteurs += [s.strip() for s in bloc.split(",") if s.strip()
+                       and not s.strip().startswith("@")]
+    nus = [s for s in selecteurs
+           if _re.fullmatch(r"(nav|aside|header)(\s*:[a-z-]+.*)?", s)]
+    if nus:
+        print(f"   sélecteurs d'élément nus qui matchent plusieurs rôles : {nus}")
+        return False
+    return True
+
+
 def check_page_mes_appels() -> bool:
     """La page « Mes appels » : l'artisan voit ce que son agent a pris, RDV ou pas.
 
@@ -12572,6 +12791,25 @@ def run() -> int:
         print("   → l'écran « Assistant IA » montre la config qui SERT : l'accueil "
               "prononcé mot pour mot, les prestations refusées barrées, et le renvoi "
               "d'appel dit non vérifié : ✅ PASS")
+    else:
+        print("   → ❌ FAIL")
+        echecs += 1
+
+    print(f"\n──── T18_issue_chantier ────")
+    if check_issue_chantier():
+        print("   → le CA est la somme des DÉCLARATIONS de l'artisan (gagné/sans "
+              "suite, montant saisi jamais interprété), déclarable seulement sur un "
+              "RDV validé passé, corrigible, et le mode support n'offre aucun bouton : "
+              "✅ PASS")
+    else:
+        print("   → ❌ FAIL")
+        echecs += 1
+
+    print(f"\n──── R100_selecteurs_non_scopes ────")
+    if check_selecteurs_non_scopes():
+        print("   → aucune règle nue (nav/aside/header) ne peut fuir d'un rôle vers "
+              "un autre : la barre mobile ne re-hérite plus du flex-direction de la "
+              "barre latérale : ✅ PASS")
     else:
         print("   → ❌ FAIL")
         echecs += 1

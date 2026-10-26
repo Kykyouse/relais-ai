@@ -269,6 +269,29 @@ def verifier(fabrique, cfg: dict) -> list[str]:
     exiger(depot.rdvs_echus(rdv.expire_a + dt.timedelta(days=7)) == [],
            "un RDV validé reste dans la file du worker")
 
+    # ---- issue de chantier (migration 015) : déclarée, corrigée, persistée ----
+    # Le CA affiché par l'écran Statistiques est la somme de CES champs : un adaptateur
+    # qui les perdrait ferait mentir le tableau de bord en silence — exactement le genre
+    # de divergence que ce contrat existe pour attraper.
+    exiger(depot.rdv(rdv.id).issue is None,
+           "un RDV jamais déclaré porte déjà une issue")
+    quand = rdv.expire_a + dt.timedelta(days=1)
+    rdv.declarer_issue("gagne", 1480, quand)
+    depot.sauver_rdv(rdv)
+    relu = depot.rdv(rdv.id)
+    exiger(relu.issue == "gagne" and relu.issue_montant_eur == 1480
+           and relu.issue_le == quand,
+           f"l'issue ne fait pas l'aller-retour ({relu.issue!r}, "
+           f"{relu.issue_montant_eur!r}, {relu.issue_le!r})")
+    # correction : la dernière déclaration compte, et « perdu » efface le montant
+    rdv.declarer_issue("perdu", None, quand + dt.timedelta(minutes=5))
+    depot.sauver_rdv(rdv)
+    relu = depot.rdv(rdv.id)
+    exiger(relu.issue == "perdu" and relu.issue_montant_eur is None,
+           "la correction d'issue n'est pas persistée (ou le montant survit au perdu)")
+    exiger(sum(1 for h in relu.historique if "issue" in h) == 2,
+           "les déclarations d'issue ne sont pas journalisées dans l'historique")
+
     # un second RDV, non urgent : échéance plus lointaine, files indépendantes
     donnees2, _ = _lead_donnees(cfg, LIGNES_ENTRETIEN, LUNDI_9H)
     appel2 = depot.ouvrir_appel("art-dupont", LUNDI_9H)
