@@ -20,7 +20,7 @@ Cible V1 : plombiers/chauffagistes FR. Solo dev : Geoffrey (binôme Claude) ; ma
 ```bash
 cd proto
 pip install -r requirements.txt     # anthropic, python-dotenv (inutiles en mock)
-python run_scenario.py              # suite de non-régression (mock, sans clé, ~3 s) — 107 tests
+python run_scenario.py              # suite de non-régression (mock, sans clé, ~3 s) — 111 tests
                                     # « sans BASE » est désormais VÉRIFIÉ, pas promis (R93) :
                                     # la suite importait `serveur.py` — le câblage de prod,
                                     # qui ouvre une connexion Postgres à l'import — et
@@ -203,7 +203,14 @@ sont devenus des MODÈLES ; deux implémentations, `Registre` (liste, pour les t
 `RegistreBase` (lu en base à chaque recherche, en production) ·
 `confirmation.py` jetons du lien de validation client (empreinte seule en base) ·
 `envoi.py` plage de silence + réessais + port fournisseur (aucun câblé : `EnvoyeurJournal`) ·
-`pages.py` pages HTML (client + boîte de validation artisan, sans JS ni ressource externe) ·
+`pages.py` pages HTML (client + boîte de validation artisan + espace artisan + **site
+vitrine**, sans JS ni ressource externe). Depuis le 29/10 le style est en TROIS morceaux :
+`_SOCLE_NELYO` (jetons, polices, reset, boutons, avatar, bulles) que `_STYLE_NELYO`
+(espace) et `_STYLE_VITRINE` (page publique) prolongent — **une feuille par audience
+aurait dérivé en silence**, personne ne regardant les deux pages côte à côte.
+⚠️ La vitrine est la SEULE page sans `noindex`, et la seule qui s'adresse à quelqu'un qui
+n'a pas encore payé : **ce qu'elle affirme n'a droit à aucune preuve inventée** (T19
+interdit nommément les témoignages et moyennes de la maquette v5) ·
 `session.py` sessions artisan par cookie · `vapi.py` adaptateur de la plateforme
 vocale (traduit, ne décide rien ; porte aussi le format de fil SSE — lire son en-tête
 avant de toucher au chantier voix) · `sonde_voix.py` sonde de diagnostic de l'étape 0

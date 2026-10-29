@@ -808,6 +808,25 @@ def creer_app(depot, registre: Registre, fabrique_llm, horloge=None,
     # Routes distinctes des routes JSON : celles-ci redirigent après action (303) pour que
     # le rechargement du navigateur ne rejoue pas le POST. Les routes JSON restent pour la
     # future app mobile.
+    # ---- le site vitrine : la seule page publique, et la seule indexable ----
+    @app.get("/", response_class=HTMLResponse)
+    def page_vitrine() -> HTMLResponse:
+        """La racine du domaine. Elle rendait 404 jusqu'ici.
+
+        LA PHRASE D'ACCUEIL AFFICHÉE EST CELLE QUE LE MOTEUR PRONONCE : la page appelle
+        `formule_accueil`, elle n'en garde pas une copie. C'est T17 déplacé d'un cran —
+        l'écran « Assistant IA » montre à l'artisan ce que sa machine dit, cette page le
+        montre à quelqu'un qui hésite à l'acheter, et les deux se trompent de la même
+        façon le jour où la formule change, c'est-à-dire jamais.
+
+        La config ci-dessous ne sert qu'à faire parler cette fonction. `formule` à None
+        est VOULU : c'est la formule par DÉFAUT, celle qu'obtient un artisan qui n'a rien
+        personnalisé — donc la plus représentative de ce qu'on vend.
+        """
+        demo = {"entreprise": {"nom": "Dupont Chauffage", "prenom_patron": "Julien"},
+                "accueil": {"formule": None}}
+        return HTMLResponse(pages.vitrine(NOM, formule_accueil(demo)))
+
     @app.get("/connexion", response_class=HTMLResponse)
     def page_connexion() -> HTMLResponse:
         return HTMLResponse(pages.connexion(NOM))

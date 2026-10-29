@@ -470,7 +470,17 @@ def admin_artisan(produit: str, artisan: dict, config_json: str,
 #    chaque vue est une URL et la navigation est faite de liens. Le rendu est
 #    identique, la page reste utilisable sans script, et le bouton « précédent »
 #    fonctionne. Les `<button data-v>` deviennent donc des `<a href>`.
-_STYLE_NELYO = """
+#
+# ──────────────────────────────────────────────────────────────────────────────────
+# LE SOCLE EST PARTAGÉ AVEC LE SITE VITRINE, et c'est la raison d'être de la coupure.
+# Jetons de couleur, polices, reset, et les composants que les DEUX portent (boutons,
+# avatar, pastille de logo, bulles de conversation) vivent ici, une seule fois. La
+# tentation était de donner sa propre feuille à la vitrine : elle aurait dérivé de
+# l'espace artisan au premier changement de teinte, et personne ne l'aurait vu — un
+# prospect et un client ne regardent jamais les deux pages côte à côte. C'est la même
+# leçon que T17 (« l'écran MONTRE ce que la machine dit, il n'en garde pas une copie »),
+# appliquée au style plutôt qu'au texte.
+_SOCLE_NELYO = """
 @font-face{font-family:'Instrument Sans';font-style:normal;font-weight:400 600;
   font-display:swap;src:url(/static/polices/instrument-sans.woff2) format('woff2')}
 @font-face{font-family:'Bricolage Grotesque';font-style:normal;font-weight:500 700;
@@ -504,15 +514,40 @@ body{margin:0;background:var(--paper);color:var(--ink);
 h1,h2,h3,.num{font-family:"Bricolage Grotesque","Instrument Sans",system-ui,sans-serif}
 .num{font-variant-numeric:tabular-nums}
 a{color:var(--marine)}
+/* ---------- composants portés par l'espace ET la vitrine ---------- */
+.btn{border:1px solid var(--line);background:var(--surface);color:var(--ink);
+  border-radius:8px;padding:8px 14px;font:600 13px "Instrument Sans",sans-serif;
+  cursor:pointer;text-decoration:none;display:inline-block}
+.btn:hover{background:var(--surface-2)}
+.btn-cu{background:var(--cuivre);border-color:var(--cuivre);color:#fff}
+.btn-cu:hover{background:var(--cuivre-deep);border-color:var(--cuivre-deep)}
+.btn-ghost-crit{color:var(--crit)}
+.eyebrow{font-size:11px;letter-spacing:.08em;text-transform:uppercase;
+  color:var(--faint);font-weight:600}
+.avatar{width:34px;height:34px;border-radius:50%;background:var(--cuivre-soft);
+  color:var(--cuivre);display:grid;place-items:center;font-weight:600;font-size:13px;
+  flex:0 0 34px}
+.logo-mark{width:32px;height:32px;border-radius:9px;background:var(--cuivre);
+  display:grid;place-items:center;flex:0 0 32px}
+.logo-mark svg{width:18px;height:18px}
+.bulle{max-width:520px;padding:8px 13px;border-radius:12px;font-size:13px;
+  line-height:1.45}
+.b-ia{background:var(--marine-soft);color:var(--ink);border-top-left-radius:3px;
+  align-self:flex-start}
+.b-cl{background:var(--surface);border:1px solid var(--line);
+  border-top-right-radius:3px;align-self:flex-end}
+.bulle .who{display:block;font-size:10.5px;letter-spacing:.06em;text-transform:uppercase;
+  color:var(--faint);margin-bottom:2px;font-weight:600}
+"""
+
+# L'espace artisan : tout ce qui n'a de sens qu'une fois connecté.
+_STYLE_NELYO = _SOCLE_NELYO + """
 .app{display:flex;min-height:100vh}
 /* ---------- barre latérale ---------- */
 .side{width:228px;flex:0 0 228px;background:var(--sidebar);color:var(--sidebar-ink);
   display:flex;flex-direction:column;position:sticky;top:0;height:100vh}
 .logo{display:flex;align-items:center;gap:10px;padding:22px 20px 18px;color:#fff;
   text-decoration:none}
-.logo-mark{width:32px;height:32px;border-radius:9px;background:var(--cuivre);
-  display:grid;place-items:center;flex:0 0 32px}
-.logo-mark svg{width:18px;height:18px}
 .logo b{font-family:"Bricolage Grotesque";font-size:19px;font-weight:700;
   letter-spacing:.2px}
 .logo small{display:block;font-size:10.5px;letter-spacing:.08em;text-transform:uppercase;
@@ -533,9 +568,6 @@ a{color:var(--marine)}
   font-weight:600;border-radius:99px;padding:1px 7px}
 .side-foot{margin-top:auto;padding:14px 16px;border-top:1px solid rgba(255,255,255,.09)}
 .artisan{display:flex;gap:10px;align-items:center}
-.avatar{width:34px;height:34px;border-radius:50%;background:var(--cuivre-soft);
-  color:var(--cuivre);display:grid;place-items:center;font-weight:600;font-size:13px;
-  flex:0 0 34px}
 .side .avatar{background:rgba(255,255,255,.12);color:#fff}
 .artisan b{color:#fff;font-size:13.5px;display:block}
 .artisan span{font-size:11.5px;opacity:.65}
@@ -567,13 +599,6 @@ a{color:var(--marine)}
 .p-crit{background:var(--crit-bg);color:var(--crit)}
 .p-mut{background:var(--surface-2);color:var(--muted);border:1px solid var(--line)}
 .p-marine{background:var(--marine-soft);color:var(--marine)}
-.btn{border:1px solid var(--line);background:var(--surface);color:var(--ink);
-  border-radius:8px;padding:8px 14px;font:600 13px "Instrument Sans",sans-serif;
-  cursor:pointer;text-decoration:none;display:inline-block}
-.btn:hover{background:var(--surface-2)}
-.btn-cu{background:var(--cuivre);border-color:var(--cuivre);color:#fff}
-.btn-cu:hover{background:var(--cuivre-deep);border-color:var(--cuivre-deep)}
-.btn-ghost-crit{color:var(--crit)}
 .chip{display:inline-flex;align-items:center;border:1px solid var(--line);
   background:var(--surface-2);border-radius:99px;padding:4px 11px;font-size:12.5px;
   font-weight:500}
@@ -582,8 +607,6 @@ a{color:var(--marine)}
 .g4{grid-template-columns:repeat(4,1fr)}
 .g3{grid-template-columns:repeat(3,1fr)}
 .g2{grid-template-columns:repeat(2,1fr)}
-.eyebrow{font-size:11px;letter-spacing:.08em;text-transform:uppercase;
-  color:var(--faint);font-weight:600}
 /* ---------- accueil ---------- */
 .hello h1{font-size:24px;margin:0 0 2px;text-wrap:balance}
 .hello p{margin:0;color:var(--muted)}
@@ -639,14 +662,6 @@ table.calls{width:100%;border-collapse:collapse;font-size:13.5px;
 .caller span{color:var(--faint);font-size:12px}
 .transcript{background:var(--surface-2);border-top:1px dashed var(--line);
   padding:16px 18px;display:flex;flex-direction:column;gap:10px}
-.bulle{max-width:520px;padding:8px 13px;border-radius:12px;font-size:13px;
-  line-height:1.45}
-.b-ia{background:var(--marine-soft);color:var(--ink);border-top-left-radius:3px;
-  align-self:flex-start}
-.b-cl{background:var(--surface);border:1px solid var(--line);
-  border-top-right-radius:3px;align-self:flex-end}
-.bulle .who{display:block;font-size:10.5px;letter-spacing:.06em;text-transform:uppercase;
-  color:var(--faint);margin-bottom:2px;font-weight:600}
 details.horaire summary{list-style:none;cursor:pointer;display:inline-block}
 details.horaire summary::-webkit-details-marker{display:none}
 details.horaire[open]{flex:1 0 100%;order:9}
@@ -737,10 +752,12 @@ details.horaire input{width:100%;min-height:38px;border:1px solid var(--line);
     background:var(--surface);border-top:1px solid var(--line);z-index:20;
     justify-content:space-around;
     padding:6px 4px calc(6px + env(safe-area-inset-bottom,0px))}
-  .mobilebar a{border:0;background:none;color:var(--faint);
+  /* `.onglet` et non `a` : la couleur d'un lien ne doit pas dépendre du bloc où il est
+     posé (R101). Le jour où un `.btn` entre dans cette barre, il garderait la sienne. */
+  .mobilebar .onglet{border:0;background:none;color:var(--faint);
     font:500 10px "Instrument Sans";display:flex;flex-direction:column;
     align-items:center;gap:3px;padding:4px 8px;text-decoration:none}
-  .mobilebar a.on{color:var(--cuivre)}
+  .mobilebar .onglet.on{color:var(--cuivre)}
   .mobilebar svg{width:19px;height:19px}
 }
 @media (max-width:520px){.g4,.g3{grid-template-columns:1fr}}
@@ -818,8 +835,8 @@ def _page_nelyo(produit: str, vue: str, corps: str, *, entreprise: str = "",
             if (cle == "accueil" and a_valider) else "")
         for cle, libelle, href in _NAV)
     barre_mobile = "".join(
-        '<a class="{}" href="{}">{}{}</a>'.format(
-            "on" if cle == vue else "", href, _svg(cle, 19),
+        '<a class="onglet{}" href="{}">{}{}</a>'.format(
+            " on" if cle == vue else "", href, _svg(cle, 19),
             escape("Accueil" if cle == "accueil" else libelle.split()[0]))
         for cle, libelle, href in _NAV)
 
@@ -1486,3 +1503,582 @@ def assistant(produit: str, prenom: str, entreprise: str, bloc: dict,
           "vérifications qui empêchent de casser l&#x27;assistant en plein appel.</p>",
         entreprise=entreprise, prenom=prenom, commune=commune,
         a_valider=a_valider, vue_admin=vue_admin, titre="Assistant IA")
+
+
+# ══════════════════════════════════════════════ LE SITE VITRINE — la page publique
+#
+# LA RÉFÉRENCE EST `docs/maquette/nelyo-maquette.html` (`#landing`, maquette v5), et la
+# structure en est reprise section par section : nav, hero, bandeau de preuve, démo,
+# fonctionnement, ROI sombre, confiance, tarif, FAQ, bandeau final, pied.
+#
+# CE QUI N'EST PAS REPRIS, ET POURQUOI — c'est la partie importante de cet en-tête.
+#
+# La maquette porte des PREUVES FABRIQUÉES : trois témoignages signés « Karim M. »,
+# « Julien D. », « Sofiane L. », un « ×32 de retour moyen, mesuré en € signés »,
+# « 18 750 € récupérés le mois dernier », « +22 RDV récupérés en septembre », un numéro
+# de ligne de démonstration et trois extraits audio à écouter. Dans une maquette, ce
+# sont des lorem ipsum ; sur la page publique, ce sont des affirmations adressées à un
+# artisan qui décide d'acheter. Nelyo n'a aucun client : il n'y a ni témoin, ni moyenne,
+# ni enregistrement, ni ligne de démo.
+#
+# C'est la décision du 22/09 (« aucun chiffre inventé ») appliquée là où elle coûte
+# quelque chose. Elle a été prise pour le tableau de bord de l'artisan ; elle vaut
+# d'abord ici, parce que le tableau de bord parle à quelqu'un qui a déjà payé et que
+# cette page parle à quelqu'un qui n'a pas encore signé. Et la leçon de 2bis vaut
+# aussi : « ce qu'on promet doit être tenable, sur TOUS les chemins » — une page de
+# vente est un chemin.
+#
+# Les emplacements sont donc GARDÉS, et remplis de ce qui est vrai :
+#
+# - les témoignages → « Ce que Nelyo fait, et ce qu'il ne fait pas encore ». Dire à un
+#   artisan ce qui n'est pas prêt est un argument, pas un aveu : il a déjà été déçu ;
+# - « ×32 mesuré » → le calcul est présenté comme une HYPOTHÈSE qu'il ajuste, et le
+#   seul chiffre présenté comme mesuré est celui que T18 rend réel — le CA qu'il aura
+#   DÉCLARÉ lui-même ;
+# - les extraits audio et la ligne de démo → la vraie première phrase de l'assistant,
+#   rendue par `engine.formule_accueil` (T17 : la page MONTRE ce que la machine dit,
+#   elle n'en garde pas une copie) ;
+# - les canaux « formulaire » et « email » → marqués « bientôt », parce qu'ils n'existent
+#   qu'en maquette. Ils étaient annoncés au présent dans la FAQ et dans les puces.
+#
+# RESTENT DEUX CHOSES QUE LE CODE NE PEUT PAS TRANCHER, signalées dans le journal :
+# les mentions légales (il faut une raison sociale, un SIRET, un hébergeur — d'où
+# l'absence de liens morts en pied de page plutôt qu'un gabarit à trous), et le fait
+# que l'offre suppose une entrée téléphonique française qui n'existe pas encore.
+_STYLE_VITRINE = _SOCLE_NELYO + """
+/* ---------- barre du haut ---------- */
+.l-nav{display:flex;align-items:center;gap:12px;padding:16px 6vw;
+  background:var(--surface);border-bottom:1px solid var(--line);position:sticky;top:0;
+  z-index:5}
+.l-nav b{font-family:"Bricolage Grotesque";font-size:18px}
+.l-nav .links{margin-left:auto;display:flex;gap:22px;font-size:13.5px;font-weight:500;
+  color:var(--muted);align-items:center}
+/* SCOPÉ AUX ANCRES, pas à tous les `a` de la barre. `.l-nav .links a{color:inherit}`
+   pèse plus lourd que `.btn-cu{color:#fff}` : le bouton cuivre héritait du gris des
+   liens de menu et son libellé devenait illisible sur son propre fond. Même famille
+   que R100 — une règle écrite pour un rôle qui en attrape un second. */
+.l-nav .links .nav-ancre{color:inherit;text-decoration:none}
+.l-nav .links .nav-ancre:hover{color:var(--ink)}
+.l-nav .logo-mark{width:30px;height:30px;flex:0 0 30px}
+.l-nav .logo-mark svg{width:16px;height:16px}
+/* `line-height` et `white-space` explicites : le raccourci `font:` du socle remet la
+   hauteur de ligne à `normal`, et dans la barre du haut « Demander un accès » passait
+   à la ligne À L'INTÉRIEUR du bouton, en débordant de son fond. Vu au rendu. */
+a.btn{text-decoration:none;display:inline-flex;align-items:center;
+  justify-content:center;line-height:1.25;white-space:nowrap}
+.btn-xl{padding:13px 22px;font-size:15px;border-radius:10px}
+html{scroll-behavior:smooth}
+.l-sec,.l-dark{scroll-margin-top:72px}
+/* ---------- hero ---------- */
+.hero{display:grid;grid-template-columns:1.1fr .9fr;gap:48px;align-items:center;
+  padding:64px 6vw 56px;max-width:1240px;margin:0 auto}
+.hero h1{font-size:clamp(30px,4.2vw,52px);font-weight:800;line-height:1.08;
+  margin:14px 0 18px;text-wrap:balance}
+.hero h1 em{font-style:normal;color:var(--cuivre)}
+.hero .sub{font-size:16.5px;color:var(--muted);max-width:52ch;margin:0 0 26px;
+  line-height:1.6}
+.l-badge{display:inline-flex;align-items:center;gap:8px;border:1px solid var(--cuivre);
+  color:var(--cuivre);border-radius:99px;padding:6px 14px;font-size:11.5px;
+  font-weight:700;letter-spacing:.06em;text-transform:uppercase}
+.cta-row{display:flex;gap:12px;flex-wrap:wrap}
+.checks{display:flex;gap:16px;flex-wrap:wrap;margin-top:14px;font-size:12.5px;
+  color:var(--faint)}
+.checks span::before{content:"\\2713";color:var(--ok);font-weight:700;margin-right:6px}
+.phone{background:var(--surface);border:1px solid var(--line);border-radius:26px;
+  box-shadow:var(--shadow);padding:18px 16px 20px;max-width:360px;margin-left:auto;
+  position:relative}
+.phone .ph-top{display:flex;align-items:center;gap:9px;padding-bottom:12px;
+  border-bottom:1px solid var(--line);margin-bottom:12px;font-size:13px}
+.phone .ph-top .avatar{width:28px;height:28px;flex:0 0 28px;font-size:11px}
+.phone .ph-top .st{margin-left:auto;font-size:11px;color:var(--ok);font-weight:600}
+.phone .flux{display:flex;flex-direction:column;gap:9px}
+.phone .fin{background:var(--ok-bg);color:var(--ok);align-self:center;font-weight:600;
+  font-size:12.5px}
+.phone .avis{margin:12px 0 0;font-size:11px;color:var(--faint);text-align:center;
+  line-height:1.45}
+.ring-badge{position:absolute;top:-14px;left:-14px;background:var(--cuivre);color:#fff;
+  font-size:11.5px;font-weight:700;border-radius:99px;padding:6px 12px;
+  box-shadow:var(--shadow)}
+/* ---------- bandeau de preuve ---------- */
+.proof{background:var(--marine-deep);color:#fff}
+/* GRILLE et non flex : en `space-between` avec retour à la ligne, la quatrième entrée
+   tombait seule sur une deuxième ligne dès que la fenêtre se resserrait un peu — quatre
+   colonnes puis deux puis une est le seul découpage qui ne produit jamais d'orphelin. */
+.proof .wrap{max-width:1240px;margin:0 auto;padding:30px 6vw;display:grid;
+  grid-template-columns:repeat(4,1fr);gap:28px}
+.proof .it b{font-family:"Bricolage Grotesque";font-size:30px;font-weight:700;
+  display:block}
+.proof .it span{font-size:12.5px;opacity:.75}
+/* ---------- sections ---------- */
+.l-sec{max-width:1240px;margin:0 auto;padding:56px 6vw}
+.l-sec h2{font-size:clamp(22px,2.6vw,32px);font-weight:700;margin:0 0 8px;
+  text-wrap:balance}
+.l-sec .lead{color:var(--muted);margin:0 0 30px;max-width:60ch}
+.demo3{display:grid;grid-template-columns:repeat(3,1fr);gap:16px}
+.dcard{background:var(--surface);border:1px solid var(--line);border-radius:var(--r);
+  padding:22px;box-shadow:var(--shadow);display:flex;flex-direction:column;gap:12px}
+.dcard h3{margin:0;font-size:16px}
+.dcard p{margin:0;color:var(--muted);font-size:13.5px;line-height:1.55}
+.dcard .dit{background:var(--surface-2);border:1px solid var(--line);border-radius:10px;
+  padding:13px 15px;font-size:13.5px;line-height:1.55;font-style:italic;color:var(--ink);
+  margin:0}
+.dcard ul{margin:0;padding-left:18px;color:var(--muted);font-size:13.5px;
+  line-height:1.6}
+.dcard .pied{margin-top:auto;font-size:12px;color:var(--faint)}
+.steps{display:grid;grid-template-columns:repeat(3,1fr);gap:16px}
+.step{background:var(--surface);border:1px solid var(--line);border-radius:var(--r);
+  padding:22px;box-shadow:var(--shadow)}
+.step .nbr{width:34px;height:34px;border-radius:50%;background:var(--cuivre-soft);
+  color:var(--cuivre);display:grid;place-items:center;
+  font:700 15px "Bricolage Grotesque";margin-bottom:12px}
+.step h3{margin:0 0 6px;font-size:16px}
+.step p{margin:0;color:var(--muted);font-size:13.5px}
+.canaux{display:flex;gap:14px;flex-wrap:wrap;margin-top:18px;align-items:center}
+.canaux .c{display:flex;align-items:center;gap:9px;background:var(--surface);
+  border:1px solid var(--line);border-radius:99px;padding:9px 16px;font-weight:600;
+  font-size:13.5px}
+.canaux .c.plus-tard{color:var(--faint);border-style:dashed}
+/* ---------- le calcul (section sombre) ---------- */
+.l-dark{background:var(--marine-deep);color:#fff}
+.l-dark h2{color:#fff}
+.l-dark .lead{color:rgba(255,255,255,.65)}
+.vs{display:grid;grid-template-columns:1fr 1fr;gap:16px;max-width:880px}
+.vs-card{border-radius:14px;padding:24px;border:1px solid rgba(255,255,255,.14)}
+.vs-card.bad{background:rgba(255,255,255,.04)}
+.vs-card.good{background:rgba(192,107,69,.16);border-color:var(--cuivre)}
+.vs-card h3{margin:0 0 16px;font-size:15px}
+.vs-card dl{margin:0;display:grid;grid-template-columns:1fr auto;gap:10px 14px;
+  font-size:13.5px}
+.vs-card dt{opacity:.68}
+.vs-card dd{margin:0;font-weight:700;text-align:right;font-variant-numeric:tabular-nums;
+  white-space:nowrap}
+.vs-card .total{border-top:1px solid rgba(255,255,255,.18);margin-top:16px;
+  padding-top:13px;display:flex;justify-content:space-between;gap:12px;font-weight:800;
+  font-family:"Bricolage Grotesque","Instrument Sans",sans-serif;font-size:16px}
+.vs-note{margin:22px 0 0;font-size:13.5px;opacity:.78;max-width:62ch}
+.vs-note b{color:#fff}
+.hypo{display:inline-block;border:1px dashed rgba(255,255,255,.4);border-radius:99px;
+  padding:3px 10px;font-size:11px;letter-spacing:.06em;text-transform:uppercase;
+  font-weight:700;opacity:.8;margin-bottom:14px}
+/* ---------- ce qui est prêt, ce qui ne l'est pas ---------- */
+.franchise{display:grid;grid-template-columns:1fr 1fr;gap:16px;max-width:880px}
+.fcard{background:var(--surface);border:1px solid var(--line);border-radius:var(--r);
+  padding:22px;box-shadow:var(--shadow)}
+.fcard h3{margin:0 0 12px;font-size:15px;display:flex;align-items:center;gap:9px}
+.fcard ul{margin:0;padding-left:18px;color:var(--muted);font-size:13.5px;
+  line-height:1.65}
+.fcard li b{color:var(--ink);font-weight:600}
+/* ---------- confiance ---------- */
+.trust{display:grid;grid-template-columns:repeat(4,1fr);gap:16px}
+.titem{background:var(--surface);border:1px solid var(--line);border-radius:var(--r);
+  padding:18px;box-shadow:var(--shadow)}
+.titem .ico{font-size:20px}
+.titem b{display:block;margin:8px 0 4px;font-size:14px}
+.titem p{margin:0;color:var(--muted);font-size:12.5px;line-height:1.5}
+/* ---------- tarif ---------- */
+.l-price{background:var(--surface);border:1px solid var(--line);border-radius:14px;
+  box-shadow:var(--shadow);max-width:430px;margin:0 auto;padding:28px;text-align:center}
+.l-price .pp{font-family:"Bricolage Grotesque";font-size:44px;font-weight:800}
+.l-price .pp small{font-size:15px;color:var(--muted);font-weight:500}
+.l-price .incl{text-align:left;max-width:300px;margin:14px auto 0;padding-left:18px;
+  color:var(--muted);font-size:13.5px;line-height:1.7}
+.l-price .btn{margin-top:20px;width:100%}
+.l-price .fine{font-size:12px;color:var(--faint);margin:10px 0 0}
+/* ---------- faq ---------- */
+.faq{max-width:760px}
+.faq details{background:var(--surface);border:1px solid var(--line);border-radius:10px;
+  padding:0 18px;margin-bottom:10px}
+.faq summary{cursor:pointer;font-weight:600;font-size:14.5px;padding:15px 0;
+  list-style:none;display:flex;align-items:center;gap:12px}
+.faq summary::-webkit-details-marker{display:none}
+.faq summary::after{content:"+";margin-left:auto;
+  font-family:"Bricolage Grotesque","Instrument Sans",sans-serif;font-size:19px;
+  color:var(--cuivre);flex:0 0 auto}
+.faq details[open] summary::after{content:"\\2013"}
+.faq details p{margin:0;padding:0 0 16px;color:var(--muted);font-size:13.5px;
+  line-height:1.6}
+/* ---------- bandeau final et pied ---------- */
+.l-cta{background:linear-gradient(120deg,var(--cuivre),var(--cuivre-deep));color:#fff}
+.l-cta .in{max-width:1240px;margin:0 auto;padding:56px 6vw;text-align:center}
+.l-cta h2{font-size:clamp(24px,3vw,36px);margin:0 0 10px;text-wrap:balance}
+.l-cta p{margin:0 auto 24px;opacity:.92;max-width:52ch}
+.l-cta .cta-row{justify-content:center}
+/* Fond BLANC en dur, donc texte sombre EN DUR : `var(--cuivre-deep)` s'éclaircit en
+   mode sombre (#A85837 → #E08B60) et donnait du cuivre pâle sur blanc. Un jeton qui
+   s'inverse n'a rien à faire en face d'une couleur qui ne s'inverse pas. */
+.l-cta .btn-clair{background:#fff;color:#A85837;border:0}
+.l-cta .btn-creux{background:none;color:#fff;border:1px solid rgba(255,255,255,.55)}
+.l-foot{border-top:1px solid var(--line);color:var(--faint);font-size:12.5px;
+  padding:22px 6vw;display:flex;gap:18px;flex-wrap:wrap;max-width:1240px;margin:0 auto}
+.l-foot .fin{margin-left:auto}
+/* ---------- responsive ---------- */
+/* LE MÊME ANGLE MORT QUE R100 : tout ce qui est en colonnes ici doit retomber sur une
+   colonne, et la page se REGARDE au viewport mobile avant livraison. L'artisan visé
+   est sur un chantier ; le téléphone n'est pas le cas dégradé, c'est le cas normal. */
+@media (max-width:940px){
+  .hero{grid-template-columns:1fr;padding:40px 16px;gap:32px}
+  /* `margin-left:auto` collait le téléphone à droite, et le `.ring-badge` qui dépasse
+     de 14px vers la gauche venait lécher le bord de l'écran. Centré, puis rentré de la
+     largeur du badge : il doit déborder de la CARTE, pas de la PAGE. */
+  .phone{margin:0 auto;max-width:min(360px,100%)}
+  .ring-badge{left:0}
+  .steps,.demo3,.vs,.franchise{grid-template-columns:1fr}
+  .trust,.proof .wrap{grid-template-columns:repeat(2,1fr)}
+  .l-sec{padding:40px 16px}
+  .l-nav{padding:14px 16px;gap:9px;flex-wrap:wrap}
+  .l-nav .links{gap:10px}
+  .l-nav .links .nav-ancre{display:none}
+  .proof .wrap{gap:24px;padding:26px 16px}
+  /* Le pied des cartes de comparaison est un libellé long face à un montant : côte à
+     côte, « À un panier de 780 € » se coupait entre le nombre et son unité. */
+  .vs-card .total{flex-direction:column;gap:4px}
+  .l-cta .in{padding:40px 16px}
+  .l-foot{padding:22px 16px}
+}
+@media (max-width:520px){
+  .trust,.proof .wrap{grid-template-columns:1fr}
+  .l-foot .fin{margin-left:0}
+}
+"""
+
+# L'ADRESSE DE CONTACT est la seule destination réelle des boutons d'appel à l'action :
+# il n'y a pas encore d'inscription en ligne, un artisan entre à la main par `/admin`.
+# Un bouton « Essayer gratuitement » qui ouvre un courriel est honnête ; le même bouton
+# pointant vers une page d'inscription qui n'existe pas ne l'est pas.
+#
+# ⚠️ À CONFIRMER PAR GEOFFREY : que cette boîte existe et soit relevée. Un formulaire
+# de contact qui tombe dans le vide coûte plus cher que pas de formulaire du tout.
+CONTACT_VITRINE = "contact@nelyo.fr"
+
+
+def vitrine(produit: str, accueil_demo: str, contact: str = CONTACT_VITRINE) -> str:
+    """La page publique : ce qu'un artisan voit avant d'avoir un compte.
+
+    `accueil_demo` est la VRAIE première phrase de l'assistant, rendue par
+    `engine.formule_accueil` et passée par l'API — pas une copie. C'est T17 appliqué
+    à la page de vente : la promesse affichée et la machine qui l'exécute ne peuvent
+    pas diverger, puisqu'il n'y a qu'une source.
+
+    Pas de `noindex` ici, contrairement à `_page_nelyo` : c'est la seule page du
+    produit qui DOIT être trouvée.
+    """
+    mailto = "mailto:" + escape(contact)
+    nom = escape(produit)
+
+    nav = (
+        '<div class="l-nav">'
+        '<span class="logo-mark"><svg viewBox="0 0 24 24" fill="none" stroke="#fff" '
+        'stroke-width="2.2" stroke-linecap="round"><path d="M5 4v6a7 7 0 0 0 14 0V4"/>'
+        '<path d="M12 17v3"/></svg></span>'
+        f"<b>{nom}</b>"
+        '<div class="links">'
+        '<a class="nav-ancre" href="#fonctionnement">Fonctionnement</a>'
+        '<a class="nav-ancre" href="#demo">Démo</a>'
+        '<a class="nav-ancre" href="#tarif">Tarif</a>'
+        '<a class="nav-ancre" href="#faq">FAQ</a>'
+        '<a class="btn" href="/connexion">Se connecter</a>'
+        f'<a class="btn btn-cu" href="{mailto}">Demander un accès</a>'
+        "</div></div>")
+
+    hero = (
+        '<div class="hero"><div>'
+        f'<span class="l-badge">L&#x27;assistant des artisans du bâtiment</span>'
+        "<h1>Vos appels. Vos RDV.<br><em>Même quand vous êtes sur chantier.</em></h1>"
+        '<p class="sub">Un prospect appelle pendant que vous avez les mains dans une '
+        f"chaudière ? {nom} répond, qualifie la demande et réserve le rendez-vous. "
+        "Vous validez d&#x27;un pouce — <b>vos prospects ne partent plus chez le "
+        "concurrent.</b></p>"
+        '<div class="cta-row">'
+        f'<a class="btn btn-cu btn-xl" href="{mailto}">Demander un accès</a>'
+        '<a class="btn btn-xl" href="#demo">Voir ce que vos clients entendent</a>'
+        "</div>"
+        '<div class="checks"><span>Sans engagement</span>'
+        "<span>Vous gardez votre numéro</span>"
+        "<span>Aucun RDV confirmé sans vous</span>"
+        "<span>Hébergé dans l&#x27;Union européenne</span></div>"
+        "</div>"
+        # La conversation du hero est une ILLUSTRATION, et le dit sous la carte. Ce
+        # qu'elle montre est en revanche le comportement réel de la machine à états :
+        # consigne de sécurité, commune demandée, créneau proposé, et la confirmation
+        # qui n'arrive QU'APRÈS la validation de l'artisan (règle n°5).
+        '<div class="phone">'
+        '<span class="ring-badge">Vous n&#x27;avez pas décroché</span>'
+        '<div class="ph-top"><span class="avatar">N</span>'
+        f"<b>Assistant {nom}</b><span class=\"st\">● en ligne, 24 h/24</span></div>"
+        '<div class="flux">'
+        '<div class="bulle b-cl"><span class="who">Prospect · 19 h 42</span>'
+        "Bonjour, j&#x27;ai une fuite sous l&#x27;évier, c&#x27;est urgent !</div>"
+        '<div class="bulle b-ia"><span class="who">Assistant</span>'
+        "Je comprends, on va s&#x27;occuper de vous. Si possible, coupez "
+        "l&#x27;arrivée d&#x27;eau. Vous êtes sur quelle commune ?</div>"
+        '<div class="bulle b-cl"><span class="who">Prospect</span>'
+        "Nogent-sur-Marne. Vous pouvez venir demain matin ?</div>"
+        '<div class="bulle b-ia"><span class="who">Assistant</span>'
+        "Je vous réserve demain entre 8 h et 10 h. Vous recevrez un SMS dès que "
+        "l&#x27;artisan a confirmé.</div>"
+        '<div class="bulle fin">Validé en 1 tap par l&#x27;artisan → SMS au client'
+        "</div></div>"
+        '<p class="avis">Exemple de conversation, reconstitué à partir du '
+        "déroulé réel de l&#x27;assistant.</p>"
+        "</div></div>")
+
+    # LE BANDEAU DE PREUVE. La maquette y plaçait « ×32 : retour moyen sur
+    # l'abonnement, mesuré en € signés » — un chiffre qu'aucune mesure ne soutient,
+    # puisqu'il n'y a pas encore d'abonné. Les quatre entrées retenues sont soit des
+    # propriétés du produit, soit son prix : rien qui demande une moyenne.
+    preuve = (
+        '<div class="proof"><div class="wrap">'
+        '<div class="it"><b>19 h 42</b>'
+        "<span>l&#x27;heure où un chantier part chez le concurrent</span></div>"
+        '<div class="it"><b class="num">24 h/24</b>'
+        "<span>un appel manqué trouve toujours quelqu&#x27;un</span></div>"
+        '<div class="it"><b>1 tap</b>'
+        "<span>pour valider un rendez-vous, depuis le chantier</span></div>"
+        '<div class="it"><b class="num">149 €</b>'
+        "<span>par mois, sans installation ni minutes comptées</span></div>"
+        "</div></div>")
+
+    # LA DÉMO. Trois cartes à la place des trois de la maquette (extrait audio, ligne
+    # de démonstration, rappel automatique) — aucune des trois n'existe. Ce qui existe,
+    # et qui vaut mieux : la phrase exacte, les règles que l'assistant ne peut pas
+    # enfreindre, et un humain à qui écrire.
+    demo = (
+        '<div class="l-sec" id="demo">'
+        "<h2>Ce que vos clients entendent</h2>"
+        '<p class="lead">Pas une promesse de marketing : la première phrase '
+        "ci-dessous est celle que la machine prononce, lue dans le produit au moment "
+        "où cette page s&#x27;affiche.</p>"
+        '<div class="demo3">'
+        '<div class="dcard"><h3>La première phrase, mot pour mot</h3>'
+        f'<p class="dit">{escape(accueil_demo)}</p>'
+        "<p>Elle s&#x27;annonce comme assistant dès la première seconde — la loi "
+        "l&#x27;exige, et vos clients ont le droit de le savoir.</p>"
+        '<p class="pied">Vous l&#x27;adaptez à votre entreprise : c&#x27;est votre '
+        "config qui parle, pas un script figé.</p></div>"
+        '<div class="dcard"><h3>Ce qu&#x27;il ne fera jamais</h3>'
+        "<ul><li>Inventer un prix que vous n&#x27;avez pas autorisé</li>"
+        "<li>Confirmer un rendez-vous sans votre validation</li>"
+        "<li>Promettre un rappel sans avoir un numéro</li>"
+        "<li>Se faire passer pour un humain</li></ul>"
+        '<p class="pied">Ces quatre règles sont dans le code, pas dans une '
+        "consigne donnée au modèle.</p></div>"
+        '<div class="dcard"><h3>Parler à quelqu&#x27;un</h3>'
+        f"<p>{nom} démarre avec ses premiers artisans, et l&#x27;accès se fait "
+        "encore à la main : vous écrivez, on vous installe, vous testez pendant "
+        "30 jours.</p>"
+        f'<p class="dit">{escape(contact)}</p>'
+        '<p class="pied">Réponse par un humain — en l&#x27;occurrence celui qui '
+        "écrit le produit.</p></div>"
+        "</div></div>")
+
+    fonctionnement = (
+        '<div class="l-sec" id="fonctionnement">'
+        f"<h2>Vous travaillez. {nom} décroche.</h2>"
+        '<p class="lead">Aucun changement d&#x27;habitude : vous gardez votre numéro '
+        "et vos clients ne voient aucune différence — sauf qu&#x27;on leur répond.</p>"
+        '<div class="steps">'
+        '<div class="step"><div class="nbr">1</div>'
+        "<h3>Activez le renvoi d&#x27;appel</h3>"
+        "<p>Un code à composer, une fois. Quand vous ne décrochez pas, l&#x27;appel "
+        f"bascule vers votre assistant {nom}. Vous reprenez la main quand vous "
+        "voulez.</p></div>"
+        '<div class="step"><div class="nbr">2</div>'
+        "<h3>L&#x27;assistant répond et qualifie</h3>"
+        "<p>Besoin, commune, urgence, coordonnées : il pose les bonnes questions et "
+        "réserve un créneau selon VOS règles — jamais un prix inventé, jamais une "
+        "promesse en votre nom.</p></div>"
+        '<div class="step"><div class="nbr">3</div>'
+        "<h3>Vous validez en 1 tap</h3>"
+        "<p>Vous recevez le résumé sur votre téléphone : valider, déplacer ou "
+        "refuser. Le client reçoit alors son SMS de confirmation, et votre agenda se "
+        "remplit.</p></div>"
+        "</div>"
+        # Les canaux « site » et « email » n'existent QUE dans la maquette. Les
+        # annoncer au présent était la promesse la moins tenable de la page.
+        '<div class="canaux"><span class="eyebrow">Vos canaux :</span>'
+        '<span class="c">Appels manqués</span>'
+        '<span class="c plus-tard">Formulaire de votre site — bientôt</span>'
+        '<span class="c plus-tard">Emails entrants — bientôt</span>'
+        '<span class="c plus-tard">WhatsApp — bientôt</span>'
+        "</div></div>")
+
+    # LE CALCUL. La maquette affirmait « nos artisans signent ×32 leur abonnement » et
+    # « 18 750 € récupérés le mois dernier ». Ici les chiffres de gauche sont donnés
+    # pour ce qu'ils sont — une hypothèse à ajuster — et le seul chiffre présenté comme
+    # mesurable est celui que l'artisan DÉCLARE lui-même (T18, migration 015).
+    roi = (
+        '<div class="l-dark" id="roi"><div class="l-sec">'
+        "<h2>Combien vous coûtent vos appels manqués ?</h2>"
+        '<p class="lead">Pendant une intervention, impossible de décrocher. Et un '
+        "prospect qui tombe sur la messagerie ne laisse pas de message : il appelle "
+        "le suivant.</p>"
+        '<div class="vs">'
+        '<div class="vs-card bad"><h3>Sans assistant</h3>'
+        '<span class="hypo">Hypothèse — ajustez à votre activité</span>'
+        "<dl><dt>Appels manqués en intervention</dt><dd>6 / sem.</dd>"
+        "<dt>Qui raccrochent sans message</dt><dd>7 sur 10</dd>"
+        "<dt>Chantiers perdus</dt><dd>≈ 5 / mois</dd>"
+        "<dt>Soir &amp; week-end</dt><dd>personne</dd></dl>"
+        '<div class="total"><span>À un panier de 780 €</span>'
+        '<span class="num">≈ 3 900 € / mois</span></div></div>'
+        '<div class="vs-card good"><h3>Avec ' + nom + "</h3>"
+        '<span class="hypo">Ce que vous achetez</span>'
+        "<dl><dt>Abonnement, tout compris</dt><dd>149 € / mois</dd>"
+        "<dt>Réponse</dt><dd>24 h/24</dd>"
+        "<dt>Décision</dt><dd>vous, en 1 tap</dd>"
+        "<dt>Engagement</dt><dd>aucun</dd></dl>"
+        '<div class="total"><span>CA récupéré</span>'
+        "<span>celui que vous déclarez</span></div></div>"
+        "</div>"
+        '<p class="vs-note">Les chiffres de gauche sont une hypothèse, pas une '
+        "moyenne mesurée : remplacez-les par les vôtres, vous connaissez votre panier "
+        f"mieux que nous. <b>Et {nom} ne devine jamais ce qu&#x27;il vous rapporte</b> "
+        ": quand un chantier est fait, vous indiquez s&#x27;il a été gagné et pour "
+        "quel montant. Votre tableau de bord additionne vos déclarations — rien "
+        "d&#x27;autre.</p>"
+        "</div></div>")
+
+    # LA PLACE DES TÉMOIGNAGES. Trois artisans inventés y disaient le bien qu'ils
+    # pensaient du produit. Ce qui tient cette place est la seule chose qu'on puisse
+    # honnêtement dire d'un produit sans client : ce qu'il fait, et ce qu'il ne fait
+    # pas encore. Un artisan qui s'est déjà fait avoir lit la seconde colonne d'abord.
+    franchise = (
+        '<div class="l-sec" id="franchise">'
+        f"<h2>{nom} démarre. Autant vous le dire.</h2>"
+        '<p class="lead">Pas de témoignages fabriqués ni de moyennes inventées sur '
+        "cette page : le produit cherche ses premiers artisans, et le prix en tient "
+        "compte.</p>"
+        '<div class="franchise">'
+        '<div class="fcard"><h3>Ce qui tourne aujourd&#x27;hui</h3>'
+        "<ul><li><b>L&#x27;assistant</b> : il répond, qualifie, propose un créneau "
+        "et s&#x27;arrête net là où vous ne l&#x27;avez pas autorisé</li>"
+        "<li><b>La validation en 1 tap</b>, et le SMS au client une fois que vous "
+        "avez dit oui</li>"
+        "<li><b>Votre espace</b> : demandes reçues, agenda, règles de "
+        "l&#x27;assistant, chiffre d&#x27;affaires déclaré</li>"
+        "<li><b>Vos données dans l&#x27;UE</b>, exportables, supprimables</li>"
+        "</ul></div>"
+        '<div class="fcard"><h3>Ce qui n&#x27;est pas encore là</h3>'
+        "<ul><li>Les demandes venues de <b>votre site et de vos emails</b> — "
+        "l&#x27;assistant ne traite aujourd&#x27;hui que les appels</li>"
+        "<li>L&#x27;<b>inscription en ligne</b> : on vous installe à la main, et "
+        "c&#x27;est aussi l&#x27;occasion de régler l&#x27;assistant avec vous</li>"
+        "<li>La <b>facturation automatique</b></li>"
+        "<li>Le <b>transfert d&#x27;un appel urgent</b> vers votre portable</li>"
+        "</ul></div>"
+        "</div></div>")
+
+    confiance = (
+        '<div class="l-sec" id="confiance">'
+        "<h2>Conçu pour inspirer confiance</h2>"
+        '<p class="lead">À vos clients comme à vous : des règles strictes, écrites '
+        "dans le produit plutôt que dans une charte.</p>"
+        '<div class="trust">'
+        # PAS DE DRAPEAU 🇪🇺 ICI, ni 🇫🇷 au pied de page, contrairement à la maquette :
+        # Windows ne sait pas composer les indicatifs régionaux et affiche les deux
+        # lettres brutes. Vu au rendu — « Hébergé en Europe · EU », « Fait en France FR ».
+        # Un PC est l'écran normal d'un artisan qui s'informe le soir.
+        '<div class="titem"><span class="ico">🔒</span><b>Hébergé en Europe</b>'
+        "<p>Données stockées dans l&#x27;Union européenne, conformes au RGPD. "
+        "Export et suppression sur simple demande.</p></div>"
+        '<div class="titem"><span class="ico">🤖</span><b>IA annoncée</b>'
+        "<p>L&#x27;assistant se présente comme tel dès les premières secondes de "
+        "l&#x27;appel, comme la loi l&#x27;exige.</p></div>"
+        '<div class="titem"><span class="ico">✅</span><b>Vous gardez la main</b>'
+        "<p>Aucun rendez-vous confirmé, aucun SMS envoyé à votre client sans votre "
+        "validation.</p></div>"
+        '<div class="titem"><span class="ico">🚫</span><b>Jamais de prix inventé</b>'
+        "<p>L&#x27;assistant n&#x27;annonce que les tarifs que vous avez autorisés. "
+        "Aucun devis improvisé en votre nom.</p></div>"
+        "</div></div>")
+
+    tarif = (
+        '<div class="l-sec" id="tarif">'
+        "<h2>Un prix simple. Un retour que vous mesurez.</h2>"
+        '<p class="lead">Pas de minutes comptées, pas de frais d&#x27;installation : '
+        "un abonnement, et un tableau de bord qui additionne ce que vous avez "
+        "déclaré avoir gagné.</p>"
+        '<div class="l-price">'
+        f'<div class="eyebrow">{nom} Pro</div>'
+        '<div class="pp num">149 €<small> HT / mois</small></div>'
+        '<ul class="incl">'
+        "<li>Appels illimités, 24 h/24</li>"
+        "<li>SMS de confirmation à vos clients</li>"
+        "<li>Validation, agenda, statistiques</li>"
+        "<li>Réglages de l&#x27;assistant faits avec vous</li>"
+        "<li>30 jours d&#x27;essai, sans engagement</li></ul>"
+        f'<a class="btn btn-cu btn-xl" href="{mailto}">Demander un accès</a>'
+        '<p class="fine">Un seul chantier récupéré rembourse plusieurs mois '
+        "d&#x27;abonnement.</p>"
+        "</div></div>")
+
+    faq = (
+        '<div class="l-sec" id="faq">'
+        "<h2>Questions fréquentes</h2>"
+        '<div class="faq">'
+        "<details><summary>Est-ce que mon numéro change ?</summary>"
+        f"<p>Non. {nom} s&#x27;active par renvoi d&#x27;appel conditionnel : "
+        "l&#x27;assistant ne décroche que si vous ne répondez pas. Un code à composer "
+        "pour l&#x27;activer, un autre pour l&#x27;arrêter.</p></details>"
+        "<details><summary>Les clients savent-ils qu&#x27;ils parlent à une IA ?"
+        "</summary><p>Oui, l&#x27;assistant se présente comme IA dès le début de "
+        "l&#x27;appel — c&#x27;est une obligation légale et une question de "
+        "confiance. Ce que vos clients veulent, c&#x27;est une réponse et un "
+        "rendez-vous, pas une messagerie.</p></details>"
+        "<details><summary>Comment les rendez-vous sont-ils pris ?</summary>"
+        "<p>L&#x27;assistant propose des créneaux selon vos règles — zones, horaires, "
+        "fenêtres d&#x27;urgence — dans un agenda tampon. Rien n&#x27;est confirmé au "
+        "client avant que vous ayez validé ; il reçoit alors son SMS.</p></details>"
+        "<details><summary>Et si l&#x27;assistant ne comprend pas une demande ?"
+        "</summary><p>Il ne force jamais. Si la demande sort de son périmètre, il "
+        "prend les coordonnées et vous transmet la demande avec le résumé de "
+        "l&#x27;appel. S&#x27;il n&#x27;a pas de numéro, il ne promet aucun "
+        "rappel — il vous le signale comme tel.</p></details>"
+        "<details><summary>Donne-t-il des prix au téléphone ?</summary>"
+        "<p>Uniquement ceux que vous avez explicitement autorisés, comme un tarif de "
+        "déplacement. Jamais d&#x27;estimation improvisée, jamais d&#x27;engagement en "
+        "votre nom.</p></details>"
+        "<details><summary>D&#x27;où viennent les demandes ?</summary>"
+        "<p>Aujourd&#x27;hui, de vos appels manqués. Le formulaire de votre site et "
+        "vos emails entrants arriveront dans le même espace, qualifiés de la même "
+        "façon — ils ne sont pas encore ouverts.</p></details>"
+        "<details><summary>Et si je veux arrêter ?</summary>"
+        "<p>Sans engagement : vous désactivez le renvoi d&#x27;appel et tout "
+        "s&#x27;arrête. Vos données vous appartiennent et restent exportables.</p>"
+        "</details>"
+        "</div></div>")
+
+    final = (
+        '<div class="l-cta"><div class="in">'
+        "<h2>Prêt à ne plus perdre de chantiers ?</h2>"
+        "<p>30 jours d&#x27;essai, sans engagement et sans changer de numéro. "
+        "On vous installe à la main, et on règle l&#x27;assistant avec vous.</p>"
+        '<div class="cta-row">'
+        f'<a class="btn btn-xl btn-clair" href="{mailto}">Demander un accès</a>'
+        '<a class="btn btn-xl btn-creux" href="#demo">Voir ce que vos clients '
+        "entendent</a>"
+        "</div></div></div>")
+
+    # PAS DE LIENS « Mentions légales / CGV / Confidentialité » comme dans la maquette :
+    # ils seraient morts. Ils demandent une raison sociale, un SIRET et un hébergeur —
+    # des informations que le dépôt n'a pas et qu'on n'invente pas. À poser avant
+    # d'ouvrir la page au public (la mention légale est une obligation, pas un détail).
+    pied = (
+        '<div class="l-foot">'
+        f"<span>© 2026 {nom}</span>"
+        f'<span><a href="{mailto}">{escape(contact)}</a></span>'
+        '<span class="fin">Conçu et hébergé en France</span>'
+        "</div>")
+
+    return (
+        "<!DOCTYPE html>\n"
+        '<html lang="fr"><head><meta charset="utf-8">'
+        '<meta name="viewport" content="width=device-width, initial-scale=1">'
+        '<meta name="description" content="'
+        f"{nom} répond aux appels que vous manquez sur chantier, qualifie la demande "
+        'et réserve le rendez-vous. Vous validez en 1 tap avant toute confirmation.">'
+        f"<title>{nom} — vos appels manqués deviennent des rendez-vous</title>"
+        f"<style>{_STYLE_VITRINE}</style></head><body>"
+        + nav + hero + preuve + demo + fonctionnement + roi + franchise
+        + confiance + tarif + faq + final + pied
+        + "</body></html>")

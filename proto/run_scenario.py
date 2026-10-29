@@ -4936,7 +4936,7 @@ def check_feuille_entiere() -> bool:
     # Le marqueur de section est le SENTINELLE : une chaîne qui se referme trop tôt le
     # perd avant tout le reste. Les règles qui suivent sont celles qui avaient disparu.
     for regle in ("/* ---------- responsive ---------- */",
-                  ".mobilebar{display:none}", ".mobilebar a.on{"):
+                  ".mobilebar{display:none}", ".mobilebar .onglet.on{"):
         if regle not in css:
             print(f"   règle absente de la feuille servie : {regle!r}\n"
                   "     (une chaîne de style s'est probablement refermée trop tôt)")
@@ -5275,6 +5275,197 @@ def check_issue_chantier() -> bool:
     return True
 
 
+def check_site_vitrine() -> bool:
+    """T19 : la page publique dit vrai, tient ses liens, et montre la VRAIE phrase.
+
+    Posée le 29/10, en portant `#landing` de la maquette v5 dans `pages.py`. La racine
+    du domaine rendait 404 depuis la mise en ligne du 20/09 : le produit était joignable,
+    mais il n'y avait rien à montrer à quelqu'un qui n'a pas encore de compte.
+
+    CE QUE CE TEST GARDE N'EST PAS LA MISE EN PAGE, c'est ce que la page AFFIRME. Une
+    page de vente est le chemin par lequel une promesse arrive à quelqu'un qui n'a pas
+    encore signé — donc le chemin où la règle 2bis (« ce qu'on promet doit être tenable,
+    sur TOUS les chemins ») compte le plus, et celui où personne ne la cherchait.
+
+    Quatre verrous, chacun sur une façon précise de mentir :
+
+    1. **La phrase d'accueil affichée EST celle que le moteur prononce** — elle est
+       comparée à `formule_accueil` appelée ici. C'est T17 d'un cran plus loin : l'écran
+       « Assistant IA » montre à l'artisan ce que sa machine dit, cette page le montre à
+       un prospect, et une page de vente qui recopie une phrase la laisse vieillir.
+
+    2. **Aucune preuve fabriquée.** La maquette portait trois témoignages signés de noms
+       d'artisans, un « ×32 de retour moyen mesuré en € signés », « 18 750 € récupérés
+       le mois dernier », une ligne de démonstration et des extraits audio. Rien de tout
+       cela n'existe : Nelyo n'a aucun client. Dans une maquette ce sont des lorem ipsum ;
+       servis en ligne ce sont des affirmations. La liste ci-dessous est exactement ce que
+       la maquette portait — le jour où quelqu'un recolle `#landing` tel quel, ce test
+       mord. Il tombera de lui-même le jour où un vrai artisan acceptera d'être cité :
+       **la ligne à retirer sera alors celle de son chiffre, pas celle du contrôle.**
+
+    3. **Aucun lien mort.** Chaque ancre `#x` trouve son `id`, chaque chemin interne
+       répond autre chose que 404. Un pied de page « Mentions légales · CGV »  recopié
+       de la maquette aurait servi trois 404 sur la page la plus lue du produit.
+
+    4. **Les canaux pas encore ouverts sont datés.** Le formulaire du site et les emails
+       n'existent qu'en maquette ; ils étaient annoncés au présent dans les puces ET dans
+       la FAQ. C'est la promesse la moins tenable de la page, et la plus facile à écrire
+       sans y penser.
+    """
+    try:
+        from fastapi.testclient import TestClient
+    except ImportError:
+        print("   fastapi/httpx absents : pip install -r requirements.txt")
+        return False
+
+    import re as _re_t19
+    from html import escape as _esc
+
+    from relais_proto.api import creer_app
+    from relais_proto.engine import formule_accueil
+    from relais_proto.pages import _STYLE_VITRINE
+    from relais_proto.registre import Artisan, Registre, empreinte as emp_token
+
+    registre = Registre([Artisan("art-dupont", "+33189701234", emp_token("tok"), CFG,
+                                 telephone="+33612345678")],
+                        emp_token("secret-voix"))
+    app = creer_app(DepotMemoire(), registre, MockLLM, lambda: LUNDI_9H,
+                    base_url="https://nelyo.test", cookie_secure=False)
+    with TestClient(app) as visiteur:
+        reponse = visiteur.get("/")
+        if reponse.status_code != 200:
+            print(f"   la racine du domaine rend {reponse.status_code} — "
+                  "un prospect qui tape le nom de domaine ne trouve rien")
+            return False
+        page = reponse.text
+
+        # 1. la phrase montrée est celle que la machine prononce
+        attendue = formule_accueil({"entreprise": {"nom": "Dupont Chauffage",
+                                                   "prenom_patron": "Julien"},
+                                    "accueil": {"formule": None}})
+        if _esc(attendue) not in page:
+            print("   la page n'affiche pas la phrase rendue par `formule_accueil` — "
+                  "elle en garde une COPIE, qui divergera (T17)")
+            return False
+
+        # la page publique est la seule qui DOIT être trouvée
+        if "noindex" in page:
+            print("   la vitrine se refuse à l'indexation : c'est la seule page du "
+                  "produit qui doit être trouvable")
+            return False
+
+        # 2. aucune preuve fabriquée — la liste est celle de la maquette v5
+        inventions = {
+            "Karim M.": "témoignage signé d'un artisan qui n'existe pas",
+            "Julien D.": "témoignage signé d'un artisan qui n'existe pas",
+            "Sofiane L.": "témoignage signé d'un artisan qui n'existe pas",
+            "×32": "moyenne mesurée sur des clients qu'on n'a pas",
+            "18 750": "chiffre d'affaires récupéré par un artisan imaginaire",
+            "+22 RDV récupérés": "compteur inventé",
+            "0 appel manqué depuis mars": "compteur inventé",
+            "01 99 00 06 42": "ligne de démonstration qui ne décroche pas",
+            "Écouter un appel": "extraits audio qui n'existent pas",
+        }
+        for marqueur, quoi in inventions.items():
+            if marqueur in page:
+                print(f"   la page affirme {marqueur!r} — {quoi}.\n"
+                      "     La maquette a le droit d'inventer, la page servie non "
+                      "(décision du 22/09, « aucun chiffre inventé »).")
+                return False
+
+        # 3. aucun lien mort
+        hrefs = set(_re_t19.findall(r'href="([^"]+)"', page))
+        if not hrefs:
+            print("   la page ne porte aucun lien : la navigation a disparu")
+            return False
+        for href in sorted(hrefs):
+            if href.startswith("mailto:"):
+                continue
+            if href.startswith("#"):
+                if f'id="{href[1:]}"' not in page:
+                    print(f"   ancre morte : {href} ne mène à aucun id de la page")
+                    return False
+                continue
+            if href.startswith("/"):
+                if visiteur.get(href, follow_redirects=False).status_code == 404:
+                    print(f"   lien mort : {href} rend 404 depuis la page publique")
+                    return False
+                continue
+            print(f"   lien externe inattendu sur la page publique : {href}")
+            return False
+
+        # 4. ce qui n'est pas ouvert est daté
+        for pas_encore in ("Formulaire de votre site", "Emails entrants"):
+            bloc = page.split(pas_encore)[1][:40] if pas_encore in page else ""
+            if "bientôt" not in bloc:
+                print(f"   « {pas_encore} » est annoncé sans réserve — ce canal "
+                      "n'existe qu'en maquette (règle 2bis)")
+                return False
+        if "ne sont pas encore ouverts" not in page:
+            print("   la FAQ annonce les canaux site/email au présent")
+            return False
+
+    # 5. la page retombe sur une colonne — même angle mort que R100, à défaut d'un rendu
+    if "@media (max-width:940px)" not in _STYLE_VITRINE:
+        print("   la feuille de la vitrine n'a pas de bloc responsive")
+        return False
+    for grille in (".steps", ".demo3", ".vs", ".franchise"):
+        if grille not in _STYLE_VITRINE.split("@media (max-width:940px)")[1]:
+            print(f"   {grille} ne retombe pas sur une colonne sur mobile")
+            return False
+    return True
+
+
+def check_couleur_par_position() -> bool:
+    """R101 : aucune règle ne donne sa couleur à un lien PAR SA POSITION.
+
+    Trouvé le 29/10 en regardant la vitrine rendue : dans la barre du haut, le bouton
+    cuivre « Demander un accès » affichait son libellé en gris, illisible sur son propre
+    fond. La cause :
+
+        .l-nav .links{color:var(--muted)}
+        .l-nav .links a{color:inherit}     <- 0,2,1
+        .btn-cu{color:#fff}                <- 0,1,0
+
+    La règle de menu pèse plus lourd que celle du bouton. Elle avait été écrite pour les
+    quatre ancres du menu ; elle a attrapé les deux boutons posés dans le même conteneur.
+
+    C'EST R100 DANS UNE AUTRE COULEUR, au sens littéral : une règle pensée pour un rôle
+    qui en trouve un second parce qu'elle vise un ÉLÉMENT là où elle voulait viser un
+    rôle. R100 l'a interdit pour `nav`/`aside`/`header` et la mise en page ; ici c'est
+    `a` et la couleur. Le défaut d'origine comme celui-ci sont invisibles au test qui lit
+    le HTML, et tous deux ne se voient qu'en rendant la page — d'où le même remède :
+    interdire la FORME qui a mordu.
+
+    La règle : `a` en fin de sélecteur DESCENDANT (« tous les liens de ce bloc ») est
+    interdit ; `a` seul reste permis — c'est le défaut global du document, et il ne
+    prétend pas connaître un rôle. `a.btn`, `.l-nav .links .nav-ancre` conviennent :
+    l'un comme l'autre nomment ce qu'ils visent.
+    """
+    import re as _re
+
+    from relais_proto.pages import _STYLE_NELYO, _STYLE_VITRINE
+
+    for ou, feuille in (("espace artisan", _STYLE_NELYO), ("vitrine", _STYLE_VITRINE)):
+        sans_commentaires = _re.sub(r"/\*.*?\*/", "", feuille, flags=_re.S)
+        fautifs = []
+        for bloc in _re.findall(r"(?:^|\})([^{}]+)\{", sans_commentaires):
+            for sel in bloc.split(","):
+                sel = sel.strip()
+                if not sel or sel.startswith("@"):
+                    continue
+                # « … <espace> a » ou « … > a », éventuellement suivi d'une pseudo
+                if _re.search(r"[\s>]a(\s*:[a-z-]+(\([^)]*\))?)?$", sel):
+                    fautifs.append(sel)
+        if fautifs:
+            print(f"   [{ou}] la couleur d'un lien y dépend de SA POSITION, pas de ce "
+                  f"qu'il est : {fautifs}\n"
+                  "     un bouton posé dans ce conteneur héritera de la règle et "
+                  "perdra sa propre couleur (R101)")
+            return False
+    return True
+
+
 def check_selecteurs_non_scopes() -> bool:
     """R100 : aucune règle de la feuille de l'espace artisan ne vise un élément nu
     que le gabarit emploie PLUSIEURS fois dans des rôles différents.
@@ -5291,21 +5482,30 @@ def check_selecteurs_non_scopes() -> bool:
     La règle : `nav`, `aside`, `header` n'apparaissent comme sélecteurs qu'avec un
     scope (`.side nav`) ou une classe (`nav.mobilebar`). Un élément utilisé une seule
     fois (body, main) peut rester nu.
+
+    ÉTENDU LE 29/10 À LA FEUILLE DE LA VITRINE, en l'écrivant. Le défaut d'origine est
+    né d'une règle pensée pour un rôle et qui en a trouvé un second ; une deuxième
+    feuille est précisément une deuxième occasion. C'est le réflexe demandé par 2bis —
+    « quand une règle de ce genre arrive, la chercher sur TOUS les chemins » — et il
+    s'applique au contrôle lui-même, pas seulement au produit : un verrou qui ne
+    surveille qu'une feuille sur deux laisse entrer le même défaut par l'autre porte.
     """
     import re as _re
-    from relais_proto.pages import _STYLE_NELYO
+    from relais_proto.pages import _STYLE_NELYO, _STYLE_VITRINE
 
-    # les sélecteurs : ce qui précède chaque « { », bloc média compris, moins les corps
-    feuilles = _re.sub(r"/\*.*?\*/", "", _STYLE_NELYO, flags=_re.S)
-    selecteurs = []
-    for bloc in _re.findall(r"(?:^|\})([^{}]+)\{", feuilles):
-        selecteurs += [s.strip() for s in bloc.split(",") if s.strip()
-                       and not s.strip().startswith("@")]
-    nus = [s for s in selecteurs
-           if _re.fullmatch(r"(nav|aside|header)(\s*:[a-z-]+.*)?", s)]
-    if nus:
-        print(f"   sélecteurs d'élément nus qui matchent plusieurs rôles : {nus}")
-        return False
+    for ou, feuille in (("espace artisan", _STYLE_NELYO), ("vitrine", _STYLE_VITRINE)):
+        # les sélecteurs : ce qui précède chaque « { », bloc média compris, sans corps
+        sans_commentaires = _re.sub(r"/\*.*?\*/", "", feuille, flags=_re.S)
+        selecteurs = []
+        for bloc in _re.findall(r"(?:^|\})([^{}]+)\{", sans_commentaires):
+            selecteurs += [s.strip() for s in bloc.split(",") if s.strip()
+                           and not s.strip().startswith("@")]
+        nus = [s for s in selecteurs
+               if _re.fullmatch(r"(nav|aside|header)(\s*:[a-z-]+.*)?", s)]
+        if nus:
+            print(f"   [{ou}] sélecteurs d'élément nus qui matchent plusieurs "
+                  f"rôles : {nus}")
+            return False
     return True
 
 
@@ -12805,11 +13005,28 @@ def run() -> int:
         print("   → ❌ FAIL")
         echecs += 1
 
+    print(f"\n──── T19_site_vitrine ────")
+    if check_site_vitrine():
+        print("   → la page publique montre la phrase que le moteur prononce, "
+              "n'affirme aucune preuve fabriquée, ne porte aucun lien mort et "
+              "date les canaux qui n'existent pas encore : ✅ PASS")
+    else:
+        print("   → ❌ FAIL")
+        echecs += 1
+
     print(f"\n──── R100_selecteurs_non_scopes ────")
     if check_selecteurs_non_scopes():
         print("   → aucune règle nue (nav/aside/header) ne peut fuir d'un rôle vers "
               "un autre : la barre mobile ne re-hérite plus du flex-direction de la "
               "barre latérale : ✅ PASS")
+    else:
+        print("   → ❌ FAIL")
+        echecs += 1
+
+    print(f"\n──── R101_couleur_par_position ────")
+    if check_couleur_par_position():
+        print("   → aucun lien ne tient sa couleur de son conteneur : un bouton "
+              "posé dans une barre de menu garde la sienne : ✅ PASS")
     else:
         print("   → ❌ FAIL")
         echecs += 1

@@ -5,7 +5,7 @@
 
 ---
 
-# ÉTAT AU 26/10/2026 — à lire en premier
+# ÉTAT AU 29/10/2026 — à lire en premier
 
 > **Ce bloc se REMPLACE, il ne s'empile pas.** Les entrées datées plus bas sont le journal
 > chronologique (le pourquoi des décisions) ; ce bloc-ci est le où-on-en-est.
@@ -16,7 +16,7 @@ Le produit s'appelle **NELYO** et **il tourne en ligne** :
 <https://nelyo-api.onrender.com>, cron compris, sur une base de production séparée.
 Depuis le 21/09 **un artisan s'inscrit sans commit ni redéploiement** : sa config vit en
 base et s'édite dans `/admin`. La compréhension est au LLM sous contrat fermé, mesurée à
-**68/70** au banc d'extraction et **57/57** en éval réelle ×3 ; **107 tests** de
+**68/70** au banc d'extraction et **57/57** en éval réelle ×3 ; **111 tests** de
 non-régression. Il reste **un seul mur** : aucun numéro n'est joignable depuis la France.
 
 Depuis le 26/10 le projet est **piloté depuis Claude Cowork** : le dépôt se lit et s'écrit
@@ -30,7 +30,7 @@ les évals LLM réelles (la clé API ne voyage pas) et `run_depot_pg` (Supabase)
 
 ```bash
 cd proto
-python run_scenario.py                              # 107 tests, ~3 s — sans clé NI BASE (R93)
+python run_scenario.py                              # 111 tests, ~3 s — sans clé NI BASE (R93)
 python run_extract_eval.py [--mock] [--only …]      # banc d'EXTRACTION : 68/70, p50 1131 ms
 python run_llm_eval.py [--mock] [--n 3]             # éval appelant-simulé (19 personas)
 python run_depot_pg.py [--migrer]                   # contrat du port contre Supabase
@@ -98,7 +98,8 @@ pause** (DNS qui ne résout plus, pooler qui répond `tenant/user not found`). B
 | **Trois portes vers la session artisan** (code SMS, mot de passe, lien) | ✅ **23/09** | T16 ; l'artisan s'enregistre dans son appareil et ne se reconnecte plus |
 | **Écran « Assistant IA » : ce que la machine dit, mot pour mot** | ✅ **24/09** | T17 + 4 mutations ; l'accueil affiché EST `formule_accueil(cfg)` |
 | **Écran Statistiques + issue de chantier (CA déclaré)** | ✅ **26/10** | T18 + contrat dépôt ; migration 015 (à appliquer : dev puis prod) |
-| **Facturation, site vitrine (code)** | ❌ | facturation : rien ; site vitrine : maquette v5 seulement |
+| **Site vitrine : la page publique, servie sur `/`** | ✅ **29/10** | T19 + R101 ; rendue et REGARDÉE en 390/768/1280, clair et sombre |
+| **Facturation (code)** | ❌ | rien de commencé |
 | Éval LLM réelle, 19 personas × 3 | ✅ 57/57 le 09/09 | à rejouer après R94 |
 
 ## Le fait structurant de la période (01–02/09) : le curseur a bougé
@@ -290,7 +291,17 @@ Eux ont le transfert d'urgences en direct (à évaluer pour la V2) et un blog SE
    (onboarding, dashboard, facturation, agenda), `appel_muet`, le worker de rattrapage.
 6. ~~Trancher l'écart « CA récupéré »~~ — **fait le 26/10** (voir l'entrée datée) :
    appliquer la migration 015 en dev (`run_depot_pg --migrer`) puis en prod au
-   prochain déploiement.
+   prochain déploiement. ⚠️ **TOUJOURS PAS APPLIQUÉE au 29/10** : la base de DEV
+   (`ucqtisaagmxbtulbzzqn`) est EN PAUSE — DNS qui ne résout plus sur l'hôte direct,
+   `tenant/user not found` sur le pooler. C'est le symptôme connu du plan gratuit à
+   deux projets actifs. Bouton « Restore » dans Supabase, puis `--migrer`.
+7. ~~Le site vitrine~~ — **fait le 29/10** (voir l'entrée datée). Restent deux choses
+   que le code ne pouvait pas trancher, et qui conditionnent sa MISE EN AVANT :
+   les **mentions légales** (raison sociale, SIRET, hébergeur — obligatoires pour un
+   site qui présente une offre commerciale, d'où un pied de page sans liens morts
+   plutôt qu'un gabarit à trous), et le fait que **la page vend un service dont
+   l'entrée téléphonique française n'existe pas encore** (dette n°1). La page est
+   servie ; diffuser son adresse est une décision qui attend ces deux-là.
 
 En parallèle, à préparer sans coder : la **réception SMS** (révision OUI/NON), une fois les
 trois questions OVH tranchées.
@@ -312,6 +323,118 @@ Le mode d'emploi des sondes et le détail de la récolte du 25/08 sont dans les 
 datées ; l'en-tête de `vapi.py` porte le format de fil SSE. **Les lire avant de toucher au
 chantier voix.**
 
+
+---
+
+## 29/10 — Le site vitrine, et ce qu'une page de vente n'a pas le droit de dire
+
+La racine du domaine rendait **404** depuis la mise en ligne du 20/09 : le produit était
+joignable, l'espace artisan fini, et il n'y avait rien à montrer à quelqu'un qui n'a pas
+encore de compte. `#landing` de la maquette v5 est maintenant servi sur `/` — seule page
+du produit SANS `noindex`, et la seule qui doive être trouvée.
+
+### Ce qui n'a pas été repris de la maquette, et pourquoi c'est le cœur de la session
+
+La maquette portait des **preuves fabriquées** : trois témoignages signés « Karim M. »,
+« Julien D. », « Sofiane L. », un « ×32 de retour moyen, mesuré en € signés »,
+« 18 750 € récupérés le mois dernier », « +22 RDV récupérés en septembre », une ligne de
+démonstration (01 99 00 06 42) et trois extraits audio à écouter. Aucun de ces objets
+n'existe : Nelyo n'a pas de client, pas de moyenne, pas d'enregistrement, pas de numéro.
+
+Dans une maquette ce sont des lorem ipsum. Servis en ligne, ce sont des **affirmations
+adressées à un artisan qui décide d'acheter**. C'est la décision du 22/09 — « aucun
+chiffre inventé » — appliquée là où elle coûte quelque chose : elle avait été prise pour
+le tableau de bord, qui parle à quelqu'un ayant déjà payé, et elle vaut d'abord sur la
+page qui parle à quelqu'un qui n'a pas signé. Et c'est 2bis au complet : « ce qu'on
+promet doit être tenable, sur TOUS les chemins » — **une page de vente est un chemin**,
+et personne n'y avait cherché la règle.
+
+Les emplacements sont gardés, remplis de ce qui est vrai :
+
+- les **témoignages** → « Nelyo démarre. Autant vous le dire. » : deux colonnes, ce qui
+  tourne et ce qui n'est pas encore là (demandes par le site et par email, inscription
+  en ligne, facturation, transfert d'urgence). Un artisan qui s'est déjà fait avoir lit
+  la seconde colonne d'abord ; la franchise est un argument, pas un aveu ;
+- le **« ×32 mesuré »** → le calcul est marqué « HYPOTHÈSE — ajustez à votre activité »,
+  et le seul chiffre annoncé comme mesurable est celui que T18 rend réel : « Nelyo ne
+  devine jamais ce qu'il vous rapporte, votre tableau de bord additionne vos
+  déclarations » ;
+- les **extraits audio et la ligne de démo** → la vraie première phrase de l'assistant,
+  rendue par `engine.formule_accueil` et vérifiée comme telle. C'est **T17 déplacé d'un
+  cran** : l'écran « Assistant IA » montre à l'artisan ce que sa machine dit, cette page
+  le montre à qui hésite à l'acheter, et ni l'un ni l'autre n'en garde une copie ;
+- les **canaux site et email** → datés « bientôt ». Ils étaient annoncés au présent dans
+  les puces ET dans la FAQ : la promesse la moins tenable de la page, et la plus facile
+  à écrire sans y penser ;
+- le **pied de page** → pas de « Mentions légales · CGV · Confidentialité », qui auraient
+  été trois 404 sur la page la plus lue. Elles demandent une raison sociale, un SIRET et
+  un hébergeur : des informations que le dépôt n'a pas et qu'on n'invente pas.
+
+Les appels à l'action pointent vers `mailto:contact@nelyo.fr` — **boîte à confirmer**.
+Il n'y a pas d'inscription en ligne : un artisan entre à la main par `/admin`, et le dire
+est honnête ; un bouton vers une page d'inscription qui n'existe pas ne l'aurait pas été.
+
+### Le socle de style, partagé plutôt que recopié
+
+Jetons, polices, reset, boutons, avatar, pastille de logo et bulles de conversation
+vivent désormais dans `_SOCLE_NELYO`, dont `_STYLE_NELYO` (espace artisan) et
+`_STYLE_VITRINE` sont deux prolongements. La tentation était de donner sa propre feuille
+à la vitrine : elle aurait dérivé au premier changement de teinte, et personne ne
+l'aurait vu — **un prospect et un client ne regardent jamais les deux pages côte à
+côte**. Même raisonnement que T17, appliqué au style plutôt qu'au texte.
+
+### Ce que seul le RENDU a montré — la leçon de R100, confirmée
+
+La page a été **regardée** à 390, 768 et 1280 px, en clair et en sombre, par capture
+headless. Cinq défauts qu'aucun test lisant du HTML n'aurait vus :
+
+1. **Le bouton cuivre de la barre du haut avait un libellé gris**, illisible sur son
+   propre fond. `.l-nav .links a{color:inherit}` (0,2,1) écrase `.btn-cu{color:#fff}`
+   (0,1,0) : une règle écrite pour quatre ancres de menu avait attrapé les deux boutons
+   posés dans le même conteneur. **C'est R100 dans une autre couleur** — viser un
+   ÉLÉMENT là où on voulait viser un RÔLE — d'où **R101**, qui interdit `a` en fin de
+   sélecteur descendant dans les DEUX feuilles. Il a mordu immédiatement sur l'existant :
+   `.mobilebar a` portait le même défaut latent depuis le 22/09, corrigé en `.onglet` ;
+2. « Demander un accès » **passait à la ligne à l'intérieur de son bouton**, en débordant
+   du fond : le raccourci `font:` du socle remet la hauteur de ligne à `normal` ;
+3. **🇪🇺 et 🇫🇷 s'affichent « EU » et « FR » sous Windows**, qui ne compose pas les
+   indicatifs régionaux. Un PC est l'écran normal d'un artisan qui s'informe le soir ;
+4. le bandeau de preuve en `flex: space-between` **laissait sa quatrième entrée
+   orpheline** sur une deuxième ligne ; devenu une grille 4 → 2 → 1 ;
+5. le bouton blanc du bandeau final prenait son texte dans `var(--cuivre-deep)`, **qui
+   s'éclaircit en mode sombre** : cuivre pâle sur blanc. Un jeton qui s'inverse n'a rien
+   à faire en face d'une couleur qui ne s'inverse pas.
+
+Piège d'outillage noté au passage, parce qu'il a failli faire corriger un défaut qui
+n'existait pas : `--window-size` de Chrome **ne fixe pas la largeur CSS** (échelle
+Windows à 125 %, et la fenêtre a un minimum). La première capture « mobile » montrait un
+texte coupé à droite — un artefact, pas un débordement. Une **iframe de largeur fixe**
+impose le viewport exactement, et une sonde qui mesure `scrollWidth` et nomme les
+éléments qui dépassent répond à la question que la capture pose sans y répondre.
+
+### Verrouillé par
+
+**T19** : la racine répond, la phrase affichée EST celle de `formule_accueil`, aucune des
+neuf preuves fabriquées de la maquette n'y figure (la liste est exactement ce que
+`#landing` portait — le jour où quelqu'un le recolle, le test mord), aucun lien mort
+(chaque ancre trouve son `id`, chaque chemin interne répond autre chose que 404), les
+canaux non ouverts sont datés, et les grilles retombent sur une colonne.
+**R101** : la couleur d'un lien ne dépend jamais de son conteneur, dans les deux feuilles.
+**R100** étendu à la feuille de la vitrine — un verrou qui ne surveille qu'une feuille
+sur deux laisse entrer le même défaut par l'autre porte.
+
+**Suite : 111/111.**
+
+### Ce qui reste, et qui n'est pas du code
+
+1. **Les mentions légales.** Obligatoires pour un site qui présente une offre
+   commerciale. Il faut la raison sociale, le SIRET, l'adresse et l'hébergeur.
+2. **`contact@nelyo.fr` doit exister et être relevée.** Un formulaire qui tombe dans le
+   vide coûte plus cher que pas de formulaire.
+3. **La page vend un service dont l'entrée téléphonique française n'existe pas** (dette
+   n°1). Elle est servie ; en diffuser l'adresse est une décision qui attend ce numéro.
+4. **La migration 015 n'est toujours pas appliquée** : base de dev en pause (voir
+   « Prochaine étape », point 6).
 
 ---
 
