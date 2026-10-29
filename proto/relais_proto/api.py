@@ -1185,6 +1185,74 @@ def creer_app(depot, registre: Registre, fabrique_llm, horloge=None,
         reponse.delete_cookie(session.NOM_COOKIE, path="/")
         return reponse
 
+    # ⚠️ DÉCLARÉE AVANT `/app/{rdv_id}/{action}`, et ce n'est pas cosmétique : FastAPI
+    # prend la première route qui matche, et « compte » se glisserait dans `{rdv_id}`
+    # pour finir en 404 d'identifiant inconnu. Même piège que `/app/{rdv_id}/issue` le
+    # 26/10 — deuxième fois, donc on l'écrit ici aussi.
+    @app.post("/app/compte/motdepasse")
+    def changer_mot_de_passe(
+            ancien: str = Form(default=""),
+            nouveau: str = Form(default=""),
+            confirmation: str = Form(default=""),
+            relais_session: str = Cookie(default="", alias=session.NOM_COOKIE),
+            nelyo_admin: str = Cookie(default="", alias=admin_mdp.NOM_COOKIE),
+            nelyo_vue: str = Cookie(default="", alias=admin_mdp.NOM_COOKIE_VUE),
+            authorization: str = Header(default="")):
+        """L'artisan choisit son mot de passe. Trois refus, et aucun n'en dit trop.
+
+        L'ANCIEN EST EXIGÉ s'il en a déjà un : le cookie prouve la SESSION, pas
+        l'identité. Sans ça, un navigateur resté ouvert sur un chantier suffirait à
+        prendre le compte — et c'est le scénario le plus probable de tous.
+
+        LA SESSION COURANTE SURVIT, et les autres aussi. Révoquer partout à chaque
+        changement déconnecterait l'artisan de son téléphone depuis son PC, tous les
+        six mois, contre une menace (un cookie volé) qu'il n'a jamais rencontrée. Le
+        jour où un appareil est perdu, la réponse sera un bouton « me déconnecter
+        partout » — un geste explicite, pas un effet de bord.
+        """
+        artisan, vue = _artisan_espace(authorization, relais_session,
+                                       nelyo_admin, nelyo_vue)
+        if artisan is None:
+            return HTMLResponse(
+                pages.connexion(NOM, "Session expirée ou révoquée. Reconnecte-toi."),
+                status_code=401)
+        if vue:
+            # Lecture seule STRUCTURELLE (T14) : le mode support n'affiche pas le
+            # formulaire, et le POST refuse quand même. L'écran et le serveur disent
+            # la même chose — un écran seul finirait par mentir.
+            return HTMLResponse(
+                pages.action_impossible(
+                    NOM, "Le mot de passe est réservé à l'artisan : il ne se change "
+                         "pas depuis une session d'administration."),
+                status_code=403)
+
+        a = depot.artisan_par_id(artisan.id)
+        if a is None:
+            raise HTTPException(404, "artisan inconnu")
+
+        refus = ""
+        if a.mot_de_passe and not motdepasse.verifier(ancien, a.mot_de_passe):
+            refus = "Mot de passe actuel incorrect."
+        elif nouveau != confirmation:
+            refus = "Les deux saisies diffèrent."
+        else:
+            try:
+                empreinte_neuve = motdepasse.chiffrer(nouveau)
+            except ValueError as pourquoi:
+                # `chiffrer` porte la longueur minimale : on REND SA RAISON plutôt que
+                # d'en réécrire une ici, sinon les deux divergeraient le jour où la
+                # règle changerait.
+                refus = str(pourquoi)
+        if refus:
+            return _compte_rendu(artisan, vue, erreur=refus)
+
+        a.mot_de_passe = empreinte_neuve
+        depot.enregistrer_artisan(a)
+        # 303 et non une page rendue : le rechargement du navigateur ne doit pas
+        # rejouer le POST (même raison que partout ailleurs dans l'espace).
+        return RedirectResponse(
+            "/app/compte?fait=" + quote("Mot de passe enregistré."), status_code=303)
+
     @app.post("/app/{rdv_id}/issue")
     def declarer_issue_chantier(rdv_id: str,
                                 artisan: Artisan = Depends(artisan_authentifie),
@@ -1989,6 +2057,43 @@ def creer_app(depot, registre: Registre, fabrique_llm, horloge=None,
             sum(1 for r in gagnes if not r.issue_montant_eur), len(perdus),
             tuiles, a_declarer, declares, a_valider=ctx["a_valider"],
             commune=ctx["commune"], vue_admin=vue, fenetre=fen))
+
+    # ---- « Mon compte » : l'artisan pose SON mot de passe (29/10) ----
+    #
+    # Jusqu'ici, le seul mot de passe possible était ENGENDRÉ par l'admin — une chaîne
+    # illisible que personne ne retient et que l'artisan ne pouvait pas changer. La
+    # route d'admin l'annonçait depuis le 23/09 : « L'artisan le changera pour le sien
+    # quand il aura son espace. »
+    def _compte_rendu(artisan, vue, **extra) -> HTMLResponse:
+        """L'écran « Mon compte », relu DEPUIS LA BASE à chaque rendu.
+
+        `registre.artisan` donne un objet de service ; la présence d'un mot de passe
+        vit sur la LIGNE (`LigneArtisan.mot_de_passe`). La relire ici évite d'afficher
+        « aucun mot de passe » juste après en avoir posé un.
+        """
+        ligne = depot.artisan_par_id(artisan.id)
+        ctx = _contexte(artisan)
+        return HTMLResponse(pages.compte(
+            NOM, ctx["prenom"], ctx["entreprise"],
+            (ligne.telephone if ligne else "") or "",
+            bool(ligne and ligne.mot_de_passe),
+            a_valider=ctx["a_valider"], commune=ctx["commune"], vue_admin=vue,
+            **extra))
+
+    @app.get("/app/compte", response_class=HTMLResponse)
+    def page_compte(fait: str = "",
+                    relais_session: str = Cookie(default="", alias=session.NOM_COOKIE),
+                    nelyo_admin: str = Cookie(default="", alias=admin_mdp.NOM_COOKIE),
+                    nelyo_vue: str = Cookie(default="",
+                                            alias=admin_mdp.NOM_COOKIE_VUE),
+                    authorization: str = Header(default="")) -> HTMLResponse:
+        artisan, vue = _artisan_espace(authorization, relais_session,
+                                       nelyo_admin, nelyo_vue)
+        if artisan is None:
+            return HTMLResponse(
+                pages.connexion(NOM, "Session expirée ou révoquée. Reconnecte-toi."),
+                status_code=401)
+        return _compte_rendu(artisan, vue, fait=fait)
 
     @app.get("/app/facturation", response_class=HTMLResponse)
     def page_facturation(

@@ -16,7 +16,7 @@ Le produit s'appelle **NELYO** et **il tourne en ligne** :
 <https://nelyo-api.onrender.com>, cron compris, sur une base de production séparée.
 Depuis le 21/09 **un artisan s'inscrit sans commit ni redéploiement** : sa config vit en
 base et s'édite dans `/admin`. La compréhension est au LLM sous contrat fermé, mesurée à
-**68/70** au banc d'extraction et **57/57** en éval réelle ×3 ; **118 tests** de
+**68/70** au banc d'extraction et **57/57** en éval réelle ×3 ; **119 tests** de
 non-régression. Il reste **un seul mur** : aucun numéro n'est joignable depuis la France.
 
 > ⚠️ **ÉTAT RÉEL DE LA PRODUCTION AU 29/10 : à vérifier avant de rien croire du
@@ -40,7 +40,7 @@ les évals LLM réelles (la clé API ne voyage pas) et `run_depot_pg` (Supabase)
 
 ```bash
 cd proto
-python run_scenario.py                              # 118 tests, ~3 s — sans clé NI BASE (R93)
+python run_scenario.py                              # 119 tests, ~3 s — sans clé NI BASE (R93)
 python run_extract_eval.py [--mock] [--only …]      # banc d'EXTRACTION : 68/70, p50 1131 ms
 python run_llm_eval.py [--mock] [--n 3]             # éval appelant-simulé (19 personas)
 python run_depot_pg.py [--migrer]                   # contrat du port contre Supabase
@@ -585,6 +585,57 @@ penser.
 `colonnes_du_schema()` entre au port et passe le contrat contre les DEUX implémentations :
 Postgres rend ses colonnes, la mémoire rend `None` — « je n'ai pas de schéma », qui n'est
 pas « mon schéma est vide ». Rendre `{}` aurait fait conclure que tout manque.
+
+### « Mon compte » (T24) — l'artisan pose enfin SON mot de passe
+
+Geoffrey, sans détour : « c'est quoi ce délire de mdp généré tout le temps ? un artisan
+voudra juste avoir son mdp enregistré dans son navigateur et pouvoir y accéder quand bon
+lui semble, sans faire un jeu de connexion avec son phone à chaque fois. »
+
+Il avait raison sur le fond et à moitié sur les faits, et la distinction vaut d'être
+gardée : la session dure **déjà 90 jours** en cookie persistant, et `/connexion` accepte
+**déjà** téléphone + mot de passe avec `autocomplete` sur les deux champs (T16, 23/09).
+Le parcours du code SMS n'était pas censé se répéter. Mais le seul mot de passe possible
+était **engendré par l'admin** — `secrets.token_urlsafe(18)`, du genre
+`kJ8x-Qp2mNvR7tLw3aZ`. On ne retient pas ça, on le colle une fois, et l'artisan ne
+pouvait ni le choisir ni le changer. Le docstring de la route d'admin l'annonçait
+pourtant depuis le 23/09 : « L'artisan le changera pour le sien quand il aura son
+espace. » Cet écran est cet espace.
+
+Trois décisions, et chacune avait une alternative défendable :
+
+- **l'ancien mot de passe est exigé** pour en changer. Le cookie prouve la SESSION, pas
+  l'identité : un navigateur resté ouvert sur un chantier suffirait sinon, et c'est le
+  scénario le plus probable de tous ;
+- **les autres sessions SURVIVENT.** Révoquer partout à chaque changement déconnecterait
+  l'artisan de son téléphone depuis son PC, tous les six mois, contre une menace (un
+  cookie volé) qu'il n'a jamais rencontrée. Le jour où un appareil est perdu, la réponse
+  sera un bouton « me déconnecter partout » — un geste explicite, pas un effet de bord ;
+- **pas d'entrée de navigation** : la maquette v5 en a six, et une septième pour un écran
+  qu'on visite deux fois par an déséquilibrerait la barre. L'accès se fait par la carte
+  artisan du pied de barre latérale, là où l'œil cherche déjà son propre nom. T24 vérifie
+  ce lien — sans lui, l'écran n'existe pas.
+
+Le code SMS reste la porte de secours, et le dit à l'écran : c'est la seule voie pour qui
+oublie son mot de passe ou change de téléphone.
+
+Piège de routage, **deuxième fois en trois jours** : `/app/compte/motdepasse` doit être
+déclarée AVANT `/app/{rdv_id}/{action}`, sinon « compte » tombe dans `{rdv_id}` et finit
+en 404 d'identifiant inconnu. Exactement ce qui était arrivé à `/app/{rdv_id}/issue` le
+26/10. L'avertissement est maintenant écrit aux deux endroits.
+
+### R103 avait un trou, et le nouvel écran l'a trouvé le jour même
+
+Les libellés de « Mon compte » se sont placés **à côté** de leurs champs — le défaut que
+R103 venait de fermer le matin. R103 exige que toute règle VISANT un `label` déclare son
+`display` ; il ne dit rien des labels qu'**aucune règle ne couvre**, et ceux-ci n'en
+avaient pas. Le défaut ne venait donc pas d'une règle fautive mais d'une règle ABSENTE.
+
+Corrigé à la racine — `label{display:block}` dans le socle — plutôt qu'écran par écran,
+et R103 exige désormais les deux : la règle de base, et le `display` sur chaque règle qui
+la raffine. **Un garde-fou qui ne surveille que ce qui existe laisse passer ce qui
+manque** — c'est la troisième fois aujourd'hui qu'un contrôle devait être confronté à
+autre chose que lui-même pour révéler son angle mort.
 
 ### Le garde-fou a crié au loup à son premier contact avec la production
 

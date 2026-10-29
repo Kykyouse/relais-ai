@@ -20,7 +20,7 @@ Cible V1 : plombiers/chauffagistes FR. Solo dev : Geoffrey (binôme Claude) ; ma
 ```bash
 cd proto
 pip install -r requirements.txt     # anthropic, python-dotenv (inutiles en mock)
-python run_scenario.py              # suite de non-régression (mock, sans clé, ~3 s) — 118 tests
+python run_scenario.py              # suite de non-régression (mock, sans clé, ~3 s) — 119 tests
                                     # « sans BASE » est désormais VÉRIFIÉ, pas promis (R93) :
                                     # la suite importait `serveur.py` — le câblage de prod,
                                     # qui ouvre une connexion Postgres à l'import — et
@@ -240,7 +240,12 @@ l'environnement, jamais dans le code) met `/` derrière un mot de passe unique e
 redéployer. Un seul réglage commande le rideau ET le `noindex`/`robots.txt` : fermée mais
 référencée, ou ouverte mais `noindex`, sont les deux pannes silencieuses qu'on évite
 ainsi (T20). Le rideau ne garde QUE `/` ·
-`session.py` sessions artisan par cookie · `vapi.py` adaptateur de la plateforme
+`session.py` sessions artisan par cookie (**90 jours**, persistant : l'artisan ne se
+reconnecte pas à chaque visite) · `/app/compte` l'écran où il pose SON mot de passe —
+l'ancien exigé pour en changer (le cookie prouve la session, pas l'identité), les autres
+sessions survivent, et le code SMS reste la porte de secours (T24). ⚠️ Déclarer toute
+route `/app/<mot>/…` AVANT `/app/{rdv_id}/{action}`, sinon le mot tombe dans `{rdv_id}`
+et finit en 404 — piège rencontré deux fois (`issue` le 26/10, `compte` le 29/10) · `vapi.py` adaptateur de la plateforme
 vocale (traduit, ne décide rien ; porte aussi le format de fil SSE — lire son en-tête
 avant de toucher au chantier voix) · `sonde_voix.py` sonde de diagnostic de l'étape 0
 (hors produit, éteinte par défaut : `RELAIS_SONDE_VOIX`) · `sonde_dispo.py` sonde des

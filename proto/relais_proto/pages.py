@@ -515,6 +515,14 @@ body{margin:0;background:var(--paper);color:var(--ink);
 h1,h2,h3,.num{font-family:"Bricolage Grotesque","Instrument Sans",system-ui,sans-serif}
 .num{font-variant-numeric:tabular-nums}
 a{color:var(--marine)}
+/* UN LIBELLÉ EST AU-DESSUS DE SON CHAMP, PAR DÉFAUT ET PARTOUT (R103, étendu le 29/10).
+   La première version de R103 exigeait que toute règle visant un `label` déclare son
+   `display` — ce qui ne dit rien des labels qu'AUCUNE règle ne couvre. L'écran « Mon
+   compte » en a fait la démonstration le jour même : ses libellés, sans règle, sont
+   repartis en `inline` et se sont placés à côté de leurs champs selon la largeur
+   disponible. Le défaut ne vient donc pas d'une règle fautive mais d'une règle ABSENTE,
+   et il ne se corrige pas écran par écran. */
+label{display:block}
 /* ---------- composants portés par l'espace ET la vitrine ---------- */
 .btn{border:1px solid var(--line);background:var(--surface);color:var(--ink);
   border-radius:8px;padding:8px 14px;font:600 13px "Instrument Sans",sans-serif;
@@ -572,6 +580,11 @@ _STYLE_NELYO = _SOCLE_NELYO + """
 .side .avatar{background:rgba(255,255,255,.12);color:#fff}
 .artisan b{color:#fff;font-size:13.5px;display:block}
 .artisan span{font-size:11.5px;opacity:.65}
+/* `.side-lien` et non `.side-foot a` : la couleur d'un lien ne dépend pas de son
+   conteneur (R101), et un bouton posé dans ce pied garderait la sienne. */
+.side-lien{display:block;margin-top:10px;color:var(--sidebar-ink);font-size:12px;
+  font-weight:500;text-decoration:none}
+.side-lien:hover{color:#fff;text-decoration:underline}
 .side-foot form{margin-top:10px}
 .side-foot button{width:100%;background:none;border:1px solid rgba(255,255,255,.16);
   color:var(--sidebar-ink);border-radius:8px;padding:6px;font:500 12px "Instrument Sans";
@@ -893,7 +906,11 @@ def _page_nelyo(produit: str, vue: str, corps: str, *, entreprise: str = "",
         f"<div><b>{escape(entreprise or '—')}</b>"
         f"<span>{escape(prenom)}{' · ' + escape(commune) if commune else ''}</span>"
         "</div></div>"
+        # « Mon compte » n'a PAS d'entrée de navigation : la maquette v5 en a six, et une
+        # septième pour un écran qu'on visite deux fois par an déséquilibrerait la barre.
+        # Il vit ici, sous le nom de l'artisan — là où l'œil cherche déjà son propre nom.
         + ("" if vue_admin else
+           '<a class="side-lien" href="/app/compte">Mon compte</a>'
            '<form method="post" action="/deconnexion">'
            '<button type="submit">Se déconnecter</button></form>')
         + "</div>")
@@ -2462,3 +2479,102 @@ def formulaire_merci(produit: str, entreprise: str, prenom: str,
         f"<h1>Merci</h1>"
         f'<p class="intro">{escape(prenom)} a reçu votre demande et vous rappelle. '
         + suite + "</p>")
+
+
+# ══════════════════════════════════════════ MON COMPTE (29/10)
+#
+# L'ÉCRAN QUI MANQUAIT, et Geoffrey l'a dit sans détour : « c'est quoi ce délire de mdp
+# généré tout le temps ? un artisan voudra juste avoir son mdp enregistré dans son
+# navigateur et y accéder quand bon lui semble ». Il avait raison sur le fond et à
+# moitié sur les faits, et la distinction vaut d'être écrite :
+#
+#   * la session dure DÉJÀ 90 jours en cookie persistant, et `/connexion` accepte DÉJÀ
+#     téléphone + mot de passe avec `autocomplete` sur les deux champs (T16, 23/09) —
+#     personne n'est censé refaire le parcours du code SMS à chaque visite ;
+#   * mais le seul mot de passe possible était ENGENDRÉ par l'admin
+#     (`secrets.token_urlsafe(18)`, du genre `kJ8x-Qp2mNvR7tLw3aZ`). On ne « retient »
+#     pas ça, on le colle une fois. L'artisan ne pouvait ni le choisir, ni le changer.
+#
+# Le docstring de la route d'admin l'annonçait d'ailleurs depuis le 23/09 : « L'artisan
+# le changera pour le sien quand il aura son espace. » Cet écran est cet espace.
+#
+# CE QU'IL NE FAIT PAS, et c'est délibéré : révoquer les AUTRES sessions. Pour un artisan
+# qui a un téléphone et un PC, « changer mon mot de passe me déconnecte partout » est une
+# nuisance quotidienne opposée à une menace lointaine (un cookie volé). Le jour où un
+# artisan signalera un appareil perdu, la réponse sera un bouton « me déconnecter
+# partout » — un geste explicite, pas un effet de bord.
+#
+# PAS D'ENTRÉE DE NAVIGATION : la maquette v5 en a six, et en ajouter une septième pour
+# un écran qu'on visite deux fois par an déséquilibrerait la barre. L'accès se fait par
+# la carte artisan du pied de barre latérale, là où l'œil cherche déjà son propre nom.
+def compte(produit: str, prenom: str, entreprise: str, telephone: str,
+           a_un_mot_de_passe: bool, a_valider: int = 0, commune: str = "",
+           vue_admin: str = "", erreur: str = "", fait: str = "") -> str:
+    """« Mon compte » : l'artisan pose SON mot de passe, celui qu'il retiendra.
+
+    En mode support, aucun formulaire : la lecture seule est structurelle (T14), et un
+    administrateur n'a pas à changer le mot de passe de quelqu'un depuis sa session.
+    """
+    bandeau = ""
+    if erreur:
+        bandeau = ('<div class="card aveu"><div class="card-b">'
+                   f'<p style="margin:0">{escape(erreur)}</p></div></div>')
+    elif fait:
+        bandeau = ('<div class="card" style="border-left:3px solid var(--ok)">'
+                   '<div class="card-b"><p style="margin:0;color:var(--ok);'
+                   f'font-weight:600">{escape(fait)}</p></div></div>')
+
+    champ = ('width:100%;max-width:320px;min-height:40px;border:1px solid var(--line);'
+             'border-radius:9px;padding:0 12px;background:var(--surface-2);'
+             'color:var(--ink);font:500 14px "Instrument Sans",sans-serif')
+
+    if vue_admin:
+        formulaire = ('<p class="note" style="margin:0">Le mot de passe est réservé à '
+                      "l&#x27;artisan : il ne se change pas depuis une session "
+                      "d&#x27;administration.</p>")
+    else:
+        ancien = ""
+        if a_un_mot_de_passe:
+            ancien = (
+                '<label for="ancien">Mot de passe actuel</label>'
+                '<input id="ancien" name="ancien" type="password" required '
+                f'autocomplete="current-password" style="{champ}">'
+                '<p class="note" style="margin:6px 0 16px">Demandé parce que le cookie '
+                "prouve la session, pas l&#x27;identité : un navigateur resté ouvert "
+                "suffirait sinon.</p>")
+        formulaire = (
+            '<form method="post" action="/app/compte/motdepasse">'
+            + ancien
+            + '<label for="nouveau">Nouveau mot de passe</label>'
+              '<input id="nouveau" name="nouveau" type="password" required '
+              f'minlength="10" autocomplete="new-password" style="{champ}">'
+              '<p class="note" style="margin:6px 0 16px">Dix caractères au minimum. '
+              "Choisissez-le, votre navigateur le retiendra.</p>"
+              '<label for="confirmation">Confirmez-le</label>'
+              '<input id="confirmation" name="confirmation" type="password" required '
+              f'minlength="10" autocomplete="new-password" style="{champ}">'
+              '<div style="margin-top:18px">'
+              '<button class="btn btn-cu" type="submit">Enregistrer</button></div>'
+              "</form>")
+
+    etat = ("Un mot de passe est défini." if a_un_mot_de_passe
+            else "Aucun mot de passe : vous entrez par code SMS.")
+    corps = (
+        bandeau
+        + '<div class="card"><div class="card-h"><h3>Comment vous vous connectez</h3>'
+          f'<span class="sub" style="margin-left:auto">{escape(etat)}</span></div>'
+          '<div class="card-b">'
+          '<dl class="kv"><dt>Votre mobile</dt><dd>' + escape(telephone or "—")
+        + "</dd>"
+          "<dt>Durée de connexion</dt><dd>90 jours</dd></dl>"
+          '<p class="note">C&#x27;est votre mobile qui vous identifie, avec votre mot '
+          "de passe ou un code reçu par SMS. <b>Le code SMS ne disparaîtra jamais</b> : "
+          "c&#x27;est la seule voie si vous oubliez votre mot de passe ou changez "
+          "d&#x27;appareil.</p></div></div>"
+        + '<div class="card"><div class="card-h">'
+          f"<h3>{'Changer' if a_un_mot_de_passe else 'Définir'} mon mot de passe</h3>"
+          "</div>"
+          f'<div class="card-b">{formulaire}</div></div>')
+    return _page_nelyo(produit, "compte", corps, entreprise=entreprise, prenom=prenom,
+                       commune=commune, a_valider=a_valider, vue_admin=vue_admin,
+                       titre="Mon compte")

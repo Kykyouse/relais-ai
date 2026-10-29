@@ -5416,6 +5416,183 @@ def check_site_vitrine() -> bool:
     return True
 
 
+def check_compte_mot_de_passe() -> bool:
+    """T24 : l'artisan choisit SON mot de passe, celui que son navigateur retiendra.
+
+    Posé le 29/10, après Geoffrey : « c'est quoi ce délire de mdp généré tout le temps ?
+    un artisan voudra juste avoir son mdp enregistré dans son navigateur et pouvoir y
+    accéder quand bon lui semble, sans faire un jeu de connexion avec son phone à chaque
+    fois. »
+
+    IL AVAIT RAISON SUR LE FOND ET À MOITIÉ SUR LES FAITS, et la distinction est le sujet
+    de ce test. La session dure DÉJÀ 90 jours en cookie persistant, et `/connexion`
+    accepte DÉJÀ téléphone + mot de passe avec `autocomplete` sur les deux champs (T16,
+    23/09) : le parcours du code SMS n'était pas censé se répéter. Mais le seul mot de
+    passe possible était ENGENDRÉ par l'admin — `secrets.token_urlsafe(18)`, du genre
+    `kJ8x-Qp2mNvR7tLw3aZ`. On ne retient pas ça, on le colle une fois. **L'artisan ne
+    pouvait ni le choisir ni le changer**, et c'est ce trou que cet écran ferme. Le
+    docstring de la route d'admin l'annonçait depuis le 23/09 : « L'artisan le changera
+    pour le sien quand il aura son espace. »
+
+    Ce qui est vérifié :
+
+    1. **l'écran s'adapte** : sans mot de passe, pas de champ « actuel » — demander
+       l'ancien à qui n'en a pas est une impasse ;
+    2. **le mot de passe choisi OUVRE VRAIMENT la session** depuis `/connexion`. C'est la
+       seule vérification qui compte ; tout le reste pourrait passer avec un mot de passe
+       enregistré que la connexion refuserait ensuite ;
+    3. **l'ancien est exigé dès qu'il y en a un** — le cookie prouve la SESSION, pas
+       l'identité, et un navigateur resté ouvert sur un chantier suffirait sinon. Un
+       refus ne change rien : l'ancien mot de passe fonctionne toujours ;
+    4. **les deux saisies doivent concorder**, et la longueur minimale vient de
+       `motdepasse.chiffrer` — sa raison est rendue telle quelle plutôt que réécrite,
+       sinon les deux divergeraient le jour où la règle changerait ;
+    5. **la session courante survit** au changement. Révoquer partout déconnecterait
+       l'artisan de son téléphone depuis son PC, contre une menace qu'il n'a jamais
+       rencontrée ;
+    6. **le mode support n'y touche pas** (T14) : pas de formulaire à l'écran, ET le
+       POST refuse. Un écran seul finirait par mentir ;
+    7. **l'écran est ATTEIGNABLE** depuis la barre latérale. Il n'a pas d'entrée de
+       navigation — la maquette v5 en a six — donc sans ce lien il n'existerait pas.
+    """
+    try:
+        from fastapi.testclient import TestClient
+    except ImportError:
+        print("   fastapi/httpx absents : pip install -r requirements.txt")
+        return False
+
+    from relais_proto import motdepasse as mdp
+    from relais_proto.api import creer_app
+    from relais_proto.depot import LigneArtisan
+    from relais_proto.envoi import EnvoyeurJournal
+    from relais_proto.registre import Artisan, Registre, empreinte as emp_token
+
+    registre = Registre([Artisan("art-dupont", "+33189701234", emp_token("tok"), CFG,
+                                 telephone="+33612345678")],
+                        emp_token("secret-voix"))
+    depot = DepotMemoire()
+    depot.enregistrer_artisan(LigneArtisan(
+        id="art-dupont", nom_affiche="Dupont Chauffage",
+        numero_relais="+33189701234", telephone="+33612345678",
+        config=CFG, token_sha256=emp_token("tok")))
+    app = creer_app(depot, registre, MockLLM, lambda: LUNDI_9H,
+                    base_url="https://nelyo.test", cookie_secure=False,
+                    envoyeur=EnvoyeurJournal())
+    CHOISI = "chantier-2026"
+
+    with TestClient(app, follow_redirects=False) as julien:
+        if not connecter_par_sms(julien, depot, "06 12 34 56 78"):
+            print("   connexion par code SMS impossible")
+            return False
+
+        # 7. atteignable : sans ce lien, l'écran n'existe pas
+        if 'href="/app/compte"' not in julien.get("/app").text:
+            print("   « Mon compte » n'est lié de nulle part : il n'a pas d'entrée de "
+                  "navigation, donc il serait introuvable")
+            return False
+
+        # 1. aucun mot de passe encore : pas de champ « actuel »
+        vide = julien.get("/app/compte").text
+        if 'name="ancien"' in vide:
+            print("   l'écran demande l'ancien mot de passe à qui n'en a pas")
+            return False
+        if "Définir mon mot de passe" not in vide:
+            print("   l'écran ne propose pas de DÉFINIR un mot de passe")
+            return False
+
+        # 4. longueur et concordance
+        court = julien.post("/app/compte/motdepasse",
+                            data={"nouveau": "court", "confirmation": "court"})
+        if "caractères" not in court.text:
+            print("   un mot de passe trop court est accepté, ou le refus n'explique "
+                  "pas pourquoi")
+            return False
+        if depot.artisan_par_id("art-dupont").mot_de_passe:
+            print("   un mot de passe refusé a quand même été enregistré")
+            return False
+        divergent = julien.post("/app/compte/motdepasse",
+                                data={"nouveau": CHOISI, "confirmation": "autre-chose"})
+        if "saisies diff" not in divergent.text:
+            print("   deux saisies différentes sont acceptées")
+            return False
+
+        # on pose le sien
+        pose = julien.post("/app/compte/motdepasse",
+                           data={"nouveau": CHOISI, "confirmation": CHOISI})
+        if pose.status_code != 303:
+            print(f"   le mot de passe choisi n'est pas enregistré : {pose.status_code}")
+            return False
+
+        # 5. la session courante survit
+        if julien.get("/app").status_code != 200:
+            print("   changer son mot de passe déconnecte de la session courante")
+            return False
+
+        # 1 bis. l'écran s'est adapté
+        avec = julien.get("/app/compte").text
+        if 'name="ancien"' not in avec or "Un mot de passe est défini" not in avec:
+            print("   l'écran ne reflète pas qu'un mot de passe existe désormais")
+            return False
+
+        # 3. l'ancien est exigé, et un refus ne casse rien
+        faux = julien.post("/app/compte/motdepasse",
+                           data={"ancien": "pas-le-bon", "nouveau": "autre-chose-12",
+                                 "confirmation": "autre-chose-12"})
+        if "actuel incorrect" not in faux.text:
+            print("   on change le mot de passe sans connaître l'ancien : un navigateur "
+                  "resté ouvert suffirait à prendre le compte")
+            return False
+        if not mdp.verifier(CHOISI, depot.artisan_par_id("art-dupont").mot_de_passe):
+            print("   un changement REFUSÉ a quand même modifié le mot de passe")
+            return False
+
+    # 2. LA VÉRIFICATION QUI COMPTE : il ouvre vraiment la session
+    with TestClient(app, follow_redirects=False) as depuis_zero:
+        entre = depuis_zero.post("/connexion", data={"telephone": "06 12 34 56 78",
+                                                     "mot_de_passe": CHOISI})
+        if entre.status_code != 303 or entre.headers.get("location") != "/app":
+            print(f"   le mot de passe choisi n'ouvre pas la session : "
+                  f"{entre.status_code} → {entre.headers.get('location')}")
+            return False
+    with TestClient(app, follow_redirects=False) as intrus:
+        rate = intrus.post("/connexion", data={"telephone": "06 12 34 56 78",
+                                               "mot_de_passe": "pas-le-bon-du-tout"})
+        if rate.status_code == 303:
+            print("   n'importe quel mot de passe ouvre la session")
+            return False
+
+    # 6. le mode support REGARDE, et ne touche à rien (T14)
+    from relais_proto import admin as admin_mdp
+    from relais_proto.depot import LigneAdmin
+
+    depot.enregistrer_admin(LigneAdmin(
+        id="adm-1", identifiant="geoffrey", nom="Geoffrey",
+        mot_de_passe=admin_mdp.chiffrer("un-mot-de-passe-solide")))
+    with TestClient(app) as geoffrey:
+        geoffrey.post("/admin/connexion",
+                      data={"identifiant": "geoffrey",
+                            "mot_de_passe": "un-mot-de-passe-solide"})
+        if geoffrey.post("/admin/artisan/art-dupont/voir",
+                         follow_redirects=False).status_code != 303:
+            print("   impossible d'entrer en mode support")
+            return False
+        if 'action="/app/compte/motdepasse"' in geoffrey.get("/app/compte").text:
+            print("   le mode support affiche le formulaire de mot de passe")
+            return False
+        refus = geoffrey.post("/app/compte/motdepasse",
+                              data={"nouveau": "peu-importe-12",
+                                    "confirmation": "peu-importe-12"},
+                              follow_redirects=False)
+        if refus.status_code != 403:
+            print(f"   le mode support change le mot de passe ({refus.status_code}) : "
+                  "la lecture seule n'est pas STRUCTURELLE, elle n'est qu'à l'écran")
+            return False
+        if not mdp.verifier(CHOISI, depot.artisan_par_id("art-dupont").mot_de_passe):
+            print("   le mode support a modifié le mot de passe")
+            return False
+    return True
+
+
 def check_canal_formulaire() -> bool:
     """T23 : une demande venue du FORMULAIRE entre comme un appel, et se dit comme tel.
 
@@ -6348,10 +6525,24 @@ def check_libelles_au_dessus() -> bool:
     Même famille que R100 et R101 — un style attendu d'un contexte qui ne s'applique
     pas — et même remède : interdire la forme. **Toute règle visant `label` déclare son
     `display`.** C'est une ligne par règle, et ça supprime la question.
+
+    ÉTENDU LE JOUR MÊME, parce que la première version avait un trou : elle garde les
+    règles qui VISENT un label, et ne dit rien des labels qu'AUCUNE règle ne couvre.
+    L'écran « Mon compte », posé quelques heures plus tard, en a fait la démonstration —
+    ses libellés sans règle sont repartis en `inline`. Le socle porte donc désormais un
+    `label{display:block}` par défaut, et ce test exige les DEUX : la règle de base, et
+    le `display` sur chaque règle qui la raffine. Un défaut de règle ABSENTE ne se
+    corrige pas écran par écran.
     """
     import re as _re
 
     from relais_proto.pages import _SOCLE_NELYO, _STYLE_NELYO, _STYLE_VITRINE
+
+    # LA RÈGLE DE BASE, sans laquelle un formulaire neuf repart en `inline`.
+    if "label{display:block}" not in _SOCLE_NELYO.replace(" ", ""):
+        print("   le socle ne pose pas `label{display:block}` : un libellé sans règle "
+              "propre se placera à côté de son champ, et aucun écran ne sera en cause")
+        return False
 
     feuilles = (("socle", _SOCLE_NELYO), ("espace artisan", _STYLE_NELYO),
                 ("vitrine", _STYLE_VITRINE))
@@ -13989,6 +14180,15 @@ def run() -> int:
         print("   → aucune règle nue (nav/aside/header) ne peut fuir d'un rôle vers "
               "un autre : la barre mobile ne re-hérite plus du flex-direction de la "
               "barre latérale : ✅ PASS")
+    else:
+        print("   → ❌ FAIL")
+        echecs += 1
+
+    print(f"\n──── T24_compte_mot_de_passe ────")
+    if check_compte_mot_de_passe():
+        print("   → l'artisan choisit SON mot de passe, il ouvre vraiment la "
+              "session, l'ancien est exigé pour en changer, la session courante "
+              "survit, et le mode support n'y touche pas : ✅ PASS")
     else:
         print("   → ❌ FAIL")
         echecs += 1
