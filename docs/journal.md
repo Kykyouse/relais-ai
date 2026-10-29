@@ -16,8 +16,18 @@ Le produit s'appelle **NELYO** et **il tourne en ligne** :
 <https://nelyo-api.onrender.com>, cron compris, sur une base de production séparée.
 Depuis le 21/09 **un artisan s'inscrit sans commit ni redéploiement** : sa config vit en
 base et s'édite dans `/admin`. La compréhension est au LLM sous contrat fermé, mesurée à
-**68/70** au banc d'extraction et **57/57** en éval réelle ×3 ; **111 tests** de
+**68/70** au banc d'extraction et **57/57** en éval réelle ×3 ; **112 tests** de
 non-régression. Il reste **un seul mur** : aucun numéro n'est joignable depuis la France.
+
+> ⚠️ **ÉTAT RÉEL DE LA PRODUCTION AU 29/10 : à vérifier avant de rien croire du
+> paragraphe ci-dessus.** Ce jour-là, toutes les routes touchant la base rendaient 500
+> depuis plusieurs jours — connexion Postgres morte et jamais rouverte (R102, entrée
+> datée). Le correctif est **commité sur `wip`, donc PAS déployé** : `main` sert encore
+> le code fautif. Pour relever la prod tout de suite : *Manual Deploy → Restart service*
+> sur `nelyo-api`. Pour qu'elle ne retombe plus : fusionner `wip` dans `main`.
+> **Et `/sante` ne le dira pas** — il tombait AVEC la panne qu'il est censé signaler
+> (dette ci-dessous). `curl .../connexion` répond 200 même base morte : ce n'est pas une
+> preuve que le produit va bien.
 
 Depuis le 26/10 le projet est **piloté depuis Claude Cowork** : le dépôt se lit et s'écrit
 par le pont fichiers, et la suite de non-régression tourne dans son environnement cloud —
@@ -30,7 +40,7 @@ les évals LLM réelles (la clé API ne voyage pas) et `run_depot_pg` (Supabase)
 
 ```bash
 cd proto
-python run_scenario.py                              # 111 tests, ~3 s — sans clé NI BASE (R93)
+python run_scenario.py                              # 112 tests, ~3 s — sans clé NI BASE (R93)
 python run_extract_eval.py [--mock] [--only …]      # banc d'EXTRACTION : 68/70, p50 1131 ms
 python run_llm_eval.py [--mock] [--n 3]             # éval appelant-simulé (19 personas)
 python run_depot_pg.py [--migrer]                   # contrat du port contre Supabase
@@ -295,7 +305,16 @@ Eux ont le transfert d'urgences en direct (à évaluer pour la V2) et un blog SE
    (`ucqtisaagmxbtulbzzqn`) est EN PAUSE — DNS qui ne résout plus sur l'hôte direct,
    `tenant/user not found` sur le pooler. C'est le symptôme connu du plan gratuit à
    deux projets actifs. Bouton « Restore » dans Supabase, puis `--migrer`.
-7. ~~Le site vitrine~~ — **fait le 29/10** (voir l'entrée datée). Restent deux choses
+7. **RELEVER LA PRODUCTION** — la plus urgente. Le correctif R102 est sur `wip` ;
+   `main` sert encore le code qui ne rouvre jamais sa connexion. Dans l'ordre :
+   *Restart service* sur `nelyo-api` (immédiat), puis fusionner `wip` dans `main`.
+8. **`/sante` doit survivre à la panne qu'il surveille.** Il rendait un 500 nu, sans
+   un mot sur la cause, exactement quand il fallait qu'il parle. Il doit TOUJOURS
+   répondre, en disant que la base est injoignable plutôt qu'en mourant avec elle.
+9. **Le pool de connexions**, toujours promis depuis le premier jour et toujours absent.
+   R102 rend la connexion unique survivable, pas concurrente : deux requêtes simultanées
+   se partagent encore la même session Postgres. À faire avant le premier trafic réel.
+10. ~~Le site vitrine~~ — **fait le 29/10** (voir l'entrée datée). Restent deux choses
    que le code ne pouvait pas trancher, et qui conditionnent sa MISE EN AVANT :
    les **mentions légales** (raison sociale, SIRET, hébergeur — obligatoires pour un
    site qui présente une offre commerciale, d'où un pied de page sans liens morts
@@ -323,6 +342,102 @@ Le mode d'emploi des sondes et le détail de la récolte du 25/08 sont dans les 
 datées ; l'en-tête de `vapi.py` porte le format de fil SSE. **Les lire avant de toucher au
 chantier voix.**
 
+
+---
+
+## 29/10 (suite) — La production était morte, et personne ne pouvait le savoir
+
+Découvert en répondant à une question anodine de Geoffrey — « peut-on accéder à cette
+page en ligne ? ». En vérifiant l'état réel du service plutôt qu'en répondant de tête :
+
+```
+/                  404   ← normal, la vitrine n'est pas déployée
+/connexion         200   ← rend du HTML, ne touche pas la base
+/admin/connexion   200   ← idem
+/sante             500   ← lit la base
+/c/{jeton}         500   ← lit la base
+```
+
+**Toutes les routes qui touchent la base rendaient 500**, depuis plusieurs jours. Aucun
+appel réel n'aurait pu aboutir, aucun lien de validation client ne s'ouvrait.
+
+### Trois hypothèses, un seul symptôme
+
+De l'extérieur, un 500 ne distingue pas : base en pause, identifiants périmés, ou défaut
+dans notre code. Les deux premières mènent à chercher la panne dans Supabase. Elles ont
+été écartées en se connectant à la base de PROD depuis une machine de dév, par le
+pooler, avec les identifiants de `.env.prod` : **elle répondait**. (La base en pause,
+c'est la DEV — la confusion était naturelle puisque c'est le symptôme connu du plan
+gratuit, et c'est bien pour ça qu'il fallait vérifier.)
+
+Restaient les journaux de Render, et ils disent tout :
+
+```
+File "proto/relais_proto/depot_pg.py", line 149, in _plusieurs
+  with self.cx.cursor() as cur:
+psycopg.OperationalError: the connection is closed
+```
+
+### Ce qui a lâché, et ce qui l'annonçait depuis le premier jour
+
+`DepotPostgres` ouvrait sa connexion **une fois au démarrage** et rien ne la rouvrait.
+Le pooler Supabase ferme les sessions oisives ; trois semaines sans travailler sur le
+projet ont suffi. À partir de là `cx.closed` reste vrai et `cursor()` lève **avant même
+d'envoyer quoi que ce soit** : le service ne pouvait plus guérir seul, seul un
+redémarrage du conteneur le relevait — jusqu'à la coupure suivante.
+
+La docstring de la classe le disait, mot pour mot, depuis le premier jour :
+
+> « Une connexion, autocommit. Suffisant pour le worker et pour les tests ; **un pool
+> viendra avec l'API**, qui sert plusieurs requêtes en parallèle. »
+
+Le pool n'est jamais venu. Deuxième exemplaire de la leçon de R94 — **un commentaire ne
+s'exécute pas** — et cette fois il ne décrivait pas une règle violée trois lignes plus
+bas, mais une dette qu'on avait écrite pour ne pas l'oublier, et oubliée.
+
+Un détail qui a fait la différence au diagnostic : le **cron n'était pas touché**.
+`worker.py` ouvre une connexion neuve à chaque passage et sort ; seule l'API, qui vit
+longtemps, pouvait mourir ainsi. Une panne qui frappe le service permanent et épargne le
+service périodique désigne une durée de vie, pas un accès.
+
+### Le correctif, et pourquoi il ne rejoue pas tout
+
+**On rouvre toujours, on ne rejoue que les lectures.** Les trois accesseurs passaient
+déjà tous par `self.cx.cursor()` — un seul point d'étranglement, donc un seul endroit à
+corriger. `_vivante()` rouvre avant d'envoyer si la connexion est marquée fermée ;
+`_lire` rattrape en plus la chute EN VOL et rejoue ; `_executer` rouvre aussi avant
+d'envoyer, mais après une chute en vol il **condamne la connexion et laisse l'erreur
+remonter** : en autocommit, une écriture coupée a pu être validée côté serveur sans que
+l'acquittement nous parvienne, et la rejouer insérerait deux fois. Une écriture perdue
+et signalée vaut mieux qu'une écriture passée deux fois en silence.
+
+Piège évité de justesse, et c'est le vrai danger du correctif : `set time zone 'UTC'`
+était exécuté dans `__init__`. Une réouverture qui l'oublierait repartirait sur le fuseau
+du SERVEUR et rendrait des instants décalés (règle n°7) — une panne **silencieuse**,
+bien pire que le 500 qu'on corrigeait. Il est donc dans `_connecter()`, joué à chaque
+ouverture, et R102 le vérifie explicitement.
+
+**R102** couvre les quatre cas : connexion déjà fermée (celui de production), fuseau
+rejoué, chute en vol en lecture (rejouée), chute en vol en écriture (remonte, et la
+connexion suivante est neuve). Joué sur un faux `psycopg` — le défaut est dans la
+GESTION de la connexion, pas dans le SQL, et la suite doit rester sans base (R93).
+Vérifié en remettant l'ancien comportement : le test lève alors exactement
+`OperationalError: the connection is closed`.
+
+**Suite : 112/112.**
+
+### Ce que ça laisse comme dette, et qui n'est pas réglé
+
+**C'est toujours UNE connexion, partagée par toutes les requêtes de l'API.** Le pool
+promis n'est pas davantage là qu'hier ; ce correctif le rend seulement survivable. Deux
+requêtes simultanées se partagent encore la même session Postgres. À faire avant le
+premier artisan qui amène du trafic.
+
+Et une leçon d'exploitation : **`/sante` était l'une des routes cassées**. L'outil censé
+dire « quelque chose ne va pas » tombait avec ce qu'il devait signaler, en rendant un
+500 nu sans un mot sur la cause. Un indicateur de santé qui ne survit pas à la panne
+qu'il surveille n'indique rien — à reprendre pour qu'il réponde TOUJOURS, en disant que
+la base est injoignable plutôt qu'en mourant avec elle.
 
 ---
 

@@ -5416,6 +5416,166 @@ def check_site_vitrine() -> bool:
     return True
 
 
+def check_connexion_qui_se_rouvre() -> bool:
+    """R102 : une connexion Postgres tombée est ROUVERTE, et le fuseau rejoué avec.
+
+    Trouvé le 29/10 EN PRODUCTION, par les journaux de Render. Toute route touchant la
+    base rendait 500 depuis plusieurs jours :
+
+        File "proto/relais_proto/depot_pg.py", line 149, in _plusieurs
+          with self.cx.cursor() as cur:
+        psycopg.OperationalError: the connection is closed
+
+    `DepotPostgres` ouvrait sa connexion UNE FOIS au démarrage et rien ne la rouvrait.
+    Le pooler Supabase ferme les sessions oisives ; trois semaines sans trafic ont
+    suffi. Dès lors `cx.closed` reste vrai et `cursor()` lève avant même d'envoyer :
+    **le service ne pouvait plus guérir seul**, seul un redémarrage du conteneur le
+    relevait, jusqu'à la coupure suivante. La docstring de la classe annonçait « un pool
+    viendra avec l'API » depuis le premier jour — il n'est jamais venu, et l'API a servi
+    la production sur une connexion unique et non renouvelable du 20/09 au 29/10.
+
+    Ce que ce N'ÉTAIT PAS, et qu'il a fallu écarter avant de corriger : la base en pause
+    (elle répondait depuis une machine de dév) et des identifiants périmés. Les trois
+    hypothèses donnent le même symptôme vu de l'extérieur — un 500 — et deux d'entre
+    elles mènent à chercher dans Supabase une panne qui est dans notre code. **Un
+    problème de DURÉE DE VIE déguisé en problème d'accès.**
+
+    Quatre cas, et il faut les quatre :
+
+    1. **connexion déjà marquée fermée** — le cas de production. On rouvre avant
+       d'envoyer, la lecture aboutit ;
+    2. **le fuseau est rejoué à la réouverture.** Une nouvelle session Postgres repart
+       du fuseau du SERVEUR : une reconnexion qui oublierait `set time zone 'UTC'`
+       rendrait des instants décalés (règle n°7) — une panne silencieuse, bien pire que
+       le 500 qu'on corrige ;
+    3. **chute PENDANT l'envoi, en lecture** — rejouée. Ne traiter que le cas 1
+       laisserait échouer la première requête de chaque coupure ;
+    4. **chute PENDANT l'envoi, en écriture** — l'erreur REMONTE, et elle doit remonter.
+       En autocommit, une écriture coupée a pu être validée côté serveur sans que
+       l'acquittement nous parvienne : la rejouer insérerait deux fois. La connexion est
+       condamnée pour que la requête suivante en ouvre une neuve.
+
+    Joué sur un faux psycopg : le défaut est dans la GESTION de la connexion, pas dans
+    le SQL, et la suite doit rester sans base (R93).
+    """
+    import sys as _sys
+    import types as _types
+
+    etat = {"connexions": 0, "fuseaux": 0}
+
+    class OperationalError(Exception):
+        pass
+
+    class FauxCurseur:
+        def __init__(self, cx):
+            self.cx = cx
+            self.rowcount = 1
+
+        def __enter__(self):
+            return self
+
+        def __exit__(self, *_):
+            return False
+
+        def execute(self, sql, params=()):
+            if self.cx.meurt_en_vol:
+                self.cx.meurt_en_vol = False
+                self.cx.closed = True          # psycopg marque la connexion fermée
+                raise OperationalError("server closed the connection unexpectedly")
+
+        def fetchall(self):
+            return [("valeur",)]
+
+    class FauxCx:
+        def __init__(self):
+            self.closed = False
+            self.meurt_en_vol = False
+
+        def cursor(self):
+            if self.closed:
+                raise OperationalError("the connection is closed")
+            return FauxCurseur(self)
+
+        def execute(self, sql):                # le `set time zone` de l'ouverture
+            etat["fuseaux"] += 1
+
+        def close(self):
+            self.closed = True
+
+    ouvertes: list = []
+
+    def connect(dsn, autocommit=False, **options):
+        etat["connexions"] += 1
+        cx = FauxCx()
+        ouvertes.append(cx)
+        return cx
+
+    faux = _types.ModuleType("psycopg")
+    faux.connect = connect
+    faux.OperationalError = OperationalError
+
+    vrai = _sys.modules.get("psycopg")
+    _sys.modules["psycopg"] = faux
+    try:
+        from relais_proto.depot_pg import DepotPostgres
+        depot = DepotPostgres("postgresql://faux/base")
+
+        if etat["connexions"] != 1 or etat["fuseaux"] != 1:
+            print(f"   l'ouverture n'a pas posé le fuseau : {etat}")
+            return False
+
+        # 1. la connexion est morte pendant la nuit, comme en production
+        ouvertes[-1].closed = True
+        if depot._plusieurs("select 1") != [("valeur",)]:
+            print("   une connexion déjà fermée n'est pas rouverte : c'est EXACTEMENT "
+                  "le 500 de production, et il survivrait au correctif")
+            return False
+        if etat["connexions"] != 2:
+            print("   la lecture a abouti sans qu'aucune connexion soit rouverte")
+            return False
+
+        # 2. …et la nouvelle session repart bien en UTC
+        if etat["fuseaux"] != 2:
+            print("   `set time zone 'UTC'` n'est pas rejoué à la réouverture : les "
+                  "instants seraient rendus dans le fuseau du SERVEUR (règle n°7)")
+            return False
+
+        # 3. la connexion tombe PENDANT une lecture : rejouée
+        ouvertes[-1].meurt_en_vol = True
+        if depot._plusieurs("select 1") != [("valeur",)]:
+            print("   une lecture coupée en vol n'est pas rejouée")
+            return False
+        if etat["connexions"] != 3:
+            print("   la lecture a été rejouée sur la connexion morte")
+            return False
+
+        # 4. la connexion tombe PENDANT une écriture : l'erreur REMONTE
+        ouvertes[-1].meurt_en_vol = True
+        try:
+            depot._executer("update t set a = 1", ())
+        except OperationalError:
+            pass
+        else:
+            print("   une écriture coupée en vol a été REJOUÉE : en autocommit, elle a "
+                  "pu être validée côté serveur sans acquittement — c'est un doublon "
+                  "silencieux, pire que l'échec")
+            return False
+
+        # …et la connexion est condamnée, donc la requête suivante repart sur une neuve
+        avant = etat["connexions"]
+        depot._plusieurs("select 1")
+        if etat["connexions"] != avant + 1:
+            print("   après une écriture coupée, la connexion morte est réutilisée : "
+                  "le service reste en panne jusqu'au redémarrage")
+            return False
+        return True
+    finally:
+        if vrai is not None:
+            _sys.modules["psycopg"] = vrai
+        else:
+            _sys.modules.pop("psycopg", None)
+
+
 def check_couleur_par_position() -> bool:
     """R101 : aucune règle ne donne sa couleur à un lien PAR SA POSITION.
 
@@ -13019,6 +13179,14 @@ def run() -> int:
         print("   → aucune règle nue (nav/aside/header) ne peut fuir d'un rôle vers "
               "un autre : la barre mobile ne re-hérite plus du flex-direction de la "
               "barre latérale : ✅ PASS")
+    else:
+        print("   → ❌ FAIL")
+        echecs += 1
+
+    print(f"\n──── R102_connexion_qui_se_rouvre ────")
+    if check_connexion_qui_se_rouvre():
+        print("   → une connexion Postgres tombée est rouverte et le fuseau "
+              "rejoué ; une lecture coupée est rejouée, une écriture jamais : ✅ PASS")
     else:
         print("   → ❌ FAIL")
         echecs += 1

@@ -99,24 +99,72 @@ def candidats_env() -> list[tuple[str, str]]:
 
 
 class DepotPostgres:
-    """Une connexion, autocommit. Suffisant pour le worker et pour les tests ;
-    un pool viendra avec l'API, qui sert plusieurs requêtes en parallèle."""
+    """Une connexion, autocommit, QUI SE ROUVRE quand elle est tombée (R102).
+
+    Le 29/10, la production rendait 500 sur toute route touchant la base, depuis
+    plusieurs jours, avec `psycopg.OperationalError: the connection is closed`. La
+    connexion était ouverte UNE FOIS au démarrage et rien ne la rouvrait : le pooler
+    Supabase ferme les sessions oisives, et trois semaines sans trafic ont suffi. À
+    partir de là `self.cx.closed` reste vrai, `cursor()` lève avant même d'envoyer quoi
+    que ce soit, et **le service ne peut plus guérir seul** — seul un redémarrage du
+    conteneur le relevait, jusqu'à la coupure suivante.
+
+    Ce que ce n'était PAS, et qu'il a fallu écarter : ni la base en pause (elle répondait
+    depuis une machine de dév), ni des identifiants périmés. Une panne qui ressemble à
+    un problème d'accès alors que c'est un problème de DURÉE DE VIE.
+
+    La règle appliquée ici : **on rouvre toujours, on ne rejoue que les lectures.** Une
+    lecture est sans effet, la rejouer ne coûte rien ; une écriture coupée en autocommit
+    a pu être validée côté serveur sans que l'acquittement nous parvienne, et la rejouer
+    insérerait deux fois. L'écriture échoue donc une fois et la suivante aboutit.
+
+    Reste vrai, et reste une dette : c'est UNE connexion, partagée par toutes les
+    requêtes de l'API. Le pool annoncé ici depuis le premier jour n'est toujours pas là.
+    """
 
     def __init__(self, dsn: str, **options):
         """`options` passe à psycopg.connect : `prepare_threshold=None` est nécessaire
         derrière un pooler en mode transaction, qui ne survit pas aux prepared
-        statements que psycopg active de lui-même après quelques exécutions."""
+        statements que psycopg active de lui-même après quelques exécutions.
+
+        Le DSN et les options sont RETENUS : sans eux, rouvrir serait impossible.
+        """
         import psycopg  # import tardif : dépendance optionnelle
-        self.cx = psycopg.connect(dsn, autocommit=True, **options)
+        self._psycopg = psycopg
+        self._dsn = dsn
+        self._options = options
+        self.cx = self._connecter()
+
+    def _connecter(self):
+        cx = self._psycopg.connect(self._dsn, autocommit=True, **self._options)
         # Les colonnes sont en `timestamptz` (migration 007) : psycopg rend des instants
         # aware, exprimés dans le fuseau de la SESSION. On le fixe à UTC pour que le
         # domaine reçoive exactement ce qu'il a écrit, quel que soit le réglage du serveur
         # — sinon deux machines liraient la même ligne avec deux offsets, et les tests de
         # contrat passeraient ici pour échouer ailleurs.
-        self.cx.execute("set time zone 'UTC'")
+        #
+        # À REJOUER À CHAQUE RÉOUVERTURE, et c'est tout l'intérêt de l'avoir mis ici : une
+        # nouvelle session Postgres repart du fuseau du serveur. Une reconnexion qui
+        # oublierait cette ligne rendrait des instants décalés — une panne silencieuse,
+        # bien pire que le 500 qu'on vient de corriger.
+        cx.execute("set time zone 'UTC'")
+        return cx
+
+    def _vivante(self):
+        """La connexion, rouverte si elle est morte. Le seul accès à `self.cx`."""
+        if self.cx.closed:
+            self.cx = self._connecter()
+        return self.cx
+
+    def _condamner(self) -> None:
+        """Marque la connexion inutilisable pour que la requête SUIVANTE en rouvre une."""
+        try:
+            self.cx.close()
+        except Exception:
+            pass
 
     def fermer(self) -> None:
-        self.cx.close()
+        self._condamner()
 
     # ---- outils ----
     @staticmethod
@@ -137,23 +185,49 @@ class DepotPostgres:
             raise Introuvable(cle) from None
         return str(valeur)
 
+    def _lire(self, sql: str, params: tuple = ()) -> list[tuple]:
+        """Une lecture, REJOUÉE une fois si la connexion est tombée (R102).
+
+        Deux moments distincts, et il faut les deux : la connexion déjà marquée fermée
+        (`_vivante` la rouvre avant d'envoyer) et la connexion qui tombe PENDANT l'envoi
+        (psycopg la marque alors fermée, et c'est ce `except` qui rattrape). Ne traiter
+        que le premier laisserait toujours une requête sur deux coupures échouer.
+        """
+        try:
+            with self._vivante().cursor() as cur:
+                cur.execute(sql, params)
+                return cur.fetchall()
+        except self._psycopg.OperationalError:
+            self._condamner()
+            with self._vivante().cursor() as cur:
+                cur.execute(sql, params)
+                return cur.fetchall()
+
     def _un(self, sql: str, params: tuple, cle: str) -> tuple:
-        with self.cx.cursor() as cur:
-            cur.execute(sql, params)
-            ligne = cur.fetchone()
-        if ligne is None:
+        lignes = self._lire(sql, params)
+        if not lignes:
             raise Introuvable(cle)
-        return ligne
+        return lignes[0]
 
     def _plusieurs(self, sql: str, params: tuple = ()) -> list[tuple]:
-        with self.cx.cursor() as cur:
-            cur.execute(sql, params)
-            return cur.fetchall()
+        return self._lire(sql, params)
 
     def _executer(self, sql: str, params: tuple) -> int:
-        with self.cx.cursor() as cur:
-            cur.execute(sql, params)
-            return cur.rowcount
+        """Une écriture. Rouverte si besoin AVANT l'envoi, JAMAIS rejouée après.
+
+        En autocommit, une écriture coupée en vol a pu être validée côté serveur sans
+        que l'acquittement nous parvienne : la rejouer insérerait deux fois. On condamne
+        donc la connexion — pour que l'appel suivant en ouvre une neuve — et on laisse
+        l'erreur remonter. Une écriture perdue et signalée vaut mieux qu'une écriture
+        passée deux fois en silence.
+        """
+        try:
+            with self._vivante().cursor() as cur:
+                cur.execute(sql, params)
+                return cur.rowcount
+        except self._psycopg.OperationalError:
+            self._condamner()
+            raise
 
     # ---- registre des artisans ----
     # L'ORDRE DOIT SUIVRE `LigneArtisan`, qui est construit par position (`*l`). `config`
