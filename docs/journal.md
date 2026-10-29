@@ -16,7 +16,7 @@ Le produit s'appelle **NELYO** et **il tourne en ligne** :
 <https://nelyo-api.onrender.com>, cron compris, sur une base de production séparée.
 Depuis le 21/09 **un artisan s'inscrit sans commit ni redéploiement** : sa config vit en
 base et s'édite dans `/admin`. La compréhension est au LLM sous contrat fermé, mesurée à
-**68/70** au banc d'extraction et **57/57** en éval réelle ×3 ; **114 tests** de
+**68/70** au banc d'extraction et **57/57** en éval réelle ×3 ; **116 tests** de
 non-régression. Il reste **un seul mur** : aucun numéro n'est joignable depuis la France.
 
 > ⚠️ **ÉTAT RÉEL DE LA PRODUCTION AU 29/10 : à vérifier avant de rien croire du
@@ -40,7 +40,7 @@ les évals LLM réelles (la clé API ne voyage pas) et `run_depot_pg` (Supabase)
 
 ```bash
 cd proto
-python run_scenario.py                              # 114 tests, ~3 s — sans clé NI BASE (R93)
+python run_scenario.py                              # 116 tests, ~3 s — sans clé NI BASE (R93)
 python run_extract_eval.py [--mock] [--only …]      # banc d'EXTRACTION : 68/70, p50 1131 ms
 python run_llm_eval.py [--mock] [--n 3]             # éval appelant-simulé (19 personas)
 python run_depot_pg.py [--migrer]                   # contrat du port contre Supabase
@@ -408,6 +408,50 @@ sentinelles `01/01/2000` → `31/12/2100`, ce qui donnait l'air d'une plage dema
 un clic sur « Appliquer » l'aurait figée. Vidés.
 
 **Suite : 114/114.**
+
+### Le mini-calendrier de l'agenda (T22) — et le découplage qui fait tout
+
+Deuxième des trois nouveautés. Dans la maquette, cliquer une date recale la semaine ;
+ici chaque jour est un `<a href="?semaine=<ce jour>">` et le contrôleur en déduit son
+lundi. Même geste, mais l'état vit dans l'URL : le bouton « précédent » fonctionne, et
+un agenda mis en favori rouvre là où on l'avait laissé.
+
+**L'invariant qui compte n'est pas le calendrier, c'est le DÉCOUPLAGE mois / semaine.**
+Les flèches ◀ ▶ feuillettent les mois et emportent `semaine=` avec elles. Sans ça,
+jeter un œil à décembre ramènerait l'agenda à aujourd'hui — on perdrait ce qu'on était
+en train de regarder pour avoir voulu regarder plus loin, et c'est le genre de perte
+qu'on n'attribue jamais au bouton qui l'a causée. T22 le vérifie en retirant
+`semaine=` des flèches : le test tombe.
+
+La pastille « journée occupée » compte **les deux sources** — un RDV qui occupe et un
+bloc inscrit par l'artisan. N'en compter qu'une ferait passer un jour plein pour un jour
+libre, c'est-à-dire exactement l'erreur que l'agenda propre (T15) existe pour empêcher.
+
+Six rangs, toujours : un mois de 31 jours ouvert un dimanche n'entre pas dans cinq, et
+un calendrier qui change de hauteur selon le mois fait sauter la page sous le curseur.
+
+### R103 — les libellés de formulaire se plaçaient à la largeur disponible
+
+Trouvé en regardant la page Agenda, pour une autre raison. Dans « Ajouter à mon
+agenda », « Intitulé » était à CÔTÉ de son champ, « Jour » au-dessus, « De » à côté :
+selon la place restante dans la colonne de grille. `.ajout label{margin:0 0 3px}`
+n'avait pas de `display`, et s'appuyait sur `details.horaire label{display:block;…}`,
+écrite pour un bloc voisin qui ne l'atteint pas. Un `label` est `inline` par défaut.
+
+Troisième exemplaire de la même famille en deux jours (R100 la mise en page, R101 la
+couleur, R103 le flux), et troisième fois que seul un RENDU pouvait le montrer. La
+règle : toute règle visant `label` déclare son `display`.
+
+**Et R103 a failli ne rien garder.** Sa première version lisait la feuille avec
+`(?:^|\})([^{}]+)\{([^{}]*)\}` — un motif qui capture le corps, donc **consomme
+l'accolade fermante** : la règle suivante n'avait plus son `}` d'amorce et une règle sur
+deux était sautée. Le test passait sans rien regarder, et `.ajout label` était justement
+dans la moitié ignorée. Découvert en vérifiant que le test TOMBE quand on retire le
+correctif — le réflexe qui a servi trois fois aujourd'hui. (R100 et R101 utilisent le
+même motif mais s'arrêtent au `{` : eux ne consomment rien et restent justes.) Le
+découpage se fait désormais sur `}`.
+
+**Suite : 116/116.**
 
 ---
 

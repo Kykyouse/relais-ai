@@ -1856,7 +1856,7 @@ def creer_app(depot, registre: Registre, fabrique_llm, horloge=None,
         return d - dt.timedelta(days=d.weekday())
 
     @app.get("/app/agenda", response_class=HTMLResponse)
-    def page_agenda(semaine: str = "",
+    def page_agenda(semaine: str = "", mois: str = "",
                     relais_session: str = Cookie(default="", alias=session.NOM_COOKIE),
                     nelyo_admin: str = Cookie(default="", alias=admin_mdp.NOM_COOKIE),
                     nelyo_vue: str = Cookie(default="",
@@ -1929,12 +1929,56 @@ def creer_app(depot, registre: Registre, fabrique_llm, horloge=None,
                    if lundi.month == fin.month else
                    f"Semaine du {lundi.day} {MOIS_FR[lundi.month - 1]} au "
                    f"{fin.day} {MOIS_FR[fin.month - 1]}")
+        # ---- le mini-calendrier du mois (maquette v5) ----
+        #
+        # SANS JAVASCRIPT : chaque jour est un lien vers `?semaine=<ce jour>`, et le
+        # contrôleur en déduit son lundi (`_lundi`). Cliquer une date recale donc la
+        # semaine, comme dans la maquette, mais l'état vit dans l'URL — on peut revenir
+        # en arrière, et un agenda mis en favori rouvre sur la bonne semaine.
+        #
+        # LE MOIS AFFICHÉ EST INDÉPENDANT DE LA SEMAINE affichée : on feuillette les
+        # mois (◀ ▶) sans déplacer la semaine, exactement comme un calendrier mural
+        # qu'on consulte avant de choisir. Sans ce découplage, regarder décembre
+        # obligerait à y sauter.
+        try:
+            premier = dt.date.fromisoformat(mois + "-01") if mois else lundi.replace(
+                day=1)
+        except ValueError:
+            premier = lundi.replace(day=1)
+        # La grille part du lundi de la semaine du 1er et tient 6 rangs : 42 cases
+        # couvrent tous les mois, y compris un mars de 31 jours commençant un dimanche.
+        depart = premier - dt.timedelta(days=premier.weekday())
+        grille = [depart + dt.timedelta(days=i) for i in range(42)]
+
+        # Ce qui « occupe » un jour, au sens du mini-calendrier : un RDV qui compte
+        # (`OCCUPENT`, la même liste que la grille de la semaine) ou un bloc inscrit
+        # par l'artisan. Deux sources, un seul point : la pastille dit « ce jour n'est
+        # pas vide », pas « il y a un rendez-vous ».
+        du, au = grille[0].isoformat(), grille[-1].isoformat()
+        occupes = {r.creneau["date"] for r in depot.rdvs_entre(artisan.id, du, au)
+                   if r.statut in OCCUPENT}
+        occupes |= {e.jour for e in depot.evenements_entre(artisan.id, du, au)}
+
+        calendrier = {
+            "titre": f"{MOIS_FR[premier.month - 1]} {premier.year}",
+            "precedent": (premier - dt.timedelta(days=1)).strftime("%Y-%m"),
+            "suivant": (premier + dt.timedelta(days=31)).strftime("%Y-%m"),
+            "semaine": lundi.isoformat(),
+            "cases": [{
+                "iso": d.isoformat(), "jour": d.day,
+                "hors_mois": d.month != premier.month,
+                "aujourdhui": d == ajd,
+                "dans_semaine": lundi <= d <= fin,
+                "occupe": d.isoformat() in occupes,
+            } for d in grille],
+        }
+
         return HTMLResponse(pages.agenda(
             NOM, ctx["prenom"], ctx["entreprise"], jours, libelle,
             (lundi - dt.timedelta(days=7)).isoformat(),
             (lundi + dt.timedelta(days=7)).isoformat(),
             a_valider=ctx["a_valider"], commune=ctx["commune"], vue_admin=vue,
-            erreur=erreur))
+            erreur=erreur, calendrier=calendrier, aujourdhui=ajd.isoformat()))
 
     def _valider_evenement(artisan_id: str, titre: str, jour: str, de: str, a: str,
                            ignorer_rdv: str = "") -> tuple[str, str]:

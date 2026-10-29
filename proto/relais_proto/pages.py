@@ -707,7 +707,7 @@ details.horaire input{width:100%;min-height:38px;border:1px solid var(--line);
 .evt details summary::-webkit-details-marker{display:none}
 .evt details summary:hover{color:var(--ink)}
 .evt form{margin-top:7px;display:flex;flex-direction:column;gap:5px}
-.evt form label{margin:0;font-size:10.5px}
+.evt form label{display:block;margin:0;font-size:10.5px}
 .evt form input,.evt form select{min-height:32px;font-size:12.5px;padding:0 7px}
 .evt form .btns{display:flex;gap:6px;margin-top:4px}
 .evt form button{min-height:30px;font-size:11.5px;padding:0 9px;width:auto}
@@ -718,9 +718,51 @@ details.horaire input{width:100%;min-height:38px;border:1px solid var(--line);
   margin-right:6px}
 .ajout{display:grid;grid-template-columns:repeat(auto-fit,minmax(120px,1fr));gap:10px;
   align-items:end}
-.ajout label{margin:0 0 3px}
+/* `display` EXPLICITE (R103) : cette règle s'appuyait sur `details.horaire label`,
+   qui ne la couvre pas — les libellés se plaçaient donc à CÔTÉ de leur champ, ou
+   au-dessus, selon la place restante. Un libellé ne se repère pas à la largeur. */
+.ajout label{display:block;font-size:12px;color:var(--muted);margin:0 0 3px}
 .ajout .large{grid-column:span 2}
-@media (max-width:940px){.week{grid-template-columns:repeat(2,1fr)}}
+/* ---------- mini-calendrier du mois (maquette v5) ---------- */
+.agenda-wrap{display:grid;grid-template-columns:276px 1fr;gap:14px;align-items:start}
+.minical{background:var(--surface);border:1px solid var(--line);
+  border-radius:var(--r);box-shadow:var(--shadow);padding:14px;position:sticky;top:14px}
+.mc-head{display:flex;align-items:center;justify-content:space-between;
+  margin-bottom:10px}
+.mc-head b{font-family:"Bricolage Grotesque","Instrument Sans",sans-serif;
+  font-size:15px;text-transform:capitalize}
+.mc-btn{border:1px solid var(--line);background:var(--surface);color:var(--muted);
+  border-radius:8px;width:28px;height:28px;font-size:11px;line-height:26px;
+  text-align:center;text-decoration:none;display:inline-block}
+.mc-btn:hover{border-color:var(--marine);color:var(--marine)}
+.mc-grid{display:grid;grid-template-columns:repeat(7,1fr);gap:2px;text-align:center}
+.mc-grid .wd{font-size:10.5px;font-weight:600;color:var(--faint);padding:4px 0;
+  letter-spacing:.04em}
+/* `.mc-d` est une CLASSE, jamais `.mc-grid a` : la couleur d'un lien ne dépend pas de
+   son conteneur (R101), et un bouton posé ici garderait la sienne. */
+.mc-d{position:relative;color:var(--ink);text-decoration:none;
+  font:500 12.5px/34px "Instrument Sans",sans-serif;font-variant-numeric:tabular-nums;
+  height:34px;border-radius:8px;display:block}
+.mc-d:hover{background:var(--surface-2)}
+.mc-d.out{color:var(--faint);opacity:.55}
+.mc-d.today{box-shadow:inset 0 0 0 1.5px var(--cuivre)}
+.mc-d.sel{background:var(--marine);color:#fff}
+.mc-d .dot{position:absolute;left:50%;transform:translateX(-50%);bottom:4px;width:4px;
+  height:4px;border-radius:50%;background:var(--cuivre)}
+.mc-d.sel .dot{background:#fff}
+.mc-foot{margin-top:12px;font-size:11.5px;color:var(--faint);display:flex;gap:6px;
+  align-items:center;flex-wrap:wrap}
+.mc-foot .dot{width:5px;height:5px;border-radius:50%;background:var(--cuivre);
+  display:inline-block}
+.mc-foot .ring{width:11px;height:11px;border-radius:4px;
+  box-shadow:inset 0 0 0 1.5px var(--cuivre);display:inline-block;margin-left:10px}
+@media (max-width:940px){
+  .week{grid-template-columns:repeat(2,1fr)}
+  /* Empilé, et le calendrier n'est plus collant : un bloc sticky de 300 px de haut
+     mangerait l'écran d'un téléphone pendant qu'on fait défiler la semaine. */
+  .agenda-wrap{grid-template-columns:1fr}
+  .minical{position:static;max-width:340px}
+}
 @media (max-width:520px){.week{grid-template-columns:1fr}}
 .numline{display:flex;align-items:center;gap:16px;flex-wrap:wrap}
 .numline .n{font-family:"Bricolage Grotesque";font-size:22px;font-weight:700;
@@ -1366,9 +1408,55 @@ def _actions_evenement(e: dict, jour_iso: str) -> str:
         "Le rendez-vous ne bouge pas avant sa réponse.</p></details>")
 
 
+_JOURS_COURTS = ("L", "M", "M", "J", "V", "S", "D")
+
+
+def _minical(cal: dict) -> str:
+    """Le mini-calendrier mensuel de la maquette v5, SANS JavaScript.
+
+    Chaque jour est un `<a>` vers `?semaine=<ce jour>` : cliquer une date recale la
+    semaine, l'état vit dans l'URL, le bouton « précédent » fonctionne et un agenda
+    mis en favori rouvre là où on l'avait laissé. La maquette faisait la même chose
+    avec un `onclick` et un état en mémoire.
+
+    Les flèches feuillettent les MOIS sans déplacer la semaine, et emportent
+    `semaine=` avec elles — sinon regarder décembre ramènerait l'agenda à aujourd'hui,
+    et on perdrait ce qu'on était en train de regarder.
+
+    Quatre états par case, qui ne s'excluent pas : hors du mois affiché, aujourd'hui,
+    dans la semaine ouverte, et « occupé » (une pastille). `.mc-d` est une CLASSE et
+    non un sélecteur `… a` — R101 : la couleur d'un lien ne dépend jamais de son bloc.
+    """
+    entetes = "".join(f'<span class="wd">{j}</span>' for j in _JOURS_COURTS)
+    cases = []
+    for c in cal["cases"]:
+        classes = "mc-d"
+        classes += " out" if c["hors_mois"] else ""
+        classes += " today" if c["aujourdhui"] else ""
+        classes += " sel" if c["dans_semaine"] else ""
+        titre = c["iso"] + (" · occupé" if c["occupe"] else "")
+        cases.append(
+            f'<a class="{classes}" href="/app/agenda?semaine={escape(c["iso"])}'
+            f'" title="{escape(titre)}" aria-label="{escape(titre)}">{c["jour"]}'
+            + ('<span class="dot"></span>' if c["occupe"] else "")
+            + "</a>")
+    lien_mois = "/app/agenda?semaine=" + escape(cal["semaine"]) + "&amp;mois="
+    return (
+        '<div class="minical"><div class="mc-head">'
+        f'<a class="mc-btn" href="{lien_mois}{escape(cal["precedent"])}" '
+        'aria-label="Mois précédent">◀</a>'
+        f'<b>{escape(cal["titre"])}</b>'
+        f'<a class="mc-btn" href="{lien_mois}{escape(cal["suivant"])}" '
+        'aria-label="Mois suivant">▶</a></div>'
+        f'<div class="mc-grid">{entetes}{"".join(cases)}</div>'
+        '<div class="mc-foot"><span class="dot"></span> journée occupée'
+        '<span class="ring"></span> aujourd&#x27;hui</div></div>')
+
+
 def agenda(produit: str, prenom: str, entreprise: str, jours: list[dict],
            semaine: str, precedente: str, suivante: str, a_valider: int = 0,
-           commune: str = "", vue_admin: str = "", erreur: str = "") -> str:
+           commune: str = "", vue_admin: str = "", erreur: str = "",
+           calendrier: dict | None = None, aujourdhui: str = "") -> str:
     """L'agenda de l'artisan — le SIEN, sans Google ni Outlook.
 
     Il montre DEUX choses dans la même grille : ce que Nelyo a réservé (validé ou en
@@ -1434,7 +1522,11 @@ def agenda(produit: str, prenom: str, entreprise: str, jours: list[dict],
         f'<a class="fbtn" href="/app/agenda?semaine={escape(precedente)}">◀</a>'
         f'<span class="chip" style="font-weight:600">{escape(semaine)}</span>'
         f'<a class="fbtn" href="/app/agenda?semaine={escape(suivante)}">▶</a>'
-        '<span style="margin-left:auto" class="legend">'
+        # « Aujourd'hui » de la maquette : sans lui, revenir de décembre demande de
+        # compter les semaines en arrière.
+        + (f'<a class="fbtn" href="/app/agenda?semaine={escape(aujourdhui)}">'
+           "Aujourd&#x27;hui</a>" if aujourdhui else "")
+        + '<span style="margin-left:auto" class="legend">'
         '<span><span class="sw" style="background:var(--marine-soft)"></span>'
         "RDV confirmé</span>"
         '<span><span class="sw" style="background:var(--cuivre-soft);'
@@ -1443,7 +1535,13 @@ def agenda(produit: str, prenom: str, entreprise: str, jours: list[dict],
         'border:1px solid var(--line)"></span>Ajouté par vous</span>'
         "</span></div>"
         + alerte
-        + f'<div class="week">{"".join(cases)}</div>'
+        # Le mini-calendrier et la semaine côte à côte (`.agenda-wrap`), empilés sur
+        # mobile. Le calendrier d'ABORD dans le flux : sur un téléphone, c'est par lui
+        # qu'on choisit le jour, et le faire passer après six colonnes de semaine
+        # obligerait à défiler pour naviguer.
+        + ('<div class="agenda-wrap">' + _minical(calendrier)
+           + f'<div class="week">{"".join(cases)}</div></div>'
+           if calendrier else f'<div class="week">{"".join(cases)}</div>')
         + formulaire)
     return _page_nelyo(produit, "agenda", corps, entreprise=entreprise, prenom=prenom,
                        commune=commune, a_valider=a_valider, vue_admin=vue_admin,

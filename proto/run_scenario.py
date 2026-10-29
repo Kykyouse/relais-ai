@@ -5416,6 +5416,129 @@ def check_site_vitrine() -> bool:
     return True
 
 
+def check_minical_agenda() -> bool:
+    """T22 : le mini-calendrier mensuel de l'agenda — sans JavaScript.
+
+    Deuxième des trois nouveautés de la maquette v5 (ordre choisi par Geoffrey :
+    période → mini-calendrier → Demandes). Dans la maquette, cliquer une date recale la
+    semaine ; ici chaque jour est un `<a href="?semaine=<ce jour>">` et le contrôleur en
+    déduit son lundi. Même geste, mais l'état vit dans l'URL : le bouton « précédent »
+    fonctionne et un agenda mis en favori rouvre sur la bonne semaine.
+
+    L'INVARIANT QUI COMPTE EST LE DÉCOUPLAGE MOIS / SEMAINE. Les flèches ◀ ▶ feuillettent
+    les mois et emportent `semaine=` avec elles. Sans ça, regarder décembre ramènerait
+    l'agenda à aujourd'hui — on perdrait ce qu'on était en train de regarder pour avoir
+    voulu jeter un œil plus loin, et c'est le genre de perte qu'on n'attribue jamais au
+    bouton qui l'a causée.
+
+    Vérifié aussi :
+
+    1. **42 cases**, six rangs : un mois de 31 jours commençant un dimanche ne tient pas
+       en cinq, et un calendrier qui change de hauteur selon le mois fait sauter la page ;
+    2. **la semaine ouverte est marquée**, et c'est bien elle (lundi→samedi, comme la
+       grille — le dimanche n'est pas un jour ouvré pour un plombier) ;
+    3. **la pastille dit « ce jour n'est pas vide »**, et compte les DEUX sources : un
+       RDV qui occupe et un bloc inscrit par l'artisan. N'en compter qu'une ferait d'un
+       jour plein un jour libre — l'erreur exactement inverse de celle qu'on veut ;
+    4. **un `?mois=` illisible ne casse rien** : une URL se recopie à la main.
+    """
+    try:
+        from fastapi.testclient import TestClient
+    except ImportError:
+        print("   fastapi/httpx absents : pip install -r requirements.txt")
+        return False
+
+    import re as _re
+
+    from relais_proto.api import creer_app
+    from relais_proto.envoi import EnvoyeurJournal
+    from relais_proto.registre import Artisan, Registre, empreinte as emp_token
+
+    registre = Registre([Artisan("art-dupont", "+33189701234", emp_token("tok"), CFG,
+                                 telephone="+33612345678")],
+                        emp_token("secret-voix"))
+    depot = DepotMemoire()
+    app = creer_app(depot, registre, MockLLM, lambda: LUNDI_9H,   # 24/08/2026
+                    base_url="https://nelyo.test", cookie_secure=False,
+                    envoyeur=EnvoyeurJournal())
+
+    # un RDV qui OCCUPE, le mardi de la semaine ouverte
+    _, rdv = _appel_avec_rdv(depot, "T01_urgence_fuite", LUNDI_9H)
+    rdv.notifier(LUNDI_9H)
+    rdv.valider(LUNDI_9H + dt.timedelta(minutes=1))
+    rdv.creneau["date"] = "2026-08-25"
+    depot.sauver_rdv(rdv)
+
+    with TestClient(app) as julien:
+        if not connecter_par_sms(julien, depot, "06 12 34 56 78"):
+            print("   connexion par code SMS impossible")
+            return False
+        # un bloc inscrit par l'artisan, un AUTRE jour : la pastille doit compter les
+        # deux sources, pas seulement les RDV
+        pose = julien.post("/app/agenda", data={
+            "titre": "Congés", "jour": "2026-08-27", "de": "08:00", "a": "12:00",
+            "type": "indisponible"}, follow_redirects=False)
+        if pose.status_code != 303:
+            print(f"   l'événement de test n'a pas été posé : {pose.status_code}")
+            return False
+
+        page = julien.get("/app/agenda").text
+        cases = _re.findall(r'<a class="(mc-d[^"]*)" href="/app/agenda\?semaine=([^"]+)"',
+                            page)
+        if len(cases) != 42:
+            print(f"   {len(cases)} cases dans le mini-calendrier, attendu 42 "
+                  "(six rangs : un mois de 31 jours ouvert un dimanche n'entre pas "
+                  "dans cinq)")
+            return False
+
+        # 1 bis. chaque case mène à SA date — c'est tout le geste de la maquette
+        par_jour = dict((iso, classes) for classes, iso in cases)
+        if "2026-08-25" not in par_jour or "2026-09-05" not in par_jour:
+            print("   la grille ne couvre pas le mois entier et ses débords")
+            return False
+
+        # 2. la semaine ouverte, lundi→samedi
+        selection = sorted(iso for classes, iso in cases if " sel" in f" {classes}")
+        if selection != ["2026-08-24", "2026-08-25", "2026-08-26", "2026-08-27",
+                         "2026-08-28", "2026-08-29"]:
+            print(f"   la semaine marquée n'est pas la semaine ouverte : {selection}")
+            return False
+        if sum(1 for c, _ in cases if "today" in c) != 1:
+            print("   « aujourd'hui » n'est pas marqué une fois et une seule")
+            return False
+        if not any("out" in c for c, _ in cases):
+            print("   les jours des mois voisins ne sont pas distingués")
+            return False
+
+        # 3. la pastille, sur les DEUX sources et nulle part ailleurs
+        pastilles = sorted(iso for classes, iso in cases
+                           if f'semaine={iso}" title="{iso} · occupé"' in page)
+        if pastilles != ["2026-08-25", "2026-08-27"]:
+            print(f"   jours marqués occupés : {pastilles} — attendu le RDV (25) ET "
+                  "le bloc de l'artisan (27)")
+            return False
+
+        # 4. LE DÉCOUPLAGE : feuilleter les mois n'emporte pas la semaine
+        for fleche in _re.findall(r'<a class="mc-btn" href="([^"]+)"', page):
+            if "semaine=2026-08-24" not in fleche.replace("&amp;", "&"):
+                print(f"   la flèche de mois perd la semaine ouverte : {fleche}\n"
+                      "     regarder décembre ramènerait l'agenda à aujourd'hui")
+                return False
+        decembre = julien.get("/app/agenda?semaine=2026-08-24&mois=2026-12").text
+        if "décembre 2026" not in decembre:
+            print("   le mois demandé ne s'affiche pas")
+            return False
+        if "Semaine du 24 au 29 août" not in decembre:
+            print("   feuilleter jusqu'à décembre a DÉPLACÉ la semaine ouverte")
+            return False
+
+        # 5. une URL recopiée à la main ne doit pas rendre l'écran inatteignable
+        if julien.get("/app/agenda?mois=pas-un-mois").status_code != 200:
+            print("   un `mois=` illisible casse la page")
+            return False
+    return True
+
+
 def check_periode_stats() -> bool:
     """T21 : la période des Statistiques — et le défaut qui ne fait pas mentir le total.
 
@@ -5877,6 +6000,58 @@ def check_connexion_qui_se_rouvre() -> bool:
             _sys.modules["psycopg"] = vrai
         else:
             _sys.modules.pop("psycopg", None)
+
+
+def check_libelles_au_dessus() -> bool:
+    """R103 : un libellé de formulaire se place TOUJOURS au-dessus de son champ.
+
+    Trouvé le 29/10 en regardant la page Agenda rendue, pour une autre raison (le
+    mini-calendrier). Dans « Ajouter à mon agenda », « Intitulé » était à CÔTÉ de son
+    champ, « Jour » au-dessus, « De » à côté, « Nature » au-dessus : selon la place
+    restante dans la colonne de grille. La cause :
+
+        .ajout label{margin:0 0 3px}            <- aucun `display`
+        details.horaire label{display:block;…}  <- ne couvre pas `.ajout`
+
+    La règle s'appuyait sur une autre, écrite pour un bloc voisin, et qui ne l'atteint
+    pas. Un `label` est `inline` par défaut : sans `display` explicite, sa position
+    dépend de la largeur disponible, donc de la taille de la fenêtre. Le formulaire
+    changeait de forme d'un écran à l'autre, et personne ne pouvait le voir en lisant
+    le HTML.
+
+    Même famille que R100 et R101 — un style attendu d'un contexte qui ne s'applique
+    pas — et même remède : interdire la forme. **Toute règle visant `label` déclare son
+    `display`.** C'est une ligne par règle, et ça supprime la question.
+    """
+    import re as _re
+
+    from relais_proto.pages import _SOCLE_NELYO, _STYLE_NELYO, _STYLE_VITRINE
+
+    feuilles = (("socle", _SOCLE_NELYO), ("espace artisan", _STYLE_NELYO),
+                ("vitrine", _STYLE_VITRINE))
+    for ou, feuille in feuilles:
+        sans_commentaires = _re.sub(r"/\*.*?\*/", "", feuille, flags=_re.S)
+        # DÉCOUPAGE PAR `}` ET NON PAR EXPRESSION RÉGULIÈRE, et c'est le fruit d'une
+        # erreur : la première version capturait sélecteurs ET corps d'un seul motif
+        # `(?:^|\})([^{}]+)\{([^{}]*)\}`, qui CONSOMME l'accolade fermante — la règle
+        # suivante n'avait donc plus son `}` d'amorce, et une règle sur deux était
+        # sautée en silence. Le test passait sans rien regarder : `.ajout label` était
+        # justement dans la moitié ignorée. (R100 et R101 utilisent le même motif mais
+        # s'arrêtent au `{` : eux ne consomment rien et restent justes.)
+        for morceau in sans_commentaires.split("}"):
+            if "{" not in morceau:
+                continue
+            selecteurs, corps = morceau.rsplit("{", 1)
+            vise_label = any(
+                s.strip().endswith("label")
+                for s in selecteurs.split(",") if not s.strip().startswith("@"))
+            if vise_label and "display:" not in corps.replace(" ", ""):
+                print(f"   [{ou}] règle sur un libellé sans `display` explicite : "
+                      f"{selecteurs.strip()!r}\n"
+                      "     un `label` est inline par défaut : il se placera à côté "
+                      "de son champ ou au-dessus selon la largeur (R103)")
+                return False
+    return True
 
 
 def check_couleur_par_position() -> bool:
@@ -13486,6 +13661,15 @@ def run() -> int:
         print("   → ❌ FAIL")
         echecs += 1
 
+    print(f"\n──── T22_minical_agenda ────")
+    if check_minical_agenda():
+        print("   → le mini-calendrier recale la semaine d'un clic, marque la semaine "
+              "ouverte et les journées occupées (RDV ET blocs de l'artisan), et feuilleter "
+              "les mois ne déplace pas la semaine : ✅ PASS")
+    else:
+        print("   → ❌ FAIL")
+        echecs += 1
+
     print(f"\n──── T21_periode_stats ────")
     if check_periode_stats():
         print("   → les raccourcis et la plage libre bornent les mêmes dates, une saisie "
@@ -13508,6 +13692,14 @@ def run() -> int:
     if check_connexion_qui_se_rouvre():
         print("   → une connexion Postgres tombée est rouverte et le fuseau "
               "rejoué ; une lecture coupée est rejouée, une écriture jamais : ✅ PASS")
+    else:
+        print("   → ❌ FAIL")
+        echecs += 1
+
+    print(f"\n──── R103_libelles_au_dessus ────")
+    if check_libelles_au_dessus():
+        print("   → aucun libellé de formulaire ne tient sa place de la largeur "
+              "disponible : toute règle `label` déclare son display : ✅ PASS")
     else:
         print("   → ❌ FAIL")
         echecs += 1
