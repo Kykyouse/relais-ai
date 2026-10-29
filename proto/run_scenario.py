@@ -5416,6 +5416,120 @@ def check_site_vitrine() -> bool:
     return True
 
 
+def check_connexion_sans_oracle() -> bool:
+    """R105 : la page de connexion n'affirme rien, et ne dit pas qui est chez nous.
+
+    Deux défauts trouvés le 29/10 en tirant le fil d'une perte de temps de Geoffrey : il
+    a cherché dans les journaux de l'hébergeur un code que la page lui promettait, et qui
+    n'avait jamais existé.
+
+    **1. Elle affirmait.** « Envoyé au 06 … » — or cet écran s'affiche À L'IDENTIQUE dans
+    quatre cas où RIEN n'est parti : numéro inconnu, frein au renvoi (moins de 60 s),
+    mobile partagé par deux artisans (R96), gabarit refusé par les garde-fous.
+    L'identité des cas est délibérée ; l'affirmation ne l'était pas. C'est ce que le
+    projet s'interdit partout ailleurs — T17, « rien n'est affirmé qui ne soit su » — et
+    la formulation est désormais conditionnelle, sans rien révéler de plus.
+
+    **2. Elle en disait plus par ses EN-TÊTES que par son corps.** Le corps était déjà
+    identique à l'octet près, et le code le proclamait trois lignes plus haut : « ne
+    dirait à quiconque la sollicite si tel numéro est celui d'un de nos artisans ». Mais
+    `Set-Cookie` n'apparaissait que pour un numéro CONNU. Une boucle sur dix mille
+    mobiles aurait rendu la liste de nos artisans **sans lire une seule page**.
+
+    C'est le défaut le plus instructif de la série : la promesse était écrite, juste, et
+    vérifiée sur le seul canal qu'on regardait. **Une réponse HTTP ne se résume pas à son
+    corps** — et deux des trois contrôles d'aujourd'hui sont tombés pour cette raison,
+    pour avoir comparé quelque chose à lui-même plutôt qu'à la réalité.
+
+    Le cookie leurre est TIRÉ AU HASARD, pas une valeur fixe qui se reconnaîtrait, et il
+    ne désigne aucun artisan : `/connexion/code` ne lui trouve aucun code en cours et
+    rend le refus générique, exactement comme un mauvais code.
+    """
+    try:
+        from fastapi.testclient import TestClient
+    except ImportError:
+        print("   fastapi/httpx absents : pip install -r requirements.txt")
+        return False
+
+    from relais_proto.api import creer_app
+    from relais_proto.envoi import EnvoyeurJournal
+    from relais_proto.registre import Artisan, Registre, empreinte as emp_token
+
+    registre = Registre([Artisan("art-dupont", "+33189701234", emp_token("tok"), CFG,
+                                 telephone="+33612345678")],
+                        emp_token("secret-voix"))
+    depot = DepotMemoire()
+    app = creer_app(depot, registre, MockLLM, lambda: LUNDI_9H,
+                    base_url="https://nelyo.test", cookie_secure=False,
+                    envoyeur=EnvoyeurJournal())
+
+    def soumettre(numero: str) -> dict:
+        with TestClient(app, follow_redirects=False) as visiteur:
+            r = visiteur.post("/connexion", data={"telephone": numero})
+            return {
+                "code": r.status_code,
+                # LES CHIFFRES SONT RETIRÉS AVANT COMPARAISON. La page réaffiche le
+                # numéro saisi (masqué), et c'est la seule différence légitime : le
+                # visiteur sait déjà ce qu'il a tapé. Retirer le numéro « tel que
+                # saisi » ne suffit pas — il est masqué à l'affichage, donc écrit
+                # autrement ; premier essai tombé là-dessus.
+                "corps": "".join(c for c in r.text if not c.isdigit()),
+                "entetes": sorted(k.lower() for k in r.headers
+                                  if k.lower() != "content-length"),
+                "cookie": "relais_connexion" in (r.headers.get("set-cookie") or ""),
+            }
+
+    connu = soumettre("06 12 34 56 78")
+    inconnu = soumettre("06 99 99 99 99")
+
+    # 1. aucune affirmation : rien n'est parti dans la moitié des cas
+    for quoi, vue in (("connu", connu), ("inconnu", inconnu)):
+        if "Envoyé au" in vue["corps"]:
+            print(f"   ({quoi}) la page AFFIRME qu'un code est parti — faux dès que le "
+                  "numéro est inconnu, freiné, partagé, ou le gabarit refusé (T17)")
+            return False
+        if "est bien le mobile d" not in vue["corps"]:
+            print(f"   ({quoi}) la page ne dit plus de façon conditionnelle ce qu'elle "
+                  "ne sait pas")
+            return False
+
+    # 2. aucun oracle : ni par le corps, ni par les en-têtes, ni par le statut
+    if connu["code"] != inconnu["code"]:
+        print(f"   le statut HTTP trahit le numéro connu : {connu['code']} contre "
+              f"{inconnu['code']}")
+        return False
+    if connu["corps"] != inconnu["corps"]:
+        print("   le CORPS de la page diffère entre un numéro connu et un inconnu : "
+              "il suffit d'une boucle pour lister nos artisans")
+        return False
+    if connu["entetes"] != inconnu["entetes"]:
+        print(f"   les EN-TÊTES diffèrent : {connu['entetes']} contre "
+              f"{inconnu['entetes']} — une réponse HTTP ne se résume pas à son corps")
+        return False
+    if not (connu["cookie"] and inconnu["cookie"]):
+        print(f"   `Set-Cookie` n'est pas posé dans les deux cas "
+              f"(connu={connu['cookie']}, inconnu={inconnu['cookie']}) : sa présence "
+              "seule dit si le mobile est celui d'un de nos artisans")
+        return False
+
+    # 3. le leurre n'ouvre rien
+    with TestClient(app, follow_redirects=False) as curieux:
+        curieux.post("/connexion", data={"telephone": "06 99 99 99 99"})
+        for essai in ("123456", "000000"):
+            if curieux.post("/connexion/code",
+                            data={"code": essai}).status_code != 401:
+                print("   le cookie leurre ouvre une session")
+                return False
+
+    # 4. et RIEN n'a été mis en file pour l'inconnu
+    codes = [m for m in depot.messages()
+             if m.cle_idempotence.startswith("code_connexion:")]
+    if any("99 99" in m.cible or m.cible.endswith("99999999") for m in codes):
+        print("   un code a été préparé pour un numéro qui n'est celui de personne")
+        return False
+    return True
+
+
 def check_compte_mot_de_passe() -> bool:
     """T24 : l'artisan choisit SON mot de passe, celui que son navigateur retiendra.
 
@@ -14280,6 +14394,15 @@ def run() -> int:
         print("   → aucune règle nue (nav/aside/header) ne peut fuir d'un rôle vers "
               "un autre : la barre mobile ne re-hérite plus du flex-direction de la "
               "barre latérale : ✅ PASS")
+    else:
+        print("   → ❌ FAIL")
+        echecs += 1
+
+    print(f"\n──── R105_connexion_sans_oracle ────")
+    if check_connexion_sans_oracle():
+        print("   → la page de connexion n'affirme plus qu'un code est parti, et "
+              "ne dit plus par ses en-têtes si un mobile est celui d'un de nos "
+              "artisans : ✅ PASS")
     else:
         print("   → ❌ FAIL")
         echecs += 1

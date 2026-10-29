@@ -1104,15 +1104,27 @@ def creer_app(depot, registre: Registre, fabrique_llm, horloge=None,
                 status_code=401)
 
         reponse = HTMLResponse(pages.saisie_code(NOM, _masquer(numero)))
-        if artisan is None:
-            return reponse
+        if artisan is not None:
+            # Frein au renvoi : chaque code est un SMS facturé et une notification chez
+            # quelqu'un. Sans lui, un tiers fait sonner le téléphone d'un artisan en
+            # boucle à nos frais. Le code précédent reste valable, donc rien n'est perdu
+            # pour l'artisan qui insiste.
+            _poser_et_envoyer_code(artisan, numero, t)
 
-        # Frein au renvoi : chaque code est un SMS facturé et une notification chez
-        # quelqu'un. Sans lui, un tiers fait sonner le téléphone d'un artisan en boucle à
-        # nos frais. Le code précédent reste valable, donc rien n'est perdu pour l'artisan
-        # qui insiste — et il n'apprend rien de plus qu'un inconnu, la page est la même.
-        _poser_et_envoyer_code(artisan, numero, t)
-        reponse.set_cookie(COOKIE_CONNEXION, artisan.id,
+        # LE COOKIE EST POSÉ DANS TOUS LES CAS, et c'est une correction du 29/10.
+        #
+        # Le corps de la page était déjà identique à l'octet près pour un numéro connu et
+        # pour un inconnu — c'est la promesse écrite trois lignes plus haut : « ne dirait
+        # à quiconque la sollicite si tel numéro est celui d'un de nos artisans ». Mais
+        # l'EN-TÊTE, lui, ne l'était pas : `Set-Cookie` n'apparaissait que pour un numéro
+        # connu. Une boucle sur dix mille mobiles aurait donc rendu la liste de nos
+        # artisans, sans jamais lire une seule page.
+        #
+        # Le leurre est tiré au hasard, et non une valeur fixe qui se reconnaîtrait. Il
+        # ne désigne aucun artisan : `/connexion/code` ne lui trouvera aucun code en
+        # cours et rendra le refus générique, exactement comme un mauvais code.
+        reponse.set_cookie(COOKIE_CONNEXION,
+                           artisan.id if artisan else secrets.token_urlsafe(16),
                            max_age=connexion.DUREE_MINUTES * 60, path="/",
                            httponly=True, samesite="lax", secure=cookie_secure)
         return reponse

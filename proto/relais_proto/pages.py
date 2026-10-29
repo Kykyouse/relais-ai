@@ -239,13 +239,29 @@ def saisie_code(produit: str, telephone: str, erreur: str = "") -> str:
     `inputmode="numeric"` et `autocomplete="one-time-code"` : sur iOS comme sur Android,
     le clavier propose alors le code reçu par SMS d'un seul appui. Le numéro est réaffiché
     parce qu'un artisan qui s'est trompé de chiffre doit le voir sans revenir en arrière.
+
+    LA FORMULATION EST CONDITIONNELLE, ET C'EST UNE CORRECTION DU 29/10. Elle affirmait
+    « Envoyé au 06 … » — or cet écran s'affiche À L'IDENTIQUE dans quatre cas où RIEN
+    n'est parti : numéro inconnu, frein au renvoi (moins de 60 s), mobile partagé par
+    deux artisans (R96), gabarit refusé par les garde-fous. L'identité des cas est
+    délibérée — distinguer dirait à qui tâtonne quels mobiles sont enregistrés chez nous
+    — mais **générique n'oblige pas à mentir**, et c'est ce que le projet s'interdit
+    partout ailleurs (T17 : rien n'est affirmé qui ne soit su).
+
+    Ça a coûté du temps le jour même : Geoffrey a cherché dans les journaux de
+    l'hébergeur un code que la page lui promettait et qui n'avait jamais existé.
+
+    « Quelques minutes » plutôt que « 10 minutes » : la durée vit dans
+    `connexion.DUREE_MINUTES`, et l'écrire ici en ferait une seconde source qui
+    vieillirait seule.
     """
     alerte = f'<p class="raisons">{escape(erreur)}</p>' if erreur else ""
     return _page_app(
         produit,
         "Code reçu par SMS",
         "<h1>Votre code</h1>"
-        f'<p class="raisons">Envoyé au {escape(telephone)}, valable quelques minutes.</p>'
+        f'<p class="raisons">Si le {escape(telephone)} est bien le mobile d&#x27;un '
+        "artisan, un code vous arrive par SMS. Valable quelques minutes.</p>"
         + alerte
         + '<form method="post" action="/connexion/code">'
           "<label>Code</label>"
