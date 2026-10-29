@@ -61,6 +61,12 @@ python apercu_local.py [--motdepasse X] [--port 8000]
                                     # base — faire dependre son apercu de Supabase
                                     # etait un accident de cablage (meme esprit que
                                     # R93). Avec --motdepasse : le portail d'apercu.
+                                    # Seme AUSSI un artisan de demo et son
+                                    # historique (meme demo que semer_demo.py,
+                                    # jouee en memoire) : le lanceur affiche le
+                                    # mobile et le mot de passe pour entrer dans
+                                    # /app. Sans ca, « montrer le produit »
+                                    # s'arretait a la page de vente.
                                     # Tout vit en memoire : pour REGARDER, pas servir.
 python chat.py [--mock]             # conversation interactive (tu joues l'appelant)
 python explore.py                   # banc d'essai libre (cas A–F)

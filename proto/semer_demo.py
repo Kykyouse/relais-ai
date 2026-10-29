@@ -142,6 +142,54 @@ def _jouer(depot, cfg, quand: dt.datetime, lignes: list[str]):
     return depot.cloturer_appel(appel.id, donnees, quand), donnees
 
 
+class DemoIncoherente(RuntimeError):
+    """Le moteur n'a pas produit ce que la démo annonce. On n'écrit rien à moitié faux."""
+
+
+def semer_un_appel(depot, cfg, maintenant: dt.datetime, spec: dict) -> dict:
+    """UN appel de la démo, joué par le moteur, AVEC son rendez-vous.
+
+    Extrait de `run()` le 29/10, quand `apercu_local.py` a eu besoin de la même démo
+    contre un dépôt mémoire. Le recopier aurait fabriqué une deuxième définition de ce
+    qu'est un appel de démonstration — précisément ce que l'en-tête de ce fichier
+    interdit pour les leads, et pour la même raison : les deux auraient divergé sans
+    prévenir, et on l'aurait découvert devant quelqu'un.
+
+    **Le RDV est notifié, pas laissé en tampon** : c'est `notifie` que la boîte de
+    validation affiche avec ses boutons. Un RDV en tampon n'y apparaît pas comme
+    décidable, et l'écran principal du produit resterait vide.
+
+    Lève `DemoIncoherente` plutôt que d'imprimer : l'appelant décide quoi en dire. Les
+    deux cas sont des refus d'écrire une démo fausse, pas des incidents techniques.
+    """
+    quand = maintenant - dt.timedelta(minutes=spec["il_y_a_min"])
+    lead, donnees = _jouer(depot, cfg, quand, spec["lignes"])
+    obtenue = donnees.get("categorie")
+    if obtenue != spec["categorie"]:
+        raise DemoIncoherente(
+            f"appel attendu « {spec['categorie']} », moteur rendu « {obtenue} ». "
+            "La démo ne sera pas semée à moitié fausse — corrige les répliques ou "
+            "l'attendu.")
+
+    compte = {"categorie": obtenue, "score": donnees.get("score"),
+              "il_y_a_min": spec["il_y_a_min"], "reste_min": None}
+    if donnees.get("rdv"):
+        rdv = depot.creer_rdv(lead_id=lead.id, hold=donnees["rdv"],
+                              lead_donnees=donnees, cfg=cfg, maintenant=quand)
+        rdv.notifier(quand)
+        depot.sauver_rdv(rdv)
+        # GARDE-FOU, né du premier essai : un RDV semé DÉJÀ EXPIRÉ disparaît de la boîte
+        # de validation au passage suivant du cron, et la démo montre un écran vide.
+        if rdv.est_echu(maintenant):
+            raise DemoIncoherente(
+                f"le RDV est déjà expiré (créé il y a {spec['il_y_a_min']} min, "
+                f"échéance {rdv.expire_a:%H:%M} UTC). Un RDV urgent n'a que "
+                f"{cfg['validation']['delai_max_urgence_heures']} h de validation — "
+                "rapproche `il_y_a_min` de zéro.")
+        compte["reste_min"] = int((rdv.expire_a - maintenant).total_seconds() // 60)
+    return compte
+
+
 def _effacer(depot) -> None:
     """Retire l'artisan de démo et TOUT ce qui lui appartient, dans l'ordre des clés
     étrangères. Les identifiants sont en dur : ce script ne doit pas pouvoir servir à
@@ -267,37 +315,15 @@ def run() -> int:
         from relais_proto import temps
         maintenant = temps.maintenant()
         for spec in APPELS_DEMO:
-            quand = maintenant - dt.timedelta(minutes=spec["il_y_a_min"])
-            lead, donnees = _jouer(depot, cfg, quand, spec["lignes"])
-            obtenue = donnees.get("categorie")
-            if obtenue != spec["categorie"]:
-                print(f"\n  ARRÊT : appel attendu « {spec['categorie']} », "
-                      f"moteur rendu « {obtenue} ». La démo ne sera pas semée à moitié "
-                      f"fausse — corrige les répliques ou l'attendu.")
+            try:
+                compte = semer_un_appel(depot, cfg, maintenant, spec)
+            except DemoIncoherente as pourquoi:
+                print(f"\n  ARRÊT : {pourquoi}")
                 return 2
-            marque = ""
-            if donnees.get("rdv"):
-                rdv = depot.creer_rdv(lead_id=lead.id, hold=donnees["rdv"],
-                                      lead_donnees=donnees, cfg=cfg, maintenant=quand)
-                # notifié : c'est l'état dans lequel la boîte de validation l'affiche
-                # avec ses boutons. Un RDV en tampon n'y apparaîtrait pas comme décidable.
-                rdv.notifier(quand)
-                depot.sauver_rdv(rdv)
-                # GARDE-FOU, né du premier essai : un RDV semé DÉJÀ EXPIRÉ disparaît de
-                # la boîte de validation au passage suivant du cron, et la démo montre
-                # un écran vide. Le script le dit au lieu de laisser le découvrir devant
-                # quelqu'un.
-                if rdv.est_echu(maintenant):
-                    print(f"\n  ARRÊT : le RDV est déjà expiré "
-                          f"(créé il y a {spec['il_y_a_min']} min, échéance "
-                          f"{rdv.expire_a:%H:%M} UTC). Un RDV urgent n'a que "
-                          f"{cfg['validation']['delai_max_urgence_heures']} h de "
-                          f"validation — rapproche `il_y_a_min` de zéro.")
-                    return 2
-                reste = int((rdv.expire_a - maintenant).total_seconds() // 60)
-                marque = f", RDV à valider (encore {reste} min)"
-            print(f"  il y a {spec['il_y_a_min']:>4} min — {obtenue}"
-                  f" (score {donnees.get('score')}){marque}")
+            marque = ("" if compte["reste_min"] is None
+                      else f", RDV à valider (encore {compte['reste_min']} min)")
+            print(f"  il y a {spec['il_y_a_min']:>4} min — {compte['categorie']}"
+                  f" (score {compte['score']}){marque}")
 
         print()
         print("=" * 68)
