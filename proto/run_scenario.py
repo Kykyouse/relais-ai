@@ -5453,7 +5453,11 @@ def check_compte_mot_de_passe() -> bool:
     6. **le mode support n'y touche pas** (T14) : pas de formulaire à l'écran, ET le
        POST refuse. Un écran seul finirait par mentir ;
     7. **l'écran est ATTEIGNABLE** depuis la barre latérale. Il n'a pas d'entrée de
-       navigation — la maquette v5 en a six — donc sans ce lien il n'existerait pas.
+       navigation — la maquette v5 en a six — donc sans ce lien il n'existerait pas ;
+    8. **on peut changer un mot de passe qu'on ne connaît pas**, en prouvant le
+       téléphone par un code SMS. Sans cette issue, l'écran était une impasse pour la
+       population même qu'il vise : jusqu'au 29/10, le SEUL mot de passe possible était
+       engendré par l'admin et affiché une fois.
     """
     try:
         from fastapi.testclient import TestClient
@@ -5590,7 +5594,103 @@ def check_compte_mot_de_passe() -> bool:
         if not mdp.verifier(CHOISI, depot.artisan_par_id("art-dupont").mot_de_passe):
             print("   le mode support a modifié le mot de passe")
             return False
+
+    # ---- 8. LA SORTIE DE SECOURS : changer son mot de passe sans connaître l'ancien ----
+    #
+    # LE TROU QUE CECI FERME, trouvé par Geoffrey en trois secondes : « comment avoir un
+    # mot de passe actuel s'il n'en existe pas ? ». « L'ancien exigé » suppose qu'on le
+    # connaisse — or jusqu'au 29/10 le SEUL moyen d'en avoir un était que l'admin en
+    # ENGENDRE un, affiché une fois. L'artisan qui ne l'avait pas noté ne pouvait donc
+    # plus jamais le changer, et c'était exactement la population pour qui cet écran a
+    # été construit.
+    #
+    # Posséder le téléphone vaut mieux que connaître l'ancien, et c'est ce que fait
+    # n'importe quel « mot de passe oublié » : qui a trouvé un navigateur ouvert sur un
+    # chantier n'a pas le mobile du patron.
+    IGNORE = "celui-que-personne-n-a-jamais-vu"
+    oublieux = DepotMemoire()
+    oublieux.enregistrer_artisan(LigneArtisan(
+        id="art-dupont", nom_affiche="Dupont Chauffage",
+        numero_relais="+33189701234", telephone="+33612345678",
+        config=CFG, token_sha256=emp_token("tok"),
+        mot_de_passe=mdp.chiffrer(IGNORE)))
+    app2 = creer_app(oublieux, registre, MockLLM, lambda: LUNDI_9H,
+                     base_url="https://nelyo.test", cookie_secure=False,
+                     envoyeur=EnvoyeurJournal())
+    NEUF = "mon-mot-a-moi-2026"
+
+    with TestClient(app2, follow_redirects=False) as perdu:
+        if not connecter_par_sms(perdu, oublieux, "06 12 34 56 78"):
+            print("   connexion par code SMS impossible (dépôt de l'oublieux)")
+            return False
+
+        # la sortie est OFFERTE, et seulement à qui a un mot de passe
+        page = perdu.get("/app/compte").text
+        if 'action="/app/compte/code"' not in page:
+            print("   aucune issue pour qui ne connaît pas son mot de passe : l'écran "
+                  "est une impasse pour la population même qu'il vise")
+            return False
+
+        # un code part, et l'écran bascule sur le champ « code » (pas les deux)
+        envoi = perdu.post("/app/compte/code")
+        if envoi.status_code != 303 or envoi.headers.get("location") != "/app/compte?code=1":
+            print(f"   la demande de code ne mène nulle part : {envoi.status_code}")
+            return False
+        code = code_du_sms(oublieux)
+        if code is None:
+            print("   aucun code n'a été envoyé")
+            return False
+        avec_code = perdu.get("/app/compte?code=1").text
+        if 'name="code"' not in avec_code or 'name="ancien"' in avec_code:
+            print("   l'écran garde le champ « mot de passe actuel » alors qu'on vient "
+                  "de dire qu'on ne le connaît pas")
+            return False
+
+        # un MAUVAIS code ne passe pas, et ne change rien
+        faux = perdu.post("/app/compte/motdepasse",
+                          data={"code": "000000", "nouveau": NEUF,
+                                "confirmation": NEUF})
+        if "invalide" not in faux.text:
+            print("   un code faux est accepté")
+            return False
+        if not mdp.verifier(IGNORE, oublieux.artisan_par_id("art-dupont").mot_de_passe):
+            print("   un code faux a quand même changé le mot de passe")
+            return False
+
+        # le BON code autorise le changement
+        code2 = None
+        perdu.post("/app/compte/code")          # le précédent a été consommé par l'essai
+        code2 = code_du_sms(oublieux) or code
+        bon = perdu.post("/app/compte/motdepasse",
+                         data={"code": code2, "nouveau": NEUF, "confirmation": NEUF})
+        if bon.status_code != 303:
+            print(f"   le bon code n'autorise pas le changement : {bon.status_code}")
+            return False
+        if not mdp.verifier(NEUF, oublieux.artisan_par_id("art-dupont").mot_de_passe):
+            print("   le mot de passe n'a pas été remplacé")
+            return False
+
+        # USAGE UNIQUE : le même code ne resservira pas
+        rejoue = perdu.post("/app/compte/motdepasse",
+                            data={"code": code2, "nouveau": "encore-autre-chose",
+                                  "confirmation": "encore-autre-chose"})
+        if rejoue.status_code == 303:
+            print("   un code déjà consommé fonctionne une seconde fois")
+            return False
+
+    # 9. le nouveau mot de passe ouvre la session, l'ancien ne l'ouvre plus
+    with TestClient(app2, follow_redirects=False) as apres:
+        if apres.post("/connexion", data={"telephone": "06 12 34 56 78",
+                                          "mot_de_passe": NEUF}).status_code != 303:
+            print("   le mot de passe posé par code n'ouvre pas la session")
+            return False
+    with TestClient(app2, follow_redirects=False) as vieux:
+        if vieux.post("/connexion", data={"telephone": "06 12 34 56 78",
+                                          "mot_de_passe": IGNORE}).status_code == 303:
+            print("   l'ancien mot de passe ouvre encore la session")
+            return False
     return True
+
 
 
 def check_canal_formulaire() -> bool:

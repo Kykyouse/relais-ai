@@ -2509,7 +2509,8 @@ def formulaire_merci(produit: str, entreprise: str, prenom: str,
 # la carte artisan du pied de barre latérale, là où l'œil cherche déjà son propre nom.
 def compte(produit: str, prenom: str, entreprise: str, telephone: str,
            a_un_mot_de_passe: bool, a_valider: int = 0, commune: str = "",
-           vue_admin: str = "", erreur: str = "", fait: str = "") -> str:
+           vue_admin: str = "", erreur: str = "", fait: str = "",
+           code_envoye: bool = False) -> str:
     """« Mon compte » : l'artisan pose SON mot de passe, celui qu'il retiendra.
 
     En mode support, aucun formulaire : la lecture seule est structurelle (T14), et un
@@ -2534,7 +2535,18 @@ def compte(produit: str, prenom: str, entreprise: str, telephone: str,
                       "d&#x27;administration.</p>")
     else:
         ancien = ""
-        if a_un_mot_de_passe:
+        if a_un_mot_de_passe and code_envoye:
+            # LA SORTIE DE SECOURS, et elle remplace le champ plutôt que de s'y ajouter :
+            # qui demande un code ne connaît pas son mot de passe, lui laisser les deux
+            # champs serait lui proposer une case qu'il ne peut pas remplir.
+            ancien = (
+                '<label for="code">Code reçu par SMS</label>'
+                '<input id="code" name="code" inputmode="numeric" required '
+                f'autocomplete="one-time-code" maxlength="6" style="{champ}">'
+                '<p class="note" style="margin:6px 0 16px">Envoyé à votre mobile, '
+                "valable quelques minutes. Il remplace le mot de passe actuel pour "
+                "cette fois.</p>")
+        elif a_un_mot_de_passe:
             ancien = (
                 '<label for="ancien">Mot de passe actuel</label>'
                 '<input id="ancien" name="ancien" type="password" required '
@@ -2555,7 +2567,16 @@ def compte(produit: str, prenom: str, entreprise: str, telephone: str,
               f'minlength="10" autocomplete="new-password" style="{champ}">'
               '<div style="margin-top:18px">'
               '<button class="btn btn-cu" type="submit">Enregistrer</button></div>'
-              "</form>")
+              "</form>"
+            # POSER LA SORTIE SOUS LE FORMULAIRE, et seulement quand elle sert : un
+            # artisan qui n'a pas encore de mot de passe n'a rien à oublier. Jusqu'au
+            # 29/10, celui qui ne connaissait pas le sien — engendré par l'admin et
+            # affiché une fois — ne pouvait plus jamais en changer.
+            + ('<form method="post" action="/app/compte/code" '
+               'style="margin-top:14px">'
+               '<button class="btn" type="submit">Je ne connais pas mon mot de passe '
+               "actuel</button></form>"
+               if a_un_mot_de_passe and not code_envoye else ""))
 
     etat = ("Un mot de passe est défini." if a_un_mot_de_passe
             else "Aucun mot de passe : vous entrez par code SMS.")

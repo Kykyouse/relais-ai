@@ -1111,26 +1111,7 @@ def creer_app(depot, registre: Registre, fabrique_llm, horloge=None,
         # quelqu'un. Sans lui, un tiers fait sonner le téléphone d'un artisan en boucle à
         # nos frais. Le code précédent reste valable, donc rien n'est perdu pour l'artisan
         # qui insiste — et il n'apprend rien de plus qu'un inconnu, la page est la même.
-        precedent = depot.code_connexion(artisan.id)
-        if precedent and (t - precedent.cree_a).total_seconds() < \
-                connexion.DELAI_RENVOI_SECONDES:
-            return reponse
-
-        code, emp = connexion.creer_code()
-        depot.poser_code_connexion(artisan.id, emp, connexion.expiration(t), t,
-                                   telephone=numero)
-        try:
-            brouillon = messages.code_connexion_artisan(
-                artisan.id, numero, code, artisan.config,
-                connexion.DUREE_MINUTES, empreinte_code=emp)
-        except messages.MessageInterdit:
-            return reponse           # gabarit refusé : on n'en dit pas plus au visiteur
-        message, _ = depot.enfiler_message(brouillon, t)
-        # Envoi IMMÉDIAT et ciblé : un code de connexion qui arrive au prochain passage du
-        # cron n'est pas un code de connexion. La file reste la source de vérité (et le
-        # worker rattrapera si l'envoi direct échoue), on ne fait que la doubler ici.
-        if expediteur is not None:
-            expediteur.passer(t, seulement={message.id})
+        _poser_et_envoyer_code(artisan, numero, t)
         reponse.set_cookie(COOKIE_CONNEXION, artisan.id,
                            max_age=connexion.DUREE_MINUTES * 60, path="/",
                            httponly=True, samesite="lax", secure=cookie_secure)
@@ -1189,9 +1170,110 @@ def creer_app(depot, registre: Registre, fabrique_llm, horloge=None,
     # prend la première route qui matche, et « compte » se glisserait dans `{rdv_id}`
     # pour finir en 404 d'identifiant inconnu. Même piège que `/app/{rdv_id}/issue` le
     # 26/10 — deuxième fois, donc on l'écrit ici aussi.
+    # ---- le CODE SMS, partagé par `/connexion` et par « Mon compte » ----
+    #
+    # Extraits de `/connexion` le 29/10, quand « Mon compte » a eu besoin d'autoriser un
+    # changement de mot de passe SANS connaître l'ancien. Le frein au renvoi, le compte
+    # des essais et l'usage unique sont de la logique de sécurité : deux copies
+    # divergeraient, et l'une des deux serait la mauvaise.
+    def _poser_et_envoyer_code(artisan, numero: str, t) -> None:
+        """Pose un code et l'expédie tout de suite. Silencieux dans tous les cas.
+
+        FREIN AU RENVOI : chaque code est un SMS facturé et une notification chez
+        quelqu'un. Sans lui, un tiers fait sonner le téléphone d'un artisan en boucle à
+        nos frais. Le code précédent reste valable, donc rien n'est perdu pour celui qui
+        insiste — et il n'apprend rien de plus qu'un inconnu.
+        """
+        precedent = depot.code_connexion(artisan.id)
+        if precedent and (t - precedent.cree_a).total_seconds() < \
+                connexion.DELAI_RENVOI_SECONDES:
+            return
+        code, emp = connexion.creer_code()
+        depot.poser_code_connexion(artisan.id, emp, connexion.expiration(t), t,
+                                   telephone=numero)
+        try:
+            brouillon = messages.code_connexion_artisan(
+                artisan.id, numero, code, artisan.config,
+                connexion.DUREE_MINUTES, empreinte_code=emp)
+        except messages.MessageInterdit:
+            return                   # gabarit refusé : on n'en dit pas plus au visiteur
+        message, _ = depot.enfiler_message(brouillon, t)
+        # Envoi IMMÉDIAT et ciblé : un code de connexion qui arrive au prochain passage
+        # du cron n'est pas un code de connexion. La file reste la source de vérité (et
+        # le worker rattrapera si l'envoi direct échoue), on ne fait que la doubler ici.
+        if expediteur is not None:
+            expediteur.passer(t, seulement={message.id})
+
+    def _code_accepte(artisan_id: str, code: str, t) -> bool:
+        """Le code soumis est-il LE code en cours de cet artisan ?
+
+        L'ESSAI EST CONSOMMÉ AVANT LA COMPARAISON : un processus tué au mauvais moment,
+        ou une comparaison qui lève, ne doit pas offrir une tentative gratuite. C'est
+        tout ce qui sépare six chiffres d'un secret devinable. Usage unique en cas de
+        succès : le code ne resservira pas, même dans sa fenêtre de validité.
+        """
+        pose = depot.code_connexion(artisan_id) if code else None
+        if pose is None or t >= pose.expire_a:
+            if pose is not None:
+                depot.supprimer_code_connexion(artisan_id)
+            return False
+        essais = depot.consommer_essai_code(artisan_id)
+        if essais > connexion.ESSAIS_MAX:
+            depot.supprimer_code_connexion(artisan_id)
+            return False
+        if not secrets.compare_digest(pose.empreinte, connexion.empreinte(code)):
+            if essais >= connexion.ESSAIS_MAX:
+                depot.supprimer_code_connexion(artisan_id)
+            return False
+        depot.supprimer_code_connexion(artisan_id)
+        return True
+
+    @app.post("/app/compte/code")
+    def envoyer_code_compte(
+            relais_session: str = Cookie(default="", alias=session.NOM_COOKIE),
+            nelyo_admin: str = Cookie(default="", alias=admin_mdp.NOM_COOKIE),
+            nelyo_vue: str = Cookie(default="", alias=admin_mdp.NOM_COOKIE_VUE),
+            authorization: str = Header(default="")):
+        """« Je ne connais pas mon mot de passe actuel » : un code part par SMS.
+
+        LE TROU QUE ÇA FERME. « L'ancien exigé » suppose qu'on le connaisse — or
+        jusqu'au 29/10 le SEUL moyen d'avoir un mot de passe était que l'admin en
+        engendre un, affiché une fois. L'artisan qui ne l'a pas noté ne pouvait donc
+        plus jamais le changer, et c'était exactement la population pour qui cet écran
+        a été construit. Geoffrey l'a vu en trois secondes : « comment avoir un mot de
+        passe actuel s'il n'en existe pas ? »
+
+        POSSÉDER LE TÉLÉPHONE VAUT MIEUX QUE CONNAÎTRE L'ANCIEN, et c'est ce que fait
+        n'importe quel « mot de passe oublié » : quelqu'un qui a trouvé un navigateur
+        ouvert sur un chantier n'a pas le mobile du patron.
+        """
+        artisan, vue = _artisan_espace(authorization, relais_session,
+                                       nelyo_admin, nelyo_vue)
+        if artisan is None:
+            return HTMLResponse(
+                pages.connexion(NOM, "Session expirée ou révoquée. Reconnecte-toi."),
+                status_code=401)
+        if vue:
+            return HTMLResponse(
+                pages.action_impossible(
+                    NOM, "Le mot de passe est réservé à l'artisan : il ne se change "
+                         "pas depuis une session d'administration."),
+                status_code=403)
+        ligne = depot.artisan_par_id(artisan.id)
+        if ligne is None or not ligne.telephone:
+            # Sans mobile, aucun code ne peut partir — et on ne le promet donc pas
+            # (2bis). L'artisan passe par l'administration.
+            return RedirectResponse(
+                "/app/compte?erreur=" + quote(
+                    "Aucun mobile enregistré : impossible de vous envoyer un code."),
+                status_code=303)
+        _poser_et_envoyer_code(artisan, ligne.telephone, maintenant())
+        return RedirectResponse("/app/compte?code=1", status_code=303)
+
     @app.post("/app/compte/motdepasse")
     def changer_mot_de_passe(
             ancien: str = Form(default=""),
+            code: str = Form(default=""),
             nouveau: str = Form(default=""),
             confirmation: str = Form(default=""),
             relais_session: str = Cookie(default="", alias=session.NOM_COOKIE),
@@ -1230,9 +1312,16 @@ def creer_app(depot, registre: Registre, fabrique_llm, horloge=None,
         if a is None:
             raise HTTPException(404, "artisan inconnu")
 
+        # AUTORISÉ PAR L'UN OU PAR L'AUTRE : l'ancien mot de passe, ou un code frais
+        # reçu par SMS. Les deux prouvent quelque chose d'équivalent — connaître le
+        # secret, ou posséder le téléphone — et le second est la seule issue pour qui
+        # n'a jamais vu le mot de passe engendré par l'admin.
         refus = ""
-        if a.mot_de_passe and not motdepasse.verifier(ancien, a.mot_de_passe):
-            refus = "Mot de passe actuel incorrect."
+        if a.mot_de_passe and not (
+                motdepasse.verifier(ancien, a.mot_de_passe)
+                or _code_accepte(a.id, code.strip(), maintenant())):
+            refus = ("Mot de passe actuel incorrect, ou code invalide."
+                     if code.strip() else "Mot de passe actuel incorrect.")
         elif nouveau != confirmation:
             refus = "Les deux saisies diffèrent."
         else:
@@ -2081,7 +2170,7 @@ def creer_app(depot, registre: Registre, fabrique_llm, horloge=None,
             **extra))
 
     @app.get("/app/compte", response_class=HTMLResponse)
-    def page_compte(fait: str = "",
+    def page_compte(fait: str = "", erreur: str = "", code: str = "",
                     relais_session: str = Cookie(default="", alias=session.NOM_COOKIE),
                     nelyo_admin: str = Cookie(default="", alias=admin_mdp.NOM_COOKIE),
                     nelyo_vue: str = Cookie(default="",
@@ -2093,7 +2182,8 @@ def creer_app(depot, registre: Registre, fabrique_llm, horloge=None,
             return HTMLResponse(
                 pages.connexion(NOM, "Session expirée ou révoquée. Reconnecte-toi."),
                 status_code=401)
-        return _compte_rendu(artisan, vue, fait=fait)
+        return _compte_rendu(artisan, vue, fait=fait, erreur=erreur,
+                             code_envoye=code == "1")
 
     @app.get("/app/facturation", response_class=HTMLResponse)
     def page_facturation(
