@@ -1824,8 +1824,15 @@ def check_app_artisan() -> bool:
             print("   une action inconnue n'est pas refusée")
             return False
 
-        # (f) déconnexion : la session est révoquée côté serveur, pas seulement le cookie
-        julien.post("/deconnexion", follow_redirects=False)
+        # (f) déconnexion : la session est révoquée côté serveur, pas seulement le
+        # cookie — ET elle ramène à la PAGE D'ACCUEIL, pas au formulaire de connexion
+        # (29/10, demande de Geoffrey, et geste de la maquette v5). Quelqu'un qui part
+        # ne veut pas qu'on lui redemande d'entrer ; le formulaire reste à un clic.
+        sortie = julien.post("/deconnexion", follow_redirects=False)
+        if sortie.headers.get("location") != "/":
+            print(f"   la déconnexion mène à {sortie.headers.get('location')!r} et non "
+                  "à la page d'accueil")
+            return False
         if depot._sessions:
             print("   la session survit à la déconnexion côté serveur")
             return False
@@ -6314,6 +6321,7 @@ def check_portail_apercu() -> bool:
         return False
 
     from relais_proto.api import creer_app
+    from relais_proto.envoi import EnvoyeurJournal
     from relais_proto.registre import Artisan, Registre, empreinte as emp_token
 
     MDP = "chantier-2026"
@@ -6323,15 +6331,21 @@ def check_portail_apercu() -> bool:
     SECRETS = ("Vos appels. Vos RDV.", "149 €", "vous êtes bien chez")
 
     def monter(motdepasse):
+        """L'app ET son dépôt. Le dépôt est indispensable pour lire le code SMS, donc
+        pour ouvrir une VRAIE session — sans lui, le contrôle de la sortie (6 bis) se
+        ferait sans être connecté et ne vérifierait rien."""
         registre = Registre([Artisan("art-dupont", "+33189701234", emp_token("tok"),
                                      CFG, telephone="+33612345678")],
                             emp_token("secret-voix"))
-        return creer_app(DepotMemoire(), registre, MockLLM, lambda: LUNDI_9H,
+        depot = DepotMemoire()
+        return creer_app(depot, registre, MockLLM, lambda: LUNDI_9H,
                          base_url="https://nelyo.test", cookie_secure=False,
-                         vitrine_motdepasse=motdepasse)
+                         envoyeur=EnvoyeurJournal(),
+                         vitrine_motdepasse=motdepasse), depot
 
     # 1. sans mot de passe : public et indexable — l'état du jour du lancement
-    with TestClient(monter(None)) as passant:
+    app_publique, _ = monter(None)
+    with TestClient(app_publique) as passant:
         page = passant.get("/")
         if page.status_code != 200 or SECRETS[0] not in page.text:
             print("   sans mot de passe configuré, la vitrine ne s'ouvre pas")
@@ -6346,7 +6360,8 @@ def check_portail_apercu() -> bool:
             return False
 
     # 2. avec mot de passe, sans cookie : le portail, et RIEN de la page
-    with TestClient(monter(MDP), follow_redirects=False) as visiteur:
+    app_privee, depot_prive = monter(MDP)
+    with TestClient(app_privee, follow_redirects=False) as visiteur:
         porte = visiteur.get("/")
         if porte.status_code != 401 or "Aperçu privé" not in porte.text:
             print(f"   la page n'est pas gardée : {porte.status_code}")
@@ -6391,8 +6406,26 @@ def check_portail_apercu() -> bool:
                   "dehors de son propre espace")
             return False
 
+        # 6 bis. ET LA SORTIE NE MÈNE PAS À UN MUR. Se déconnecter ramène à la page
+        # d'accueil (29/10) ; si le rideau est tiré, l'artisan atterrirait sur un mot de
+        # passe qu'il n'a jamais reçu. Le portail existe pour tenir les inconnus à
+        # l'écart, et quelqu'un qui vient d'utiliser le produit n'en est pas un.
+        with TestClient(app_privee, follow_redirects=False) as partant:
+            if not connecter_par_sms(partant, depot_prive, "06 12 34 56 78"):
+                print("   connexion impossible pour éprouver la sortie")
+                return False
+            sortie = partant.post("/deconnexion")
+            if sortie.headers.get("location") != "/":
+                print(f"   la déconnexion mène à {sortie.headers.get('location')!r}")
+                return False
+            apres = partant.get("/")
+            if apres.status_code != 200 or SECRETS[0] not in apres.text:
+                print("   après déconnexion, l'artisan tombe sur le portail : on l'a "
+                      "renvoyé vers une porte fermée")
+                return False
+
     # 5. le lien partageable est consommé, pas conservé
-    with TestClient(monter(MDP), follow_redirects=False) as invite:
+    with TestClient(monter(MDP)[0], follow_redirects=False) as invite:
         par_lien = invite.get(f"/?cle={MDP}")
         if par_lien.status_code != 303 or par_lien.headers.get("location") != "/":
             print("   `?cle=` ne redirige pas vers `/` nu : le mot de passe resterait "
@@ -6401,7 +6434,7 @@ def check_portail_apercu() -> bool:
         if "nelyo_apercu" not in par_lien.headers.get("set-cookie", ""):
             print("   `?cle=` ne pose pas le cookie : le lien ne servirait qu'une fois")
             return False
-    with TestClient(monter(MDP), follow_redirects=False) as curieux:
+    with TestClient(monter(MDP)[0], follow_redirects=False) as curieux:
         if curieux.get("/?cle=au-hasard").status_code != 401:
             print("   une clé fausse dans l'URL ouvre la page")
             return False

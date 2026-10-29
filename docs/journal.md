@@ -653,6 +653,29 @@ Détail d'écran qui compte : quand on demande un code, le champ « mot de passe
 proposer une case que celui qui vient de dire « je ne le connais pas » ne peut pas
 remplir.
 
+### Se déconnecter ramène à la page d'accueil, et ouvre le rideau au passage
+
+Demande de Geoffrey, et geste de la maquette v5 : « Se déconnecter » y sort de
+l'application et rend le site. C'est le seul comportement qui ait du sens — quelqu'un
+qui part ne veut pas qu'on lui redemande d'entrer, et le formulaire reste à un clic.
+
+**Mais la page d'accueil est derrière le portail d'aperçu**, et l'artisan qui ferme sa
+session serait tombé sur un mot de passe qu'il n'a jamais reçu : on l'aurait renvoyé vers
+une porte fermée. La déconnexion pose donc aussi le cookie d'aperçu — ce n'est pas une
+entorse au portail mais sa logique même, qui est de tenir les INCONNUS à l'écart d'une
+page pas encore lancée. Quelqu'un qui vient d'utiliser le produit n'en est pas un. Le
+jour où la variable disparaît, cette ligne devient sans effet d'elle-même.
+
+Verrouillé dans T20, et le test est porteur par construction : le client qui s'y
+déconnecte ouvre sa session **par code SMS uniquement**, sans jamais passer par le
+portail. Son accès à `/` ensuite ne peut donc venir que du rideau ouvert à la sortie.
+
+Au passage, la fabrique d'app de T20 rend désormais **aussi son dépôt**. Sans lui,
+impossible de lire le code SMS, donc d'ouvrir une vraie session : ma première version du
+contrôle se déconnectait sans être connectée et ne vérifiait rien. Quatrième fois dans la
+journée — à force, c'est une règle : **un test se lit en se demandant ce qu'il ferait si
+le code était faux.**
+
 ### R105 — la page de connexion mentait, et ses en-têtes parlaient
 
 Tiré du fil d'une perte de temps : Geoffrey a cherché dans les journaux de l'hébergeur un

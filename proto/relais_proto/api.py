@@ -1172,10 +1172,27 @@ def creer_app(depot, registre: Registre, fabrique_llm, horloge=None,
     @app.post("/deconnexion")
     def fermer_session(relais_session: str = Cookie(default="",
                                                    alias=session.NOM_COOKIE)):
+        """Se déconnecter ramène à la PAGE D'ACCUEIL, pas au formulaire de connexion.
+
+        C'est le geste de la maquette v5 — « Se déconnecter » y sort de l'application et
+        rend le site — et c'est le seul qui ait du sens : quelqu'un qui part ne veut pas
+        qu'on lui redemande d'entrer. Le formulaire reste à un clic, dans la barre.
+
+        LE RIDEAU S'OUVRE AU PASSAGE, et ce n'est pas une entorse au portail d'aperçu :
+        il existe pour tenir les inconnus à l'écart d'une page pas encore lancée, et
+        quelqu'un qui vient d'utiliser le produit n'en est manifestement pas un. Sans
+        ça, l'artisan qui ferme sa session atterrirait sur un mur de mot de passe qu'il
+        n'a jamais reçu — on l'aurait renvoyé vers une porte fermée. Le jour où la
+        variable disparaît, cette ligne devient sans effet d'elle-même.
+        """
         if relais_session:
             depot.supprimer_session(session.empreinte(relais_session))
-        reponse = RedirectResponse("/connexion", status_code=303)
+        reponse = RedirectResponse("/", status_code=303)
         reponse.delete_cookie(session.NOM_COOKIE, path="/")
+        if vitrine_motdepasse:
+            reponse.set_cookie(apercu.NOM_COOKIE,
+                               apercu.jeton(vitrine_motdepasse),
+                               **apercu.attributs_cookie(secure=cookie_secure))
         return reponse
 
     # ⚠️ DÉCLARÉE AVANT `/app/{rdv_id}/{action}`, et ce n'est pas cosmétique : FastAPI
