@@ -32,11 +32,15 @@ import re
 _MOTS_DE_CONTRAINTE = ("primary", "unique", "foreign", "check", "constraint",
                        "exclude", "like")
 
-_CREATE = re.compile(r"create\s+table\s+(?:if\s+not\s+exists\s+)?([a-z_]+)\s*\(",
-                     re.I)
+# `\w` et non `[a-z_]` : un identifiant SQL porte des CHIFFRES. Premier essai sans eux,
+# et `confirmation_sha256` est ressorti tronqué en `confirmation_sha` — une colonne
+# fantôme annoncée manquante sur une base parfaitement à jour.
+_IDENT = r"\w+"
+_CREATE = re.compile(
+    rf"create\s+table\s+(?:if\s+not\s+exists\s+)?({_IDENT})\s*\(", re.I)
 _ALTER = re.compile(
-    r"alter\s+table\s+(?:if\s+exists\s+)?([a-z_]+)\s+add\s+column\s+"
-    r"(?:if\s+not\s+exists\s+)?([a-z_]+)", re.I)
+    rf"alter\s+table\s+(?:if\s+exists\s+)?({_IDENT})\s+add\s+column\s+"
+    rf"(?:if\s+not\s+exists\s+)?({_IDENT})", re.I)
 
 
 def _corps_de_table(sql: str, debut: int) -> str:
@@ -58,6 +62,29 @@ def _corps_de_table(sql: str, debut: int) -> str:
     return ""
 
 
+def _definitions(corps: str) -> list[str]:
+    """Le corps d'un `create table` découpé sur ses virgules DE PREMIER NIVEAU.
+
+    Un `split(",")` naïf coupe aussi à l'intérieur des parenthèses — et
+    `check (etat_abonnement in ('actif', 'essai', 'suspendu'))` devenait alors trois
+    « colonnes » nommées `'essai'`, `'suspendu'` et `'actif'))`. Annoncées manquantes
+    sur une base à jour, au premier contact avec la production.
+    """
+    morceaux, courant, profondeur = [], [], 0
+    for c in corps:
+        if c == "(":
+            profondeur += 1
+        elif c == ")":
+            profondeur -= 1
+        if c == "," and profondeur == 0:
+            morceaux.append("".join(courant))
+            courant = []
+        else:
+            courant.append(c)
+    morceaux.append("".join(courant))
+    return morceaux
+
+
 def attendu(dossier: pathlib.Path | None = None) -> dict[str, set[str]]:
     """{table: {colonnes}} tel que les migrations de ce dépôt le construisent."""
     dossier = dossier or (pathlib.Path(__file__).parent.parent / "migrations")
@@ -67,7 +94,7 @@ def attendu(dossier: pathlib.Path | None = None) -> dict[str, set[str]]:
         for m in _CREATE.finditer(sql):
             table = m.group(1).lower()
             colonnes = tables.setdefault(table, set())
-            for ligne in _corps_de_table(sql, m.end() - 1).split(","):
+            for ligne in _definitions(_corps_de_table(sql, m.end() - 1)):
                 mot = ligne.strip().split()
                 if mot and mot[0].lower() not in _MOTS_DE_CONTRAINTE:
                     colonnes.add(mot[0].lower().strip('"'))

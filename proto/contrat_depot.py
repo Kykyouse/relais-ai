@@ -780,5 +780,16 @@ def verifier(fabrique, cfg: dict) -> list[str]:
                    f"colonnes_du_schema : {table} sans "
                    f"{sorted(obligatoires - presentes)} — la base n'a pas reçu ses "
                    "migrations, ou la lecture d'information_schema est fausse")
+        # LE PARSEUR DE MIGRATIONS CONFRONTÉ À UNE VRAIE BASE. C'est le seul endroit
+        # qui puisse le faire : ce dépôt vient d'être migré, donc tout ce que les
+        # `.sql` créent DOIT s'y trouver, et le moindre écart est une faute de lecture
+        # des migrations — pas un schéma en retard. Sans ce contrôle, `/sante` annonce
+        # des colonnes manquantes qui n'ont jamais existé (vu en production le 29/10 :
+        # `confirmation_sha256` ressorti tronqué, et des fragments de `check (…)`).
+        from relais_proto import schema as _schema
+        fantomes = _schema.manquant(colonnes)
+        exiger(not fantomes,
+               f"schema.manquant rend {fantomes} sur une base FRAÎCHEMENT MIGRÉE : "
+               "le parseur de migrations lit mal, et /sante criera au loup")
 
     return ecarts

@@ -6056,6 +6056,8 @@ def check_sante_survit_et_date_le_schema() -> bool:
         print("   fastapi/httpx absents : pip install -r requirements.txt")
         return False
 
+    import re as _re_r104
+
     from relais_proto import schema
     from relais_proto.api import creer_app
     from relais_proto.registre import Artisan, Registre, empreinte as emp_token
@@ -6063,6 +6065,28 @@ def check_sante_survit_et_date_le_schema() -> bool:
     # 1. le parseur voit bien ce que les migrations créent — sinon tout le reste est
     #    un contrôle qui ne contrôle rien (c'est ainsi que R103 a failli ne rien garder)
     attendu = schema.attendu()
+
+    # 1 bis. AUCUN NOM ANALYSÉ N'EST AUTRE CHOSE QU'UN IDENTIFIANT SQL.
+    #
+    # Le contrôle a crié au loup à son premier contact avec la production, et c'était
+    # le parseur : le corps d'un `create table` était découpé sur TOUTES les virgules,
+    # donc `check (etat_abonnement in ('actif', 'essai', 'suspendu'))` devenait trois
+    # « colonnes » nommées `'essai'`, `'suspendu'` et `'actif'))`, annoncées manquantes
+    # sur une base parfaitement à jour.
+    #
+    # **Et la version d'avant de ce test ne pouvait pas le voir** : ses deux côtés de
+    # comparaison sortaient tous deux de `attendu()`, donc les erreurs du parseur
+    # s'annulaient. Un test qui dérive l'attendu ET l'observé de la même fonction ne
+    # contrôle que sa propre cohérence. Celui-ci regarde la FORME ; le contrat, lui,
+    # confronte le parseur à un vrai Postgres (`manquant() == []` sur une base migrée).
+    sales = [f"{t}.{c}" for t, cs in attendu.items() for c in cs
+             if not _re_r104.fullmatch(r"\w+", c)]
+    if sales:
+        print(f"   noms analysés qui ne sont pas des identifiants SQL : {sales}\n"
+              "     le parseur a ramassé des fragments de contrainte, et ils seront "
+              "annoncés manquants sur une base à jour")
+        return False
+
     for table, colonne in (("rdv", "issue"), ("rdv", "issue_montant_eur"),
                            ("rdv", "issue_le"), ("appel", "canal"),
                            ("artisan", "config"), ("artisan", "mot_de_passe"),

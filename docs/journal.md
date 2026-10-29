@@ -586,6 +586,40 @@ penser.
 Postgres rend ses colonnes, la mémoire rend `None` — « je n'ai pas de schéma », qui n'est
 pas « mon schéma est vide ». Rendre `{}` aurait fait conclure que tout manque.
 
+### Le garde-fou a crié au loup à son premier contact avec la production
+
+`/sante` déployé, et sa toute première réponse en prod annonce douze colonnes
+manquantes — dont `artisan.'a_reprendre'))` et `rdv.confirmation_sha`. Le schéma était
+parfaitement à jour : c'était le parseur.
+
+Deux fautes, et la seconde est la plus instructive :
+
+1. le corps d'un `create table` était découpé sur TOUTES les virgules, donc
+   `check (etat_abonnement in ('actif', 'essai', 'suspendu'))` donnait trois
+   « colonnes » nommées `'essai'`, `'suspendu'` et `'actif'))` ;
+2. le motif de nom était `[a-z_]+`, **sans chiffres** : `confirmation_sha256` ressortait
+   tronqué en `confirmation_sha`, une colonne fantôme annoncée manquante.
+
+**Et R104 ne pouvait voir ni l'une ni l'autre.** Ses deux côtés de comparaison sortaient
+tous deux de `schema.attendu()` : le « schéma en retard » était fabriqué en retirant des
+colonnes à l'attendu, donc les erreurs du parseur étaient présentes des deux côtés et
+s'annulaient. **Un test qui dérive l'attendu ET l'observé de la même fonction ne contrôle
+que sa propre cohérence.** C'est la même famille que R103, dont le parseur sautait une
+règle sur deux et passait sans rien regarder — deux fois le même piège dans la journée,
+et deux fois il a fallu confronter le code à autre chose que lui-même.
+
+Deux verrous, sur les deux moitiés :
+
+- **R104 regarde la FORME** : aucun nom analysé ne peut être autre chose qu'un
+  identifiant SQL. Ça attrape les fragments de contrainte hors ligne, sans base ;
+- **le CONTRAT confronte le parseur à un vrai Postgres** : sur une base fraîchement
+  migrée, `schema.manquant()` doit rendre une liste VIDE. Tout écart y est une faute de
+  lecture des migrations, jamais un schéma en retard — et c'est le seul contrôle qui
+  pouvait voir la troncature.
+
+Le contrôle de schéma, lui, avait raison sur le fond : `rdv.issue` et `appel.canal`
+n'étaient PAS dans sa liste, donc il disait bien que la prod avait reçu ses migrations.
+
 ### Et une erreur de diagnostic qui valait une leçon
 
 La base de dev ne répondait plus : DNS absent sur l'hôte direct, `tenant/user not found`
