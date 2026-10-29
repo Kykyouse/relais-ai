@@ -24,7 +24,7 @@ from pydantic import BaseModel, Field
 
 import secrets
 
-from . import (apercu, connexion, messages, pages, session,
+from . import (apercu, connexion, messages, pages, schema, session,
                sonde_dispo as _sonde_dispo,
                sonde_voix as _sonde, temps,
                vapi as _vapi)
@@ -291,13 +291,43 @@ def creer_app(depot, registre: Registre, fabrique_llm, horloge=None,
         # qu'on lit — « il y a 3 minutes » se comprend d'un coup d'œil, « 04:21:00Z »
         # demande une soustraction et un fuseau. `None` signifie JAMAIS, et se dit
         # explicitement : une base fraîche et un cron mort se ressemblent trop.
-        passage = depot.dernier_passage_worker()
-        age = None
-        if passage is not None:
-            age = int((maintenant() - passage).total_seconds() // 60)
-        return {"statut": "ok", "contrat_lead": CONTRAT_LEAD_VERSION,
+        # `schema` (29/10) : LE DÉPLOIEMENT ATTEND-IL UNE MIGRATION QUI N'EST PAS PASSÉE ?
+        # Le 29/10, la production a servi deux heures un code qui lisait `rdv.issue`
+        # sans que la migration 015 ait été appliquée. Le service démarrait, `/sante`
+        # répondait « ok », et seule la première requête touchant la colonne échouait —
+        # le cron toutes les dix minutes, et tout écran montrant un rendez-vous. Il a
+        # fallu lire les journaux de l'hébergeur pour l'apprendre.
+        #
+        # `schema.manquant` compare ce que la base PORTE à ce que les migrations de ce
+        # code CRÉENT. La liste n'est écrite nulle part : elle est dérivée des `.sql`,
+        # donc ajouter une migration étend le contrôle sans y penser.
+        #
+        # ET TOUT CECI RÉPOND MÊME SI LA BASE EST MUETTE. C'était l'autre leçon du jour :
+        # `/sante` tombait AVEC la panne qu'il surveille, en rendant un 500 nu. Un
+        # indicateur de santé qui meurt avec ce qu'il mesure n'indique rien — il dit
+        # désormais que la base est injoignable, ce qui est précisément l'information
+        # qu'on venait chercher.
+        base = {"joignable": True, "erreur": None}
+        passage, age, ecarts = None, None, None
+        try:
+            passage = depot.dernier_passage_worker()
+            if passage is not None:
+                age = int((maintenant() - passage).total_seconds() // 60)
+            ecarts = schema.manquant(depot.colonnes_du_schema())
+        except Exception as souci:                      # noqa: BLE001 — on rend tout
+            base = {"joignable": False,
+                    "erreur": f"{type(souci).__name__}: {souci}".strip()[:300]}
+        return {"statut": "ok" if base["joignable"] and not ecarts else "degrade",
+                "contrat_lead": CONTRAT_LEAD_VERSION,
                 "cookie_secure": cookie_secure, "version": version,
                 "modeles": modeles or {},
+                "base": base,
+                # `a_jour` à `null` et non `false` quand la base n'a pas répondu :
+                # « on n'a pas pu vérifier » et « il manque des colonnes » appellent
+                # deux gestes différents, et les confondre enverrait rejouer une
+                # migration pour une panne de connexion.
+                "schema": {"a_jour": None if ecarts is None else ecarts == [],
+                           "manquant": ecarts},
                 "worker": {"dernier_passage": passage.isoformat() if passage else None,
                            "il_y_a_min": age}}
 

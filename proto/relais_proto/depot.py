@@ -337,6 +337,13 @@ class Depot(Protocol):
         """
         ...
 
+    # {table: {colonnes}} tel que la base les porte RÉELLEMENT, ou `None` pour une
+    # implémentation qui n'a pas de schéma. Sert à `/sante` : comparée à ce que les
+    # migrations de ce code créent (`schema.attendu`), elle répond en dix secondes à
+    # « ce déploiement attend-il une migration qui n'est pas passée ? » — la question
+    # qui a coûté deux heures de cron mort le 29/10.
+    def colonnes_du_schema(self) -> "dict[str, set[str]] | None": ...
+
     def dernier_passage_worker(self) -> dt.datetime | None:
         """Le dernier passage, ou None si le worker n'a JAMAIS tourné.
 
@@ -672,6 +679,14 @@ class DepotMemoire:
         brut["derniere_erreur"] = erreur
         if definitif:
             brut["statut"] = StatutMessage.ECHEC.value
+
+    def colonnes_du_schema(self) -> "dict[str, set[str]] | None":
+        """`None` : ce dépôt n'a pas de schéma, donc rien ne peut en diverger.
+
+        Pas `{}` — qui se lirait « une base vide », donc « tout manque », et ferait
+        crier `/sante` sur une implémentation incapable d'être en retard.
+        """
+        return None
 
     def noter_passage_worker(self, maintenant: dt.datetime) -> None:
         self._passage_worker = maintenant

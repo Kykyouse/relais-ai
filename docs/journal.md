@@ -16,7 +16,7 @@ Le produit s'appelle **NELYO** et **il tourne en ligne** :
 <https://nelyo-api.onrender.com>, cron compris, sur une base de production séparée.
 Depuis le 21/09 **un artisan s'inscrit sans commit ni redéploiement** : sa config vit en
 base et s'édite dans `/admin`. La compréhension est au LLM sous contrat fermé, mesurée à
-**68/70** au banc d'extraction et **57/57** en éval réelle ×3 ; **117 tests** de
+**68/70** au banc d'extraction et **57/57** en éval réelle ×3 ; **118 tests** de
 non-régression. Il reste **un seul mur** : aucun numéro n'est joignable depuis la France.
 
 > ⚠️ **ÉTAT RÉEL DE LA PRODUCTION AU 29/10 : à vérifier avant de rien croire du
@@ -40,7 +40,7 @@ les évals LLM réelles (la clé API ne voyage pas) et `run_depot_pg` (Supabase)
 
 ```bash
 cd proto
-python run_scenario.py                              # 117 tests, ~3 s — sans clé NI BASE (R93)
+python run_scenario.py                              # 118 tests, ~3 s — sans clé NI BASE (R93)
 python run_extract_eval.py [--mock] [--only …]      # banc d'EXTRACTION : 68/70, p50 1131 ms
 python run_llm_eval.py [--mock] [--n 3]             # éval appelant-simulé (19 personas)
 python run_depot_pg.py [--migrer]                   # contrat du port contre Supabase
@@ -525,6 +525,66 @@ pouvaient pas le voir** : dans `run_scenario.py`, le contrat tourne « contre
 DepotMemoire », et c'est écrit dans son verdict. Le bloc tient désormais sur
 `art-dupont`, en fin de contrat — deux contraintes contradictoires (ne pas fausser les
 comptages de leads, ne pas inventer d'artisan) qui n'ont que cette solution commune.
+
+### La production a servi deux heures un code dont la migration n'était pas passée
+
+Découvert par les journaux de Render, après que `/sante` a signalé un cron vieux de
+114 minutes. Toutes les dix minutes, depuis le déploiement du matin :
+
+```
+psycopg.errors.UndefinedColumn: column "issue" does not exist
+LINE 1: ...fie_a, decide_a, historique, confirmation_sha256, issue, iss...
+```
+
+Le code livré le matin (T18, de Fable) lit `rdv.issue`, `issue_montant_eur`, `issue_le`.
+**La migration 015 qui crée ces colonnes n'avait jamais été appliquée en production.**
+Le worker plantait à chaque passage ; et comme toute lecture de RDV passe par le même
+`select`, la boîte de validation, l'agenda et les statistiques auraient rendu 500 pour
+un artisan connecté. Personne n'utilisait la prod à ce moment-là — ce n'est pas une
+excuse, c'est de la chance.
+
+**L'erreur est de méthode, et elle est documentée ici pour ça.** Le journal disait « la
+015 reste à appliquer » depuis le 26/10, et je l'ai répété plusieurs fois le 29. Je l'ai
+traitée comme une suite à donner, pas comme un **prérequis du déploiement**. Avant le
+second merge du jour j'ai posé la bonne règle — « la migration d'abord, le déploiement
+ensuite », en expliquant exactement ce risque — mais ce raisonnement valait tout autant
+le matin. La panne s'est résolue d'elle-même quand la migration est passée à 12 h 30 ;
+le cron est reparti vert au passage de 12 h 40.
+
+**Règle, désormais** : une migration en attente est un BLOQUANT de déploiement, pas une
+tâche de suite. On migre, puis on déploie — les migrations sont additives, donc l'ancien
+code survit à la nouvelle colonne, alors que le nouveau code ne survit pas à son absence.
+
+### R104 — `/sante` date le schéma, et survit à la panne qu'il surveille
+
+Les deux défauts du jour tenaient au même angle mort : **une panne silencieuse dont le
+symptôme n'apparaît qu'à l'usage**. Le service démarrait, `/sante` répondait « ok », et
+seule la première requête touchant la colonne échouait. Et quand la base, elle, ne
+répondait plus (le matin, R102), `/sante` tombait AVEC elle en rendant un 500 nu —
+l'outil qu'on consulte en premier mourait avec ce qu'il mesure.
+
+`/sante` rend donc maintenant trois choses distinctes, parce qu'elles appellent trois
+gestes différents :
+
+| État | Réponse |
+|---|---|
+| base joignable, schéma à jour | `statut: ok` |
+| base joignable, colonnes manquantes | `degrade` + **la liste** (`rdv.issue`, …) |
+| base injoignable | `degrade`, l'erreur en clair, et `schema.a_jour: null` |
+
+`null` et non `false` : « on n'a pas pu vérifier » n'est pas « il manque des colonnes »,
+et les confondre enverrait rejouer une migration pour une panne de connexion. La version
+déployée reste lisible dans tous les cas (R65) — c'est elle qu'on lit en premier.
+
+**La liste des colonnes attendues n'est écrite nulle part** : `schema.attendu` la DÉRIVE
+des fichiers `migrations/*.sql`, comme `registre.valider_config` dérive ses exigences du
+modèle `dupont.json`. Une liste tenue à la main vieillirait exactement le jour où elle
+compterait — à la migration suivante. Ajouter une migration étend le contrôle sans y
+penser.
+
+`colonnes_du_schema()` entre au port et passe le contrat contre les DEUX implémentations :
+Postgres rend ses colonnes, la mémoire rend `None` — « je n'ai pas de schéma », qui n'est
+pas « mon schéma est vide ». Rendre `{}` aurait fait conclure que tout manque.
 
 ### Et une erreur de diagnostic qui valait une leçon
 

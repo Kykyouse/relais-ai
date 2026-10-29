@@ -757,4 +757,28 @@ def verifier(fabrique, cfg: dict) -> list[str]:
                 lambda: depot.ouvrir_appel("art-dupont", LUNDI_9H, canal="pigeon"),
                 "ouvrir_appel : un canal inconnu doit être refusé")
 
+    # ---- le SCHÉMA que la base porte vraiment (29/10) ----
+    #
+    # `/sante` compare cette réponse à ce que les migrations de ce code créent, pour
+    # dire si un déploiement attend une migration qui n'est pas passée. Les deux
+    # implémentations répondent donc à la question, mais PAS la même chose : une base
+    # Postgres rend ses colonnes, le dépôt mémoire rend `None` — « je n'ai pas de
+    # schéma », ce qui n'est pas « mon schéma est vide ». Rendre `{}` ferait conclure
+    # que TOUT manque, et `/sante` crierait sur une implémentation incapable d'être
+    # en retard.
+    colonnes = depot.colonnes_du_schema()
+    if colonnes is None:
+        exiger(True, "")          # dépôt sans schéma : rien à vérifier de plus
+    else:
+        exiger(isinstance(colonnes, dict) and colonnes,
+               "colonnes_du_schema rend un schéma vide sur une vraie base")
+        for table, obligatoires in (("rdv", {"issue", "issue_montant_eur", "issue_le"}),
+                                    ("appel", {"canal", "artisan_id"}),
+                                    ("lead", {"donnees"})):
+            presentes = colonnes.get(table) or set()
+            exiger(obligatoires <= presentes,
+                   f"colonnes_du_schema : {table} sans "
+                   f"{sorted(obligatoires - presentes)} — la base n'a pas reçu ses "
+                   "migrations, ou la lecture d'information_schema est fausse")
+
     return ecarts

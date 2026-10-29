@@ -20,7 +20,7 @@ Cible V1 : plombiers/chauffagistes FR. Solo dev : Geoffrey (binôme Claude) ; ma
 ```bash
 cd proto
 pip install -r requirements.txt     # anthropic, python-dotenv (inutiles en mock)
-python run_scenario.py              # suite de non-régression (mock, sans clé, ~3 s) — 117 tests
+python run_scenario.py              # suite de non-régression (mock, sans clé, ~3 s) — 118 tests
                                     # « sans BASE » est désormais VÉRIFIÉ, pas promis (R93) :
                                     # la suite importait `serveur.py` — le câblage de prod,
                                     # qui ouvre une connexion Postgres à l'import — et
@@ -75,7 +75,16 @@ uvicorn serveur:app --port 8000     # API HTTP (DATABASE_URL, RELAIS_WEBHOOK_SEC
                                     # ⚠️ PAS de --reload : un `git pull` n'a AUCUN effet
                                     # sur le processus en cours. Redémarrer uvicorn après
                                     # chaque changement — le tunnel, lui, n'a rien à voir.
-curl localhost:8000/sante           # dit la RÉVISION qui tourne vraiment (R65) ET le
+curl localhost:8000/sante           # ⚠️ UNE MIGRATION EN ATTENTE EST UN BLOQUANT DE
+                                    # DÉPLOIEMENT, pas une tâche de suite : le 29/10, du
+                                    # code lisant `rdv.issue` est parti en prod sans la
+                                    # migration 015 — cron mort 2 h, et tout écran montrant
+                                    # un RDV en 500. On MIGRE, PUIS on déploie (additif :
+                                    # l'ancien code survit à la colonne, l'inverse non).
+                                    # `/sante` le dit désormais : `schema.manquant` liste
+                                    # les colonnes absentes (R104, dérivé des .sql), et il
+                                    # RÉPOND MÊME BASE MORTE (`base.joignable`).
+                                    # dit la RÉVISION qui tourne vraiment (R65) ET le
                                     # DERNIER PASSAGE DU WORKER (R86) : « il_y_a_min »
                                     # répond à « le cron tourne-t-il ? » en dix secondes.
                                     # À travers le tunnel aussi : si les deux diffèrent,

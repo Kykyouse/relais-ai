@@ -716,6 +716,20 @@ class DepotPostgres:
             "on conflict (cle) do update set instant = excluded.instant",
             (maintenant,))
 
+    def colonnes_du_schema(self) -> "dict[str, set[str]] | None":
+        """Ce que la base porte VRAIMENT, lu dans `information_schema`.
+
+        Une seule requête, sur le schéma `public` : `/sante` est appelé souvent, et un
+        contrôle qui coûterait cher finirait désactivé le jour où il gênerait — donc le
+        jour où il servirait.
+        """
+        tables: dict[str, set[str]] = {}
+        for table, colonne in self._lire(
+                "select table_name, column_name from information_schema.columns "
+                "where table_schema = 'public'"):
+            tables.setdefault(table, set()).add(colonne)
+        return tables
+
     def dernier_passage_worker(self) -> dt.datetime | None:
         lignes = self._plusieurs("select instant from jalon where cle = 'worker'")
         return lignes[0][0] if lignes else None

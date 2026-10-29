@@ -6017,6 +6017,133 @@ def check_portail_apercu() -> bool:
     return True
 
 
+def check_sante_survit_et_date_le_schema() -> bool:
+    """R104 : `/sante` survit à la panne qu'il surveille, et dit si une migration manque.
+
+    Deux défauts du 29/10, le même jour, et le second a caché le premier pendant deux
+    heures.
+
+    **1. Le déploiement attendait une migration qui n'était pas passée.** Le code livré
+    le matin lisait `rdv.issue` (T18), et la migration 015 n'avait jamais été appliquée
+    en production. Le service démarrait, `/sante` répondait « ok », et seule la première
+    requête touchant la colonne échouait : le cron toutes les dix minutes, et n'importe
+    quel écran montrant un rendez-vous. Dans les journaux de l'hébergeur,
+    `UndefinedColumn: column "issue" does not exist`, toutes les dix minutes, sans que
+    rien d'autre ne le signale.
+
+    **2. `/sante` tombait AVEC la base.** Il lit le dernier passage du worker, donc il
+    interroge Postgres : connexion morte, 500 nu, pas un mot sur la cause. L'outil censé
+    dire « quelque chose ne va pas » mourait avec ce qu'il mesurait — et c'est lui qu'on
+    consulte en premier (R65, R86).
+
+    Trois états doivent se distinguer, parce qu'ils appellent trois gestes différents :
+
+    * base joignable et schéma à jour → `ok` ;
+    * base joignable, colonnes manquantes → `degrade`, et **la liste des colonnes**, qui
+      dit quelle migration rejouer ;
+    * base injoignable → `degrade`, l'erreur en clair, et `schema.a_jour` à **`null`** et
+      non `false` : « on n'a pas pu vérifier » n'est pas « il manque des colonnes », et
+      les confondre enverrait rejouer une migration pour une panne de connexion.
+
+    LA LISTE DES COLONNES ATTENDUES N'EST ÉCRITE NULLE PART : `schema.attendu` la dérive
+    des fichiers `migrations/*.sql`, comme `registre.valider_config` dérive ses exigences
+    du modèle. Une liste tenue à la main vieillirait exactement le jour où elle
+    compterait — à la migration suivante.
+    """
+    try:
+        from fastapi.testclient import TestClient
+    except ImportError:
+        print("   fastapi/httpx absents : pip install -r requirements.txt")
+        return False
+
+    from relais_proto import schema
+    from relais_proto.api import creer_app
+    from relais_proto.registre import Artisan, Registre, empreinte as emp_token
+
+    # 1. le parseur voit bien ce que les migrations créent — sinon tout le reste est
+    #    un contrôle qui ne contrôle rien (c'est ainsi que R103 a failli ne rien garder)
+    attendu = schema.attendu()
+    for table, colonne in (("rdv", "issue"), ("rdv", "issue_montant_eur"),
+                           ("rdv", "issue_le"), ("appel", "canal"),
+                           ("artisan", "config"), ("artisan", "mot_de_passe"),
+                           ("evenement_agenda", "jour"), ("jalon", "instant")):
+        if colonne not in attendu.get(table, set()):
+            print(f"   `schema.attendu` ne voit pas {table}.{colonne} dans les "
+                  "migrations : le contrôle passerait sans rien regarder")
+            return False
+
+    registre = Registre([Artisan("art-dupont", "+33189701234", emp_token("tok"), CFG,
+                                 telephone="+33612345678")],
+                        emp_token("secret-voix"))
+
+    class DepotBaseMorte(DepotMemoire):
+        """La panne du matin : la connexion est fermée et rien ne la rouvre."""
+        def dernier_passage_worker(self):
+            raise RuntimeError("the connection is closed")
+
+    class DepotEnRetard(DepotMemoire):
+        """La panne de midi : la base tourne, mais sans les colonnes de la 015/016."""
+        def colonnes_du_schema(self):
+            present = {t: set(c) for t, c in schema.attendu().items()}
+            present["rdv"] -= {"issue", "issue_montant_eur", "issue_le"}
+            present["appel"] -= {"canal"}
+            return present
+
+    def sante(depot):
+        app = creer_app(depot, registre, MockLLM, lambda: LUNDI_9H,
+                        base_url="https://nelyo.test", cookie_secure=False)
+        with TestClient(app) as sonde:
+            reponse = sonde.get("/sante")
+            if reponse.status_code != 200:
+                return None, reponse.status_code
+            return reponse.json(), 200
+
+    # 2. tout va bien
+    ok, code = sante(DepotMemoire())
+    if ok is None:
+        print(f"   /sante rend {code} sur un dépôt sain")
+        return False
+    if ok["statut"] != "ok" or ok["schema"]["a_jour"] is not True \
+            or ok["schema"]["manquant"] != []:
+        print(f"   un dépôt sain n'est pas annoncé « ok » : {ok['statut']} "
+              f"/ {ok['schema']}")
+        return False
+
+    # 3. LA BASE EST MORTE — et `/sante` répond quand même, en disant pourquoi
+    mort, code = sante(DepotBaseMorte())
+    if mort is None:
+        print(f"   /sante rend {code} quand la base ne répond pas : il tombe AVEC la "
+              "panne qu'il surveille, et ne dit rien de ce qu'on venait chercher")
+        return False
+    if mort["base"]["joignable"] is not False or not mort["base"]["erreur"]:
+        print(f"   la base muette n'est pas signalée : {mort['base']}")
+        return False
+    if mort["statut"] != "degrade":
+        print(f"   base injoignable et statut « {mort['statut']} »")
+        return False
+    if mort["schema"]["a_jour"] is not None:
+        print(f"   schéma annoncé {mort['schema']['a_jour']!r} alors qu'on n'a PAS PU "
+              "vérifier : « inconnu » et « en retard » appellent deux gestes différents")
+        return False
+    # la version reste lisible : c'est elle qu'on lit en premier, panne ou pas (R65)
+    if not mort.get("version"):
+        print("   la révision déployée disparaît quand la base tombe")
+        return False
+
+    # 4. LE SCHÉMA EST EN RETARD — exactement la panne de ce matin
+    retard, _ = sante(DepotEnRetard())
+    if retard["statut"] != "degrade" or retard["schema"]["a_jour"] is not False:
+        print(f"   un schéma en retard passe pour sain : {retard['schema']}")
+        return False
+    if retard["schema"]["manquant"] != ["appel.canal", "rdv.issue", "rdv.issue_le",
+                                        "rdv.issue_montant_eur"]:
+        print(f"   la liste des colonnes manquantes est fausse : "
+              f"{retard['schema']['manquant']} — c'est elle qui dit quelle migration "
+              "rejouer")
+        return False
+    return True
+
+
 def check_connexion_qui_se_rouvre() -> bool:
     """R102 : une connexion Postgres tombée est ROUVERTE, et le fuseau rejoué avec.
 
@@ -13874,6 +14001,15 @@ def run() -> int:
         print("   → sans mot de passe la vitrine est publique et indexable ; avec, "
               "elle est remplacée par le portail, en noindex, et le lien `?cle=` "
               "est consommé — l'espace artisan reste libre : ✅ PASS")
+    else:
+        print("   → ❌ FAIL")
+        echecs += 1
+
+    print(f"\n──── R104_sante_survit_et_date_le_schema ────")
+    if check_sante_survit_et_date_le_schema():
+        print("   → /sante répond même base morte, en disant pourquoi, et distingue "
+              "« schéma en retard » (avec la liste des colonnes) de « on n'a pas pu "
+              "vérifier » : ✅ PASS")
     else:
         print("   → ❌ FAIL")
         echecs += 1
