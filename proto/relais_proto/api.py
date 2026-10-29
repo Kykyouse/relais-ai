@@ -18,13 +18,14 @@ import re as _re_mod
 from urllib.parse import quote
 
 from fastapi import Cookie, Depends, FastAPI, Form, Header, HTTPException, Request
-from fastapi.responses import (HTMLResponse, JSONResponse, RedirectResponse,
-                               StreamingResponse)
+from fastapi.responses import (HTMLResponse, JSONResponse, PlainTextResponse,
+                               RedirectResponse, StreamingResponse)
 from pydantic import BaseModel, Field
 
 import secrets
 
-from . import (connexion, messages, pages, session, sonde_dispo as _sonde_dispo,
+from . import (apercu, connexion, messages, pages, session,
+               sonde_dispo as _sonde_dispo,
                sonde_voix as _sonde, temps,
                vapi as _vapi)
 from .calendar_stub import JOURS_FR, MOIS_FR, CalendarStub, libelle_creneau
@@ -142,7 +143,8 @@ def creer_app(depot, registre: Registre, fabrique_llm, horloge=None,
               sonde_dispo: "pathlib.Path | None" = None,
               voix_artisan_defaut: str | None = None,
               version: str = "inconnue",
-              modeles: dict | None = None) -> FastAPI:
+              modeles: dict | None = None,
+              vitrine_motdepasse: str | None = None) -> FastAPI:
     """Collaborateurs injectés explicitement plutôt que par variables globales : les tests
     passent un dépôt mémoire, un MockLLM et une horloge figée, la prod un dépôt Postgres.
 
@@ -808,16 +810,13 @@ def creer_app(depot, registre: Registre, fabrique_llm, horloge=None,
     # Routes distinctes des routes JSON : celles-ci redirigent après action (303) pour que
     # le rechargement du navigateur ne rejoue pas le POST. Les routes JSON restent pour la
     # future app mobile.
-    # ---- le site vitrine : la seule page publique, et la seule indexable ----
-    @app.get("/", response_class=HTMLResponse)
-    def page_vitrine() -> HTMLResponse:
-        """La racine du domaine. Elle rendait 404 jusqu'ici.
-
-        LA PHRASE D'ACCUEIL AFFICHÉE EST CELLE QUE LE MOTEUR PRONONCE : la page appelle
-        `formule_accueil`, elle n'en garde pas une copie. C'est T17 déplacé d'un cran —
-        l'écran « Assistant IA » montre à l'artisan ce que sa machine dit, cette page le
-        montre à quelqu'un qui hésite à l'acheter, et les deux se trompent de la même
-        façon le jour où la formule change, c'est-à-dire jamais.
+    # ---- le site vitrine, et le rideau qui le garde tant qu'il n'est pas lancé ----
+    def _page_vitrine_rendue() -> str:
+        """LA PHRASE D'ACCUEIL AFFICHÉE EST CELLE QUE LE MOTEUR PRONONCE : la page
+        appelle `formule_accueil`, elle n'en garde pas une copie. C'est T17 déplacé d'un
+        cran — l'écran « Assistant IA » montre à l'artisan ce que sa machine dit, cette
+        page le montre à quelqu'un qui hésite à l'acheter, et les deux se trompent de la
+        même façon le jour où la formule change, c'est-à-dire jamais.
 
         La config ci-dessous ne sert qu'à faire parler cette fonction. `formule` à None
         est VOULU : c'est la formule par DÉFAUT, celle qu'obtient un artisan qui n'a rien
@@ -825,7 +824,69 @@ def creer_app(depot, registre: Registre, fabrique_llm, horloge=None,
         """
         demo = {"entreprise": {"nom": "Dupont Chauffage", "prenom_patron": "Julien"},
                 "accueil": {"formule": None}}
-        return HTMLResponse(pages.vitrine(NOM, formule_accueil(demo)))
+        return pages.vitrine(NOM, formule_accueil(demo),
+                             prive=bool(vitrine_motdepasse))
+
+    def _ouvrir_apercu(vers: str = "/") -> RedirectResponse:
+        reponse = RedirectResponse(vers, status_code=303)
+        reponse.set_cookie(apercu.NOM_COOKIE, apercu.jeton(vitrine_motdepasse),
+                           **apercu.attributs_cookie(secure=cookie_secure))
+        return reponse
+
+    @app.get("/", response_class=HTMLResponse)
+    def page_vitrine(cle: str | None = None,
+                     jeton_apercu: str | None = Cookie(None,
+                                                       alias=apercu.NOM_COOKIE)):
+        """La racine du domaine. Elle rendait 404 jusqu'au 29/10.
+
+        TROIS CHEMINS, et un seul quand la vitrine est publique :
+
+        1. aucun mot de passe configuré → la page, pour tout le monde, indexable ;
+        2. cookie d'aperçu valide → la page, en `noindex` ;
+        3. rien → le portail. **La page n'est pas rendue du tout** dans ce cas : elle
+           n'est pas cachée par du style, elle n'est pas envoyée.
+
+        `?cle=…` existe pour qu'un seul lien suffise à un relecteur, mais il est
+        CONSOMMÉ : on pose le cookie et on redirige vers `/` nu. Sinon le secret
+        resterait dans la barre d'adresse, serait recopié avec l'URL, partirait dans
+        l'en-tête `Referer` du premier lien sortant et finirait dans un marque-page.
+        """
+        if cle is not None and apercu.motdepasse_juste(cle, vitrine_motdepasse):
+            return _ouvrir_apercu()
+        if apercu.ouvert(jeton_apercu, vitrine_motdepasse):
+            return HTMLResponse(_page_vitrine_rendue())
+        return HTMLResponse(pages.portail_apercu(NOM), status_code=401)
+
+    @app.post("/", response_class=HTMLResponse)
+    def page_vitrine_portail(motdepasse: str = Form("")):
+        """Le formulaire du portail. En POST : un GET aurait écrit le secret dans les
+        journaux du serveur et dans l'historique du navigateur."""
+        if not vitrine_motdepasse:
+            return RedirectResponse("/", status_code=303)
+        if apercu.motdepasse_juste(motdepasse, vitrine_motdepasse):
+            return _ouvrir_apercu()
+        # Le refus ne dit pas SI le mot de passe existe, ni s'il a failli : il n'y a
+        # qu'un secret, et toute nuance renseignerait celui qui essaie.
+        return HTMLResponse(
+            pages.portail_apercu(NOM, erreur="Mot de passe incorrect."),
+            status_code=401)
+
+    @app.get("/robots.txt", response_class=PlainTextResponse)
+    def robots() -> PlainTextResponse:
+        """Tant que la vitrine est derrière le portail, RIEN ne doit être indexé.
+
+        Le `noindex` de la page ne suffit pas : un moteur doit d'abord la charger pour
+        le lire, et il ne recevrait que le portail — dont l'adresse se retrouverait
+        quand même listée. La consigne de robot est le seul endroit qui parle AVANT la
+        requête. Le jour où la variable disparaît, le fichier s'ouvre de lui-même : pas
+        deux réglages à tenir d'accord."""
+        if vitrine_motdepasse:
+            return PlainTextResponse("User-agent: *\nDisallow: /\n")
+        # Public : la vitrine s'indexe, l'espace artisan et l'administration jamais.
+        return PlainTextResponse(
+            "User-agent: *\n"
+            "Disallow: /app\nDisallow: /admin\nDisallow: /connexion\nDisallow: /c/\n"
+            "Allow: /\n")
 
     @app.get("/connexion", response_class=HTMLResponse)
     def page_connexion() -> HTMLResponse:

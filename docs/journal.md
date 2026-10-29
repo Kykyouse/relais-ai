@@ -16,7 +16,7 @@ Le produit s'appelle **NELYO** et **il tourne en ligne** :
 <https://nelyo-api.onrender.com>, cron compris, sur une base de production séparée.
 Depuis le 21/09 **un artisan s'inscrit sans commit ni redéploiement** : sa config vit en
 base et s'édite dans `/admin`. La compréhension est au LLM sous contrat fermé, mesurée à
-**68/70** au banc d'extraction et **57/57** en éval réelle ×3 ; **112 tests** de
+**68/70** au banc d'extraction et **57/57** en éval réelle ×3 ; **113 tests** de
 non-régression. Il reste **un seul mur** : aucun numéro n'est joignable depuis la France.
 
 > ⚠️ **ÉTAT RÉEL DE LA PRODUCTION AU 29/10 : à vérifier avant de rien croire du
@@ -40,7 +40,7 @@ les évals LLM réelles (la clé API ne voyage pas) et `run_depot_pg` (Supabase)
 
 ```bash
 cd proto
-python run_scenario.py                              # 112 tests, ~3 s — sans clé NI BASE (R93)
+python run_scenario.py                              # 113 tests, ~3 s — sans clé NI BASE (R93)
 python run_extract_eval.py [--mock] [--only …]      # banc d'EXTRACTION : 68/70, p50 1131 ms
 python run_llm_eval.py [--mock] [--n 3]             # éval appelant-simulé (19 personas)
 python run_depot_pg.py [--migrer]                   # contrat du port contre Supabase
@@ -540,10 +540,46 @@ sur deux laisse entrer le même défaut par l'autre porte.
 
 **Suite : 111/111.**
 
+### Le portail d'aperçu (T20) — et pourquoi le test garde l'état PUBLIC
+
+Demande de Geoffrey dans la foulée : pouvoir montrer la page à des collaborateurs et
+récolter des avis extérieurs sans qu'elle soit ouverte à tous. `RELAIS_VITRINE_MOTDEPASSE`
+met `/` derrière un mot de passe unique et partagé.
+
+Deux choses à retenir, parce qu'elles ne sont pas celles qu'on attend d'un mot de passe.
+
+**Un seul réglage commande le rideau ET l'indexation.** Une page fermée mais référencée
+serait le pire des deux mondes — un moteur publierait le titre d'une page que personne ne
+peut ouvrir — et une page rouverte qui garde son `noindex` ne serait jamais trouvée, sans
+que rien ne le signale. Deux drapeaux auraient fini par diverger. Variable absente = page
+publique et indexable : **le jour du lancement, on SUPPRIME la variable**, il n'y a rien
+d'autre à faire. C'est ce que T20 vérifie en premier, et c'est le vrai sujet du test : il
+garde l'état public autant que l'état privé.
+
+**Le portail REMPLACE la page, il ne la masque pas.** Rien du gabarit n'est envoyé sans le
+cookie — ni le titre, ni le tarif, ni la phrase d'accueil. T20 les cherche nommément, dans
+trois blocs différents : un rideau qui n'en couvrirait qu'un laisserait filtrer par les
+deux autres.
+
+Le reste suit : `?cle=…` existe pour qu'un seul lien suffise à un relecteur, mais il est
+**consommé** — cookie posé, redirection vers `/` nu, sinon le secret resterait dans la
+barre d'adresse, partirait dans l'en-tête `Referer` du premier lien sortant et finirait
+dans un marque-page. Comparaison à temps constant. Le cookie porte un HMAC et non le
+condensat nu d'un mot de passe court, qui se retrouve dans n'importe quelle table
+arc-en-ciel et révélerait un secret peut-être réutilisé ailleurs. Et **le rideau ne garde
+que `/`** : `/app` et `/admin` ont leurs propres portes — T20 le vérifie, parce que le
+jour où le portail les avalerait, c'est l'artisan qu'on enfermerait dehors.
+
+Ce que ça n'est pas : une serrure. Un seul secret, non révocable individuellement, que
+chaque destinataire peut transmettre. Il ne doit donc jamais garder autre chose qu'une
+page de présentation.
+
 ### Ce qui reste, et qui n'est pas du code
 
 1. **Les mentions légales.** Obligatoires pour un site qui présente une offre
    commerciale. Il faut la raison sociale, le SIRET, l'adresse et l'hébergeur.
+   Moins pressant tant que la page est derrière le portail — mais c'est exactement
+   le genre de dette qu'on découvre le jour où l'on retire la variable.
 2. **`contact@nelyo.fr` doit exister et être relevée.** Un formulaire qui tombe dans le
    vide coûte plus cher que pas de formulaire.
 3. **La page vend un service dont l'entrée téléphonique française n'existe pas** (dette

@@ -102,6 +102,22 @@ services:
                                    # qu'on prévoit d'abandonner.
       - key: RELAIS_COOKIE_SECURE  # « true » ici : on est en https, et le cookie de session
         value: "true"              # de l'artisan n'a aucune raison de voyager en clair.
+      - key: RELAIS_VITRINE_MOTDEPASSE
+        sync: false                # ⚠️ `sync: false` et PAS de valeur : c'est un secret, et
+                                   # ce dépôt est public. Elle se pose dans le tableau de
+                                   # bord de Render, à la main.
+                                   #
+                                   # SON ABSENCE EST LE MODE PUBLIC. Posée, elle met le
+                                   # site vitrine derrière un portail à mot de passe unique
+                                   # ET coupe l'indexation (`noindex` + robots.txt), d'un
+                                   # seul geste — cf. `relais_proto/apercu.py`. Le jour du
+                                   # lancement, on la SUPPRIME : rien d'autre à changer,
+                                   # et donc aucun risque d'ouvrir la page en laissant le
+                                   # `noindex`, ni l'inverse, qui serait pire.
+                                   #
+                                   # Elle ne garde QUE `/`. L'espace artisan et
+                                   # l'administration ont leurs propres portes, et ce
+                                   # rideau ne les remplace pas.
 
   # ------------------------------------------------------------------ le worker de fond
   - name: nelyo-worker

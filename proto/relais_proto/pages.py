@@ -1751,7 +1751,8 @@ html{scroll-behavior:smooth}
 CONTACT_VITRINE = "contact@nelyo.fr"
 
 
-def vitrine(produit: str, accueil_demo: str, contact: str = CONTACT_VITRINE) -> str:
+def vitrine(produit: str, accueil_demo: str, contact: str = CONTACT_VITRINE,
+            prive: bool = False) -> str:
     """La page publique : ce qu'un artisan voit avant d'avoir un compte.
 
     `accueil_demo` est la VRAIE première phrase de l'assistant, rendue par
@@ -1759,8 +1760,13 @@ def vitrine(produit: str, accueil_demo: str, contact: str = CONTACT_VITRINE) -> 
     à la page de vente : la promesse affichée et la machine qui l'exécute ne peuvent
     pas diverger, puisqu'il n'y a qu'une source.
 
-    Pas de `noindex` ici, contrairement à `_page_nelyo` : c'est la seule page du
-    produit qui DOIT être trouvée.
+    **`prive` et le `noindex` ne font qu'un, délibérément.** C'est normalement la seule
+    page du produit qui DOIT être trouvée — mais tant qu'elle est derrière le portail
+    d'aperçu, la faire indexer serait absurde : un moteur publierait le titre et le
+    résumé d'une page que personne ne peut ouvrir, et l'adresse se retrouverait dans
+    les résultats avant le lancement. Lier les deux à un seul paramètre évite le
+    scénario où l'on retire le rideau en oubliant le `noindex` — ou l'inverse, qui est
+    pire : une page privée référencée.
     """
     mailto = "mailto:" + escape(contact)
     nom = escape(produit)
@@ -2074,7 +2080,8 @@ def vitrine(produit: str, accueil_demo: str, contact: str = CONTACT_VITRINE) -> 
         "<!DOCTYPE html>\n"
         '<html lang="fr"><head><meta charset="utf-8">'
         '<meta name="viewport" content="width=device-width, initial-scale=1">'
-        '<meta name="description" content="'
+        + ('<meta name="robots" content="noindex, nofollow">' if prive else "")
+        + '<meta name="description" content="'
         f"{nom} répond aux appels que vous manquez sur chantier, qualifie la demande "
         'et réserve le rendez-vous. Vous validez en 1 tap avant toute confirmation.">'
         f"<title>{nom} — vos appels manqués deviennent des rendez-vous</title>"
@@ -2082,3 +2089,77 @@ def vitrine(produit: str, accueil_demo: str, contact: str = CONTACT_VITRINE) -> 
         + nav + hero + preuve + demo + fonctionnement + roi + franchise
         + confiance + tarif + faq + final + pied
         + "</body></html>")
+
+
+# ══════════════════════════════════════════ LE PORTAIL D'APERÇU (29/10)
+#
+# Le rideau devant la vitrine, le temps de la montrer à des collaborateurs. Sa seule
+# exigence de fond : **ne rien laisser filtrer de la page qu'il garde**. Pas d'extrait,
+# pas de titre accrocheur, pas de tarif — sinon le rideau serait une vitrine de plus, et
+# le visiteur non invité aurait l'essentiel sans le mot de passe.
+#
+# Il dit en revanche CE QUE C'EST et À QUI S'ADRESSER : une page qui demande un mot de
+# passe sans se présenter ressemble à une erreur de configuration, et un relecteur à qui
+# l'on demande un avis commence par douter du lien qu'on lui a envoyé.
+_STYLE_PORTAIL = _SOCLE_NELYO + """
+.sas{min-height:100vh;display:grid;place-items:center;padding:24px 16px}
+.sas-carte{background:var(--surface);border:1px solid var(--line);border-radius:14px;
+  box-shadow:var(--shadow);padding:30px 28px;width:100%;max-width:400px}
+.sas-logo{display:flex;align-items:center;gap:10px;margin-bottom:20px}
+.sas-logo b{font-family:"Bricolage Grotesque";font-size:20px}
+.sas h1{font-size:19px;margin:0 0 7px}
+.sas .intro{color:var(--muted);font-size:13.5px;line-height:1.55;margin:0 0 20px}
+.sas label{display:block;font-size:12.5px;color:var(--muted);margin:0 0 5px}
+.sas input{width:100%;min-height:42px;border:1px solid var(--line);border-radius:9px;
+  padding:0 12px;background:var(--surface-2);color:var(--ink);
+  font:500 14.5px "Instrument Sans",sans-serif}
+.sas button{width:100%;margin-top:14px;min-height:42px;font-size:14.5px}
+.sas .refus{background:var(--crit-bg);color:var(--crit);border-radius:9px;
+  padding:10px 13px;font-size:13px;font-weight:600;margin:0 0 16px}
+.sas .pied{color:var(--faint);font-size:12px;line-height:1.5;margin:18px 0 0}
+.sas .pied a{color:var(--muted)}
+"""
+
+
+def portail_apercu(produit: str, contact: str = CONTACT_VITRINE,
+                   erreur: str = "") -> str:
+    """La page de mot de passe devant la vitrine.
+
+    TOUJOURS `noindex` : elle n'a aucune raison d'exister dans un moteur de recherche,
+    et son indexation révélerait l'adresse de ce qu'elle protège.
+
+    Le champ est en `type="password"` et le formulaire en POST : un GET aurait écrit le
+    secret dans les journaux du serveur et dans l'historique du navigateur. Le lien
+    partageable `?cle=…` existe pour le confort, mais l'API s'en débarrasse par une
+    redirection aussitôt qu'elle l'a lu — c'est le seul endroit où il transite.
+    """
+    nom = escape(produit)
+    refus = f'<p class="refus">{escape(erreur)}</p>' if erreur else ""
+    return (
+        "<!DOCTYPE html>\n"
+        '<html lang="fr"><head><meta charset="utf-8">'
+        '<meta name="viewport" content="width=device-width, initial-scale=1">'
+        '<meta name="robots" content="noindex, nofollow">'
+        f"<title>Aperçu privé · {nom}</title>"
+        f"<style>{_STYLE_PORTAIL}</style></head><body>"
+        '<div class="sas"><div class="sas-carte">'
+        '<div class="sas-logo"><span class="logo-mark">'
+        '<svg viewBox="0 0 24 24" fill="none" stroke="#fff" stroke-width="2.2" '
+        'stroke-linecap="round"><path d="M5 4v6a7 7 0 0 0 14 0V4"/>'
+        '<path d="M12 17v3"/></svg></span>'
+        f"<b>{nom}</b></div>"
+        "<h1>Aperçu privé</h1>"
+        '<p class="intro">Cette page est en cours de préparation et n&#x27;est pas '
+        "encore publique. Si vous avez reçu un mot de passe, saisissez-le pour y "
+        "accéder.</p>"
+        + refus
+        + '<form method="post" action="/">'
+        '<label for="mdp">Mot de passe</label>'
+        '<input id="mdp" name="motdepasse" type="password" autofocus '
+        'autocomplete="current-password">'
+        '<button class="btn btn-cu" type="submit">Voir la page</button>'
+        "</form>"
+        f'<p class="pied">Vous cherchez votre espace ? '
+        f'<a href="/connexion">Se connecter</a>.<br>'
+        f'Une question : <a href="mailto:{escape(contact)}">{escape(contact)}</a>.</p>'
+        "</div></div></body></html>")

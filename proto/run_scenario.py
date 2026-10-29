@@ -5416,6 +5416,138 @@ def check_site_vitrine() -> bool:
     return True
 
 
+def check_portail_apercu() -> bool:
+    """T20 : le rideau devant le site vitrine, et son absence qui vaut lancement.
+
+    Posé le 29/10 à la demande de Geoffrey : montrer la page à des collaborateurs et
+    récolter des avis extérieurs, sans qu'elle soit ouverte à tous ni indexée.
+
+    LE PIÈGE QUE CE TEST GARDE est à l'ENVERS de ce qu'on croit : ce n'est pas « le mot
+    de passe protège-t-il ? » — c'est **que le produit redevienne public proprement**.
+    Un rideau qui s'enlève mal laisse deux états possibles, et le mauvais des deux est
+    silencieux : une page ouverte qui garde son `noindex` ne sera jamais trouvée, et
+    rien ne le signalera. D'où un seul réglage (`RELAIS_VITRINE_MOTDEPASSE`) qui
+    commande les deux, et ce test qui joue les DEUX modes.
+
+    Six vérifications :
+
+    1. **sans mot de passe configuré** : la page, pour tout le monde, SANS `noindex`, et
+       un `robots.txt` qui autorise. C'est l'état d'arrivée du jour du lancement ;
+    2. **avec mot de passe, sans cookie** : le portail — et la page n'est pas rendue du
+       tout. Elle n'est pas masquée par du style, elle n'est pas envoyée. Vérifié sur le
+       contenu : ni titre, ni tarif, ni phrase d'accueil ;
+    3. **mauvais mot de passe** : refus, aucun cookie posé. Un cookie fabriqué à la main
+       ne passe pas davantage ;
+    4. **bon mot de passe** : la page, et cette fois AVEC `noindex` — fermée et
+       référencée serait le pire des deux mondes ;
+    5. **le lien partageable `?cle=…` est CONSOMMÉ** : il pose le cookie et redirige
+       vers `/` nu. Sinon le secret resterait dans la barre d'adresse, partirait dans
+       l'en-tête `Referer` du premier lien sortant et finirait dans un marque-page ;
+    6. **le rideau ne garde que `/`.** L'espace artisan et l'administration ont leurs
+       propres portes ; le jour où ce test tombe parce que `/connexion` est passé
+       derrière le portail, c'est l'artisan qu'on aura enfermé dehors.
+    """
+    try:
+        from fastapi.testclient import TestClient
+    except ImportError:
+        print("   fastapi/httpx absents : pip install -r requirements.txt")
+        return False
+
+    from relais_proto.api import creer_app
+    from relais_proto.registre import Artisan, Registre, empreinte as emp_token
+
+    MDP = "chantier-2026"
+    # Ce que le portail ne doit JAMAIS laisser voir : le titre de la page, son prix, et
+    # la phrase d'accueil. Trois endroits différents du gabarit — un rideau qui ne
+    # couvrirait qu'un bloc les laisserait passer par les deux autres.
+    SECRETS = ("Vos appels. Vos RDV.", "149 €", "vous êtes bien chez")
+
+    def monter(motdepasse):
+        registre = Registre([Artisan("art-dupont", "+33189701234", emp_token("tok"),
+                                     CFG, telephone="+33612345678")],
+                            emp_token("secret-voix"))
+        return creer_app(DepotMemoire(), registre, MockLLM, lambda: LUNDI_9H,
+                         base_url="https://nelyo.test", cookie_secure=False,
+                         vitrine_motdepasse=motdepasse)
+
+    # 1. sans mot de passe : public et indexable — l'état du jour du lancement
+    with TestClient(monter(None)) as passant:
+        page = passant.get("/")
+        if page.status_code != 200 or SECRETS[0] not in page.text:
+            print("   sans mot de passe configuré, la vitrine ne s'ouvre pas")
+            return False
+        if "noindex" in page.text:
+            print("   la vitrine PUBLIQUE se refuse à l'indexation : le rideau s'est "
+                  "enlevé à moitié, et rien ne le dirait")
+            return False
+        robots = passant.get("/robots.txt").text
+        if "Disallow: /\n" in robots:
+            print("   robots.txt interdit tout alors que la page est publique")
+            return False
+
+    # 2. avec mot de passe, sans cookie : le portail, et RIEN de la page
+    with TestClient(monter(MDP), follow_redirects=False) as visiteur:
+        porte = visiteur.get("/")
+        if porte.status_code != 401 or "Aperçu privé" not in porte.text:
+            print(f"   la page n'est pas gardée : {porte.status_code}")
+            return False
+        for secret in SECRETS:
+            if secret in porte.text:
+                print(f"   le portail laisse filtrer {secret!r} — il est censé "
+                      "REMPLACER la page, pas la masquer")
+                return False
+        if "Disallow: /\n" not in visiteur.get("/robots.txt").text:
+            print("   robots.txt n'interdit pas l'indexation d'une page fermée : "
+                  "son adresse serait listée sans que personne puisse l'ouvrir")
+            return False
+
+        # 3. mauvais mot de passe, et cookie fabriqué : refusés
+        refus = visiteur.post("/", data={"motdepasse": "au-hasard"})
+        if refus.status_code != 401 or "nelyo_apercu" in refus.headers.get(
+                "set-cookie", ""):
+            print("   un mauvais mot de passe ouvre quand même, ou pose un cookie")
+            return False
+        if visiteur.get("/", cookies={"nelyo_apercu": "0" * 64}).status_code != 401:
+            print("   un cookie fabriqué à la main suffit à entrer")
+            return False
+
+        # 4. bon mot de passe : la page, et le `noindex` avec
+        ouvre = visiteur.post("/", data={"motdepasse": MDP})
+        if ouvre.status_code != 303:
+            print(f"   le bon mot de passe ne redirige pas : {ouvre.status_code}")
+            return False
+        dedans = visiteur.get("/")
+        if dedans.status_code != 200 or SECRETS[0] not in dedans.text:
+            print("   le cookie posé ne donne pas accès à la page")
+            return False
+        if "noindex" not in dedans.text:
+            print("   la vitrine PRIVÉE s'offre à l'indexation : fermée ET référencée "
+                  "est le pire des deux mondes")
+            return False
+
+        # 6. le rideau ne garde que `/`
+        if visiteur.get("/connexion").status_code != 200:
+            print("   le portail garde aussi /connexion : l'artisan est enfermé "
+                  "dehors de son propre espace")
+            return False
+
+    # 5. le lien partageable est consommé, pas conservé
+    with TestClient(monter(MDP), follow_redirects=False) as invite:
+        par_lien = invite.get(f"/?cle={MDP}")
+        if par_lien.status_code != 303 or par_lien.headers.get("location") != "/":
+            print("   `?cle=` ne redirige pas vers `/` nu : le mot de passe resterait "
+                  "dans la barre d'adresse et dans l'en-tête Referer")
+            return False
+        if "nelyo_apercu" not in par_lien.headers.get("set-cookie", ""):
+            print("   `?cle=` ne pose pas le cookie : le lien ne servirait qu'une fois")
+            return False
+    with TestClient(monter(MDP), follow_redirects=False) as curieux:
+        if curieux.get("/?cle=au-hasard").status_code != 401:
+            print("   une clé fausse dans l'URL ouvre la page")
+            return False
+    return True
+
+
 def check_connexion_qui_se_rouvre() -> bool:
     """R102 : une connexion Postgres tombée est ROUVERTE, et le fuseau rejoué avec.
 
@@ -13179,6 +13311,15 @@ def run() -> int:
         print("   → aucune règle nue (nav/aside/header) ne peut fuir d'un rôle vers "
               "un autre : la barre mobile ne re-hérite plus du flex-direction de la "
               "barre latérale : ✅ PASS")
+    else:
+        print("   → ❌ FAIL")
+        echecs += 1
+
+    print(f"\n──── T20_portail_apercu ────")
+    if check_portail_apercu():
+        print("   → sans mot de passe la vitrine est publique et indexable ; avec, "
+              "elle est remplacée par le portail, en noindex, et le lien `?cle=` "
+              "est consommé — l'espace artisan reste libre : ✅ PASS")
     else:
         print("   → ❌ FAIL")
         echecs += 1

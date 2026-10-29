@@ -213,7 +213,14 @@ def construire():
                      cookie_secure=secure, envoyeur=envoyeur, sonde_voix=sonde,
                      sonde_dispo=sonde_dispo,
                      voix_artisan_defaut=voix_artisan, version=version,
-                     modeles=modeles)
+                     modeles=modeles,
+                     # Le rideau devant le site vitrine. ABSENTE = PUBLIQUE : le jour du
+                     # lancement, on retire la variable, rien à redéployer. Posée, elle
+                     # ferme la page ET coupe l'indexation, d'un seul geste (cf.
+                     # `apercu.py`). Jamais de valeur par défaut ici : un mot de passe
+                     # écrit dans un fichier suivi par git est un mot de passe publié.
+                     vitrine_motdepasse=os.environ.get(
+                         "RELAIS_VITRINE_MOTDEPASSE", "").strip() or None)
 
 
 app = construire()
