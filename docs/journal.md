@@ -513,7 +513,33 @@ ressort « Nogent-sur-marne », `_resoudre_commune` ne capitalisant qu'après le
 Le premier est corrigé ; le second est un comportement existant de tous les canaux, laissé
 tel quel plutôt que changé au détour d'un autre chantier.
 
-**Suite : 117/117.** La migration **016 reste à appliquer** (dev en pause, puis prod).
+**Suite : 117/117**, et **le contrat joué contre un vrai Postgres** une fois la base de
+dev restaurée : 16 migrations appliquées (015 et 016 comprises), contrat du port ✅,
+worker ✅. Reste à appliquer la 015 et la 016 **en PROD**, au prochain déploiement.
+
+Le premier passage a échoué, et c'est le meilleur argument pour cette base : mon ajout au
+contrat ouvrait un appel sur un `art-canal` isolé — vert en mémoire, et
+`ForeignKeyViolation` au premier contact avec Postgres, qui porte une clé étrangère
+`appel.artisan_id -> artisan.id` que le dépôt mémoire n'a pas. **Les 117 tests ne
+pouvaient pas le voir** : dans `run_scenario.py`, le contrat tourne « contre
+DepotMemoire », et c'est écrit dans son verdict. Le bloc tient désormais sur
+`art-dupont`, en fin de contrat — deux contraintes contradictoires (ne pas fausser les
+comptages de leads, ne pas inventer d'artisan) qui n'ont que cette solution commune.
+
+### Et une erreur de diagnostic qui valait une leçon
+
+La base de dev ne répondait plus : DNS absent sur l'hôte direct, `tenant/user not found`
+sur le pooler. J'en ai conclu un projet SUPPRIMÉ, en raisonnant sur ce qu'un projet
+supprimé *devrait* donner. Il était simplement **en pause**, et le bloc ÉTAT de ce
+journal décrivait déjà ce symptôme mot pour mot depuis le 09/09 :
+
+> « Créer la base de prod a mis la dév en pause (DNS qui ne résout plus, pooler qui
+> répond `tenant/user not found`). Bouton « Restore » dans le tableau de bord. »
+
+La note existait, elle était juste, et j'ai préféré mon raisonnement. **Le bloc ÉTAT se
+lit avant de diagnostiquer, pas seulement avant de coder.** Geoffrey cherchait le bouton
+Restore dans le projet de PROD — le fil d'Ariane de Supabase ne dit pas fort qu'on est
+dans un autre projet que celui qu'on croit.
 
 ---
 

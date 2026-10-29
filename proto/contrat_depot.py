@@ -723,6 +723,13 @@ def verifier(fabrique, cfg: dict) -> list[str]:
 
     # ---- le CANAL d'une demande (migration 016) ----
     #
+    # CE BLOC DOIT RESTER EN FIN DE CONTRAT, et sur `art-dupont`. Deux contraintes qui
+    # se contredisent et n'ont qu'une solution commune : il crée des leads, donc il
+    # fausserait les comptages s'il était placé plus haut ; et Postgres a une clé
+    # étrangère `appel.artisan_id -> artisan.id`, donc il ne peut pas inventer un
+    # artisan à lui. Premier essai avec un `art-canal` isolé : vert en mémoire, et
+    # `ForeignKeyViolation` au premier contact avec un vrai Postgres.
+    #
     # Joué contre les DEUX implémentations, et pas seulement en mémoire : un adaptateur
     # qui perdrait le canal rendrait toutes les demandes identiques à l'écran, et la
     # colonne « Canal » mentirait en silence — le même risque que celui qui a fait
@@ -730,7 +737,7 @@ def verifier(fabrique, cfg: dict) -> list[str]:
     #
     # Le canal est porté par `appel` mais LU SUR LE LEAD par jointure : c'est le lead
     # que la liste affiche. Les deux lectures sont donc vérifiées.
-    form = depot.ouvrir_appel("art-canal", LUNDI_9H, canal=CANAL_FORMULAIRE)
+    form = depot.ouvrir_appel("art-dupont", LUNDI_9H, canal=CANAL_FORMULAIRE)
     exiger(depot.appel(form.id).canal == CANAL_FORMULAIRE,
            "ouvrir_appel(canal=…) : le canal ne fait pas l'aller-retour")
     exiger(depot.appel(sans.id).canal == CANAL_TELEPHONE,
@@ -738,16 +745,16 @@ def verifier(fabrique, cfg: dict) -> list[str]:
     lead_form = depot.cloturer_appel(form.id, donnees, LUNDI_9H)
     exiger(depot.lead(lead_form.id).canal == CANAL_FORMULAIRE,
            "lead(id) : le canal n'est pas remonté par la jointure")
-    exiger(all(l.canal in CANAUX for l in depot.leads("art-canal", limite=50)),
+    exiger(all(l.canal in CANAUX for l in depot.leads("art-dupont", limite=50)),
            "leads() : un canal hors vocabulaire est remonté")
     exiger(any(l.canal == CANAL_FORMULAIRE
-               for l in depot.leads("art-canal", limite=50)),
+               for l in depot.leads("art-dupont", limite=50)),
            "leads() : le canal est perdu dans la liste (il l'est sur la ligne lue, "
            "pas sur celle écrite — c'est la jointure qui le porte)")
     # Vocabulaire fermé des DEUX côtés : la contrainte SQL dirait la même chose, mais
     # dans un message Postgres qu'on ne distingue pas d'une panne.
     exiger_leve(ValueError,
-                lambda: depot.ouvrir_appel("art-canal", LUNDI_9H, canal="pigeon"),
+                lambda: depot.ouvrir_appel("art-dupont", LUNDI_9H, canal="pigeon"),
                 "ouvrir_appel : un canal inconnu doit être refusé")
 
     return ecarts
