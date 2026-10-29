@@ -16,7 +16,7 @@ Le produit s'appelle **NELYO** et **il tourne en ligne** :
 <https://nelyo-api.onrender.com>, cron compris, sur une base de production séparée.
 Depuis le 21/09 **un artisan s'inscrit sans commit ni redéploiement** : sa config vit en
 base et s'édite dans `/admin`. La compréhension est au LLM sous contrat fermé, mesurée à
-**68/70** au banc d'extraction et **57/57** en éval réelle ×3 ; **116 tests** de
+**68/70** au banc d'extraction et **57/57** en éval réelle ×3 ; **117 tests** de
 non-régression. Il reste **un seul mur** : aucun numéro n'est joignable depuis la France.
 
 > ⚠️ **ÉTAT RÉEL DE LA PRODUCTION AU 29/10 : à vérifier avant de rien croire du
@@ -40,7 +40,7 @@ les évals LLM réelles (la clé API ne voyage pas) et `run_depot_pg` (Supabase)
 
 ```bash
 cd proto
-python run_scenario.py                              # 116 tests, ~3 s — sans clé NI BASE (R93)
+python run_scenario.py                              # 117 tests, ~3 s — sans clé NI BASE (R93)
 python run_extract_eval.py [--mock] [--only …]      # banc d'EXTRACTION : 68/70, p50 1131 ms
 python run_llm_eval.py [--mock] [--n 3]             # éval appelant-simulé (19 personas)
 python run_depot_pg.py [--migrer]                   # contrat du port contre Supabase
@@ -109,6 +109,11 @@ pause** (DNS qui ne résout plus, pooler qui répond `tenant/user not found`). B
 | **Écran « Assistant IA » : ce que la machine dit, mot pour mot** | ✅ **24/09** | T17 + 4 mutations ; l'accueil affiché EST `formule_accueil(cfg)` |
 | **Écran Statistiques + issue de chantier (CA déclaré)** | ✅ **26/10** | T18 + contrat dépôt ; migration 015 (à appliquer : dev puis prod) |
 | **Site vitrine : la page publique, servie sur `/`** | ✅ **29/10** | T19 + R101 ; rendue et REGARDÉE en 390/768/1280, clair et sombre |
+| **Portail d'aperçu devant la vitrine** | ✅ **29/10** | T20 ; `RELAIS_VITRINE_MOTDEPASSE` — son ABSENCE = page publique |
+| **Statistiques : période (Ce mois / 3 / 12 / Tout + plage libre)** | ✅ **29/10** | T21 ; défaut « Tout », parce que le CA se déclare APRÈS le chantier |
+| **Agenda : mini-calendrier mensuel** | ✅ **29/10** | T22 ; feuilleter les mois ne déplace pas la semaine |
+| **Canal FORMULAIRE : « Demandes » multi-canal** | ✅ **29/10** | T23 + migration 016 ; capte un prospect SANS numéro FR |
+| **Qualification par SMS d'une demande écrite** | ❌ | suspendue à la RÉCEPTION de SMS (questions OVH) |
 | **Facturation (code)** | ❌ | rien de commencé |
 | Éval LLM réelle, 19 personas × 3 | ✅ 57/57 le 09/09 | à rejouer après R94 |
 
@@ -452,6 +457,63 @@ même motif mais s'arrêtent au `{` : eux ne consomment rien et restent justes.)
 découpage se fait désormais sur `}`.
 
 **Suite : 116/116.**
+
+### Le canal FORMULAIRE (T23, migration 016) — la seule des trois qui change ce que le produit peut faire
+
+Troisième et dernière nouveauté de la maquette v5. « Appels » devient **« Demandes »**,
+avec une colonne Canal, et une demande peut désormais entrer par un formulaire public
+plutôt que par un appel. C'est la seule des trois qui ne soit pas cosmétique :
+**capter un prospect n'exige plus un numéro joignable depuis la France**, qui est le
+dernier mur du produit. Un artisan peut recevoir des demandes qualifiées sans ligne
+vocale.
+
+**Le lead est fabriqué par le MÊME code.** `engine.lead_de_formulaire` remplit les slots
+qu'une conversation remplit — `_resoudre_commune` pour le code postal, `_zone_de` pour la
+zone, `_numero_fr` pour le téléphone — et `scoring` les note. Rien n'est recalculé : un
+lead écrit à la main aurait été une seconde définition du prospect, qui diverge sans
+prévenir. C'est la leçon que `semer_demo.py` écrit depuis septembre, et dans laquelle
+j'étais retombé le matin même en recopiant la moitié de sa boucle.
+
+Deux endroits où le formulaire fait AUTORITÉ là où le téléphone demandait confirmation,
+et c'est argumenté plutôt que commode : `tel_confirme` (au téléphone il atteste qu'on a
+répété le numéro à voix haute, parce que la dictée se trompe — à l'écrit il l'a tapé
+lui-même) et `urgence_reelle` (la case cochée EST la réponse à la question de contrôle
+que l'agent poserait ; il n'y a personne pour la poser deux fois).
+
+**Aucun RDV n'est réservé depuis un formulaire**, et c'est délibéré : réserver demande un
+aller-retour, et l'invariant n°5 exige un téléphone confirmé par la voix. La demande sort
+en `a_rappeler` — ce que l'artisan peut effectivement faire.
+
+L'accusé de réception par SMS ne promet **aucun délai**. La config porte bien
+`accueil.promesse_rappel`, mais le moteur ne choisit jamais entre `ouvree` et
+`soir_weekend` : le reprendre promettrait deux heures à quelqu'un qui écrit à 23 h un
+samedi. Et sans numéro lisible, pas d'accusé du tout — la page de remerciement le dit au
+lieu d'annoncer un SMS qui ne partira pas (2bis sur les deux chemins).
+
+Ce qui protège une porte publique qui ÉCRIT : l'artisan doit être servable, les champs
+sont bornés, et un champ-piège hors écran arrête les robots — **silencieusement**, car
+répondre « refusé » apprendrait quel champ éviter. Ce n'est pas une défense contre
+quelqu'un de déterminé, et le code le dit : ce qu'un abus produirait, ce sont des
+demandes bidon dans une liste, pas un accès.
+
+Au passage : `scoring.est_urgent` était importé dans `api.py` depuis le 21/09 et **jamais
+utilisé**. Son docstring explique pourtant qu'elle a été extraite pour que la liste
+signale les mêmes appels urgents que le score. Le badge « Urgence » existe enfin — et il
+compte double ici, parce que le barème est bâti autour d'un créneau réservé : une demande
+venue du formulaire ne peut pas dépasser 2, urgence ou non.
+
+**Ce qui n'est PAS fait, et qu'il ne faut pas lire entre les lignes** : la qualification
+par SMS d'un prospect venu du formulaire, que la maquette montre. Elle suppose de
+RECEVOIR des SMS — dette suspendue aux trois questions OVH. Le formulaire pose donc en
+une fois les questions que l'agent poserait.
+
+Deux détails vus au rendu : la durée affichait « 0:00 » pour une demande écrite (juste,
+et dépourvu de sens — elle s'ouvre et se clôt dans la même requête), et la commune
+ressort « Nogent-sur-marne », `_resoudre_commune` ne capitalisant qu'après les espaces.
+Le premier est corrigé ; le second est un comportement existant de tous les canaux, laissé
+tel quel plutôt que changé au détour d'un autre chantier.
+
+**Suite : 117/117.** La migration **016 reste à appliquer** (dev en pause, puis prod).
 
 ---
 

@@ -13,6 +13,7 @@ correct — pas une réaction à une menace identifiée.
 from __future__ import annotations
 
 from html import escape
+from urllib.parse import urlencode
 
 # Mobile-first et sobre. Cible de frappe généreuse (48 px minimum) : l'artisan comme son
 # client tapent parfois avec les doigts mouillés, sur un écran fissuré.
@@ -788,8 +789,11 @@ details.horaire input{width:100%;min-height:38px;border:1px solid var(--line);
   .g2{grid-template-columns:1fr}
   .valid-act{margin-left:0;width:100%}
   .calls{min-width:520px}
-  .calls th:nth-child(4),.calls td:nth-child(4),
-  .calls th:nth-child(6),.calls td:nth-child(6){display:none}
+  /* Commune (5) et Durée (7). Les rangs ont bougé le 29/10 quand « Canal » est
+     passé en première colonne : masquer par NUMÉRO oblige à relire la liste des
+     en-têtes à chaque changement, et c'est exactement ce qu'on vient de faire. */
+  .calls th:nth-child(5),.calls td:nth-child(5),
+  .calls th:nth-child(7),.calls td:nth-child(7){display:none}
   .mobilebar{display:flex;position:fixed;bottom:0;left:0;right:0;
     background:var(--surface);border-top:1px solid var(--line);z-index:20;
     justify-content:space-around;
@@ -809,7 +813,7 @@ details.horaire input{width:100%;min-height:38px;border:1px solid var(--line);
 # ressource externe, donc rien à charger et rien à fuiter.
 _ICONES = {
     "accueil": '<path d="M3 11 12 4l9 7"/><path d="M5 10v10h14V10"/>',
-    "appels": ('<path d="M5 4h4l2 5-2.5 1.5a12 12 0 0 0 5 5L15 13l5 2v4a2 2 0 0 1-2 2A16'
+    "demandes": ('<path d="M5 4h4l2 5-2.5 1.5a12 12 0 0 0 5 5L15 13l5 2v4a2 2 0 0 1-2 2A16'
                ' 16 0 0 1 3 6a2 2 0 0 1 2-2z"/>'),
     "agenda": ('<rect x="3" y="5" width="18" height="16" rx="2"/>'
                '<path d="M8 3v4M16 3v4M3 10h18"/>'),
@@ -825,7 +829,7 @@ _ICONES = {
 # basculer entre des sections cachées.
 _NAV = [
     ("accueil", "Aujourd'hui", "/app"),
-    ("appels", "Appels", "/app/appels"),
+    ("demandes", "Demandes", "/app/demandes"),
     ("agenda", "Agenda", "/app/agenda"),
     ("stats", "Statistiques", "/app/stats"),
     ("ia", "Assistant IA", "/app/assistant"),
@@ -930,6 +934,14 @@ def _classe_score(score: int) -> str:
 #
 # R79 appliqué à l'écran : « une catégorie doit dire à l'artisan ce qu'il peut FAIRE ».
 # La teinte sépare ce sur quoi il peut agir de ce qui est clos.
+# CE QUE CHAQUE CANAL VEUT DIRE à l'écran. Vocabulaire fermé, aligné sur `depot.CANAUX`.
+# Un canal inconnu s'affiche tel quel plutôt que d'être masqué : mieux vaut un libellé
+# brut qu'une demande escamotée (même règle que pour les catégories).
+_CANAUX = {
+    "telephone":  ("Appel", "p-marine"),
+    "formulaire": ("Formulaire", "p-ok"),
+}
+
 _CATEGORIES = {
     "rdv_reserve":    ("RDV réservé", "p-ok"),
     "prioritaire":    ("Prioritaire", "p-crit"),
@@ -1027,8 +1039,8 @@ def accueil(produit: str, prenom: str, entreprise: str, rdvs: list[dict],
         corps.append(
             '<div class="card"><div class="vide">'
             '<p class="gros">Rien à valider.</p>'
-            "<p>Tout est à jour. Les appels reçus restent consultables dans "
-            '<a href="/app/appels">Appels</a>.</p></div></div>')
+            "<p>Tout est à jour. Les demandes reçues restent consultables dans "
+            '<a href="/app/demandes">Demandes</a>.</p></div></div>')
 
     if chiffres:
         tuiles = "".join(
@@ -1056,8 +1068,9 @@ def accueil(produit: str, prenom: str, entreprise: str, rdvs: list[dict],
 def liste_appels(produit: str, prenom: str, appels: list[dict],
                  filtres: list[tuple] = (), vue_admin: str = "",
                  entreprise: str = "", a_valider: int = 0, categorie: str = "",
-                 commune: str = "") -> str:
-    """« Appels » : tout ce que l'agent a pris, avec ou sans rendez-vous.
+                 commune: str = "", canaux: list[tuple] = (),
+                 canal: str = "") -> str:
+    """« Demandes » : tout ce qui est entré, par quelque canal que ce soit.
 
     La maquette met le transcript dans un panneau qui s'ouvre sous la ligne cliquée.
     Ici c'est un `<details>` natif : même geste, même rendu, et ça marche sans script.
@@ -1067,39 +1080,65 @@ def liste_appels(produit: str, prenom: str, appels: list[dict],
     par son URL — sur quelques dizaines de lignes, l'échange est franchement favorable.
     """
     enveloppe = lambda corps: _page_nelyo(  # noqa: E731
-        produit, "appels", corps, entreprise=entreprise, prenom=prenom,
+        produit, "demandes", corps, entreprise=entreprise, prenom=prenom,
         commune=commune, a_valider=a_valider, vue_admin=vue_admin)
 
     barre = ""
     if filtres:
+        def _lien(**params):
+            """Un lien de filtre qui GARDE l'autre filtre. Deux barres qui s'annulent
+            l'une l'autre sont une façon sûre de faire croire qu'une demande a
+            disparu."""
+            garde = {k: v for k, v in {"categorie": categorie, "canal": canal,
+                                       **params}.items() if v}
+            return "/app/demandes" + ("?" + urlencode(garde) if garde else "")
+
         barre = '<div class="filters">' + "".join(
-            '<a class="fbtn{}" href="/app/appels{}">{} <b>{}</b></a>'.format(
+            '<a class="fbtn{}" href="{}">{} <b>{}</b></a>'.format(
                 " on" if (c or "") == categorie else "",
-                "" if c is None else "?categorie=" + c, escape(nom), n)
+                _lien(categorie=c or ""), escape(nom), n)
             for c, nom, n in filtres) + "</div>"
+    if canaux:
+        barre += '<div class="filters">' + "".join(
+            '<a class="fbtn{}" href="{}">{} <b>{}</b></a>'.format(
+                " on" if (c or "") == canal else "", _lien(canal=c or ""),
+                escape(nom), n)
+            for c, nom, n in canaux) + "</div>"
 
     if not appels:
         return enveloppe(
             barre + '<div class="card"><div class="vide">'
-            '<p class="gros">Aucun appel ici.</p>'
-            "<p>Dès qu&#x27;un client appellera, vous verrez ce qu&#x27;il a demandé, "
-            "ce que l&#x27;assistant a répondu, et vous pourrez le rappeler d&#x27;un "
-            "tap.</p></div></div>")
+            '<p class="gros">Aucune demande ici.</p>'
+            "<p>Dès qu&#x27;un client appellera — ou remplira votre formulaire — "
+            "vous verrez ce qu&#x27;il a demandé, ce que l&#x27;assistant a répondu, "
+            "et vous pourrez le rappeler d&#x27;un tap.</p></div></div>")
 
     lignes = []
     for a in appels:
         libelle, teinte = _CATEGORIES.get(a["categorie"], (a["categorie"], "p-mut"))
         tel = (escape(a["telephone_lisible"]) if a["telephone"] else "—")
+        canal_nom, canal_teinte = _CANAUX.get(a.get("canal") or "telephone",
+                                              ("Appel", "p-mut"))
+        # L'URGENCE EST DITE, même quand le score ne la porte pas. Le barème est bâti
+        # autour d'un créneau réservé (`scoring._score`) : une demande venue du
+        # formulaire ne peut pas l'atteindre, et une urgence réelle y plafonne à 2.
+        # `est_urgent` est la MÊME fonction que celle du score — elle a été extraite
+        # le 21/09 pour ça, importée dans l'API le même jour, et jamais utilisée.
+        urgence = ('<span class="pill p-crit" style="margin-left:5px">Urgence</span>'
+                   if a.get("urgent") else "")
         rang = (
-            '<tr class="ligne"><td class="num">{}</td>'
+            '<tr class="ligne">'
+            '<td><span class="pill {}">{}</span></td>'
+            '<td class="num">{}</td>'
             '<td class="caller"><b>{}</b><span>{}</span></td>'
             "<td>{}</td><td>{}</td>"
             '<td><span class="score {}" style="width:30px;height:30px">{}</span></td>'
             '<td class="num">{}</td>'
-            '<td><span class="pill {}">{}</span></td></tr>'
-        ).format(escape(a["heure"]), escape(a["client"]), tel, escape(a["motif"]),
+            '<td><span class="pill {}">{}</span>{}</td></tr>'
+        ).format(canal_teinte, escape(canal_nom),
+                 escape(a["heure"]), escape(a["client"]), tel, escape(a["motif"]),
                  escape(a["commune"]), _classe_score(a["score"]), a["score"],
-                 escape(a["duree"]), teinte, escape(libelle))
+                 escape(a["duree"]), teinte, escape(libelle), urgence)
 
         detail = ""
         if a["transcript"]:
@@ -1121,7 +1160,7 @@ def liste_appels(produit: str, prenom: str, appels: list[dict],
             # devient un `<tbody>` de deux lignes, et les colonnes restent celles du
             # tableau — donc alignées, quoi que contienne une cellule.
             detail = (
-                '<tr class="depli"><td colspan="7">'
+                '<tr class="depli"><td colspan="8">'
                 '<details class="appel"><summary>Voir la conversation ({} tours)'
                 "</summary>"
                 '<div class="transcript"><span class="eyebrow">Transcript — {} · {}'
@@ -1135,15 +1174,15 @@ def liste_appels(produit: str, prenom: str, appels: list[dict],
     # reste. C'est même ce qui avait cassé l'alignement — il y avait UN TABLEAU PAR
     # LIGNE, chacun calculant ses largeurs dans son coin.
     colonnes = ("<colgroup>"
-                '<col style="width:76px"><col style="width:22%">'
-                '<col style="width:24%"><col style="width:15%">'
-                '<col style="width:64px"><col style="width:74px">'
-                '<col style="width:17%"></colgroup>')
+                '<col style="width:92px"><col style="width:66px">'
+                '<col style="width:20%"><col style="width:22%">'
+                '<col style="width:14%"><col style="width:64px">'
+                '<col style="width:68px"><col style="width:16%"></colgroup>')
     return enveloppe(
         barre + '<div class="card" style="overflow-x:auto">'
         + '<table class="calls">' + colonnes
-        + "<thead><tr><th>Heure</th><th>Appelant</th><th>Motif</th><th>Commune</th>"
-        + "<th>Score</th><th>Durée</th><th>Issue</th></tr></thead>"
+        + "<thead><tr><th>Canal</th><th>Reçue</th><th>Prospect</th><th>Motif</th>"
+        + "<th>Commune</th><th>Score</th><th>Durée</th><th>Issue</th></tr></thead>"
         + "".join(lignes) + "</table></div>")
 
 
@@ -2305,3 +2344,121 @@ def portail_apercu(produit: str, contact: str = CONTACT_VITRINE,
         f'<a href="/connexion">Se connecter</a>.<br>'
         f'Une question : <a href="mailto:{escape(contact)}">{escape(contact)}</a>.</p>'
         "</div></div></body></html>")
+
+
+# ══════════════════════════════════════════ LE FORMULAIRE PUBLIC (29/10)
+#
+# La page que l'artisan met sur son site, ou dont il colle le lien. Elle s'adresse à SES
+# clients, pas à lui : elle porte donc SON nom, et Nelyo n'y apparaît qu'en mention de
+# pied — c'est lui qu'on appelle, pas nous.
+#
+# ELLE POSE LES QUESTIONS QUE L'AGENT POSE AU TÉLÉPHONE, et exactement celles-là :
+# besoin, commune, coordonnées, urgence. Le lead qui en sort est scoré par le même code
+# (`engine.lead_de_formulaire`), donc il atterrit dans la même liste, avec la même
+# catégorie et le même barème. Un formulaire qui demanderait autre chose fabriquerait
+# une deuxième définition du prospect.
+_STYLE_FORMULAIRE = _STYLE_PORTAIL + """
+.sas-carte.large{max-width:520px}
+.sas textarea{width:100%;min-height:92px;border:1px solid var(--line);border-radius:9px;
+  padding:10px 12px;background:var(--surface-2);color:var(--ink);resize:vertical;
+  font:400 14px/1.5 "Instrument Sans",sans-serif}
+.sas .champ{margin-bottom:14px}
+.sas .coche{display:flex;align-items:flex-start;gap:9px;background:var(--cuivre-soft);
+  border:1px solid var(--cuivre);border-radius:9px;padding:11px 13px;margin-bottom:16px}
+.sas .coche input{width:auto;min-height:0;margin:2px 0 0}
+.sas .coche label{display:block;margin:0;color:var(--ink);font-weight:600;
+  font-size:13.5px}
+.sas .coche small{display:block;color:var(--muted);font-weight:400;font-size:12px}
+/* Le piège à robots. `left:-9999px` et non `display:none` : un remplisseur automatique
+   ignore ce qui est masqué par `display`, et le piège ne prendrait plus rien. */
+.sas .piege{position:absolute;left:-9999px;width:1px;height:1px;overflow:hidden}
+.sas .merci{background:var(--ok-bg);color:var(--ok);border-radius:9px;padding:12px 14px;
+  font-weight:600;font-size:14px;margin:0 0 14px}
+.sas .pied-nelyo{color:var(--faint);font-size:11.5px;margin:18px 0 0;text-align:center}
+"""
+
+# Le champ-piège. Son nom doit ressembler à un vrai champ pour qu'un robot le remplisse,
+# et ne jamais ressembler à ce qu'un humain verrait — il est hors écran, pas caché.
+PIEGE_FORMULAIRE = "societe"
+
+
+def _carte_formulaire(produit: str, entreprise: str, titre: str, corps: str) -> str:
+    """L'enveloppe commune au formulaire et à son accusé. `noindex` : c'est la page
+    d'UN artisan, elle n'a pas à être trouvée par un moteur à la place de son site."""
+    return (
+        "<!DOCTYPE html>\n"
+        '<html lang="fr"><head><meta charset="utf-8">'
+        '<meta name="viewport" content="width=device-width, initial-scale=1">'
+        '<meta name="robots" content="noindex, nofollow">'
+        f"<title>{escape(titre)} · {escape(entreprise)}</title>"
+        f"<style>{_STYLE_FORMULAIRE}</style></head><body>"
+        '<div class="sas"><div class="sas-carte large">'
+        + corps
+        + f'<p class="pied-nelyo">Demande transmise par {escape(produit)}</p>'
+        "</div></div></body></html>")
+
+
+def formulaire_public(produit: str, entreprise: str, prenom: str, artisan_id: str,
+                      erreur: str = "", champs: dict | None = None) -> str:
+    """Le formulaire que remplit le client de l'artisan.
+
+    LES VALEURS SAISIES SONT RENVOYÉES en cas d'erreur. Sans ça, un champ refusé vide
+    tout le reste, et la personne recommence — ou s'en va. C'est la différence entre un
+    formulaire et un interrogatoire.
+    """
+    v = champs or {}
+    refus = f'<p class="refus">{escape(erreur)}</p>' if erreur else ""
+    coche = ' checked' if v.get("urgence") else ""
+    return _carte_formulaire(
+        produit, entreprise, "Demander une intervention",
+        f"<h1>Demander une intervention</h1>"
+        f'<p class="intro">Décrivez votre besoin : {escape(prenom)} vous rappelle. '
+        "Réponse assurée, même en dehors des heures d&#x27;ouverture.</p>"
+        + refus
+        + f'<form method="post" action="/formulaire/{escape(artisan_id)}">'
+        '<div class="champ"><label for="besoin">Votre besoin</label>'
+        '<textarea id="besoin" name="besoin" required maxlength="600" '
+        'placeholder="Ex. : fuite sous l&#x27;évier, l&#x27;eau coule encore">'
+        + escape(v.get("besoin") or "") + "</textarea></div>"
+        '<div class="champ"><label for="commune">Votre commune</label>'
+        '<input id="commune" name="commune" required maxlength="80" '
+        'autocomplete="address-level2" value="' + escape(v.get("commune") or "")
+        + '"></div>'
+        '<div class="champ"><label for="telephone">Votre téléphone</label>'
+        '<input id="telephone" name="telephone" type="tel" required maxlength="25" '
+        'autocomplete="tel" placeholder="06 12 34 56 78" value="'
+        + escape(v.get("telephone") or "") + '"></div>'
+        '<div class="champ"><label for="nom">Votre nom</label>'
+        '<input id="nom" name="nom" maxlength="80" autocomplete="name" value="'
+        + escape(v.get("nom") or "") + '"></div>'
+        '<div class="coche"><input id="urgence" name="urgence" type="checkbox" '
+        f'value="1"{coche}>'
+        '<label for="urgence">C&#x27;est une urgence'
+        "<small>Fuite, panne de chauffage, plus d&#x27;eau chaude — votre demande "
+        "passera en tête.</small></label></div>"
+        # Hors écran, et jamais annoncé : un humain ne le voit pas, un robot le remplit.
+        f'<div class="piege" aria-hidden="true"><label for="{PIEGE_FORMULAIRE}">'
+        f'Société</label><input id="{PIEGE_FORMULAIRE}" name="{PIEGE_FORMULAIRE}" '
+        'tabindex="-1" autocomplete="off"></div>'
+        '<button class="btn btn-cu" type="submit">Envoyer ma demande</button>'
+        "</form>")
+
+
+def formulaire_merci(produit: str, entreprise: str, prenom: str,
+                     sms_envoye: bool) -> str:
+    """Ce qu'on affiche une fois la demande reçue.
+
+    `sms_envoye` est VRAI ou FAUX et l'écran le dit : annoncer « vous allez recevoir un
+    SMS » à quelqu'un dont le numéro n'a pas été reconnu serait la promesse intenable
+    que 2bis interdit, et il l'attendrait au lieu de rappeler.
+    """
+    suite = ("Vous allez recevoir un SMS de confirmation."
+             if sms_envoye else
+             "Nous n&#x27;avons pas pu lire votre numéro : si vous le pouvez, "
+             "rappelez directement.")
+    return _carte_formulaire(
+        produit, entreprise, "Demande envoyée",
+        '<p class="merci">Votre demande est bien arrivée.</p>'
+        f"<h1>Merci</h1>"
+        f'<p class="intro">{escape(prenom)} a reçu votre demande et vous rappelle. '
+        + suite + "</p>")

@@ -22,8 +22,8 @@ from __future__ import annotations
 import datetime as dt
 import uuid
 
-from .depot import (Appel, CodeConnexion, EvenementAgenda, Introuvable, Lead,
-                    LigneAdmin, LigneArtisan, normaliser_numero)
+from .depot import (Appel, CANAL_TELEPHONE, CANAUX, CodeConnexion, EvenementAgenda,
+                    Introuvable, Lead, LigneAdmin, LigneArtisan, normaliser_numero)
 from .messages import Brouillon, MessageSortant, StatutMessage
 from .rdv import Rdv, StatutRdv, TERMINAUX
 
@@ -343,7 +343,8 @@ class DepotPostgres:
     # ---- appels ----
     def ouvrir_appel(self, artisan_id: str, maintenant: dt.datetime,
                      appel_id: str | None = None,
-                     config: dict | None = None) -> Appel:
+                     config: dict | None = None,
+                     canal: str = CANAL_TELEPHONE) -> Appel:
         # `appel_id` imposé : voir le port. La colonne est de type `uuid`, et
         # l'identifiant d'appel de la plateforme vocale en est un — `_uuid` refuse tout
         # ce qui n'en serait pas, plutôt que de laisser Postgres lever une erreur de cast.
@@ -351,14 +352,20 @@ class DepotPostgres:
         # `config` est figée ICI et nulle part ailleurs : à l'ouverture, une fois. Écrite
         # plus tard, elle daterait d'après l'appel et ne dirait plus ce que l'agent savait
         # en le prenant — ce serait une donnée fausse portant le nom d'une preuve.
+        # Même refus que le dépôt mémoire, AVANT d'atteindre la base : la contrainte
+        # SQL dirait la même chose, mais dans un message Postgres que l'appelant ne
+        # peut pas distinguer d'une panne. Les deux implémentations doivent échouer
+        # de la même façon — c'est ce que la suite de contrat vérifie.
+        if canal not in CANAUX:
+            raise ValueError(f"canal inconnu : {canal!r} (connus : {CANAUX})")
         appel = Appel(id=self._uuid(appel_id, appel_id) if appel_id else self._id(),
                       artisan_id=artisan_id, debut_a=maintenant,
-                      config_utilisee=config)
+                      config_utilisee=config, canal=canal)
         self._executer(
-            "insert into appel (id, artisan_id, debut_a, config_utilisee) "
-            "values (%s, %s, %s, %s)",
+            "insert into appel (id, artisan_id, debut_a, config_utilisee, canal) "
+            "values (%s, %s, %s, %s, %s)",
             (appel.id, artisan_id, maintenant,
-             _json(config) if config is not None else None))
+             _json(config) if config is not None else None, canal))
         return appel
 
     def enregistrer_etat(self, appel_id: str, etat: dict) -> None:
@@ -371,10 +378,11 @@ class DepotPostgres:
         appel_id = self._uuid(appel_id, appel_id)
         ligne = self._un(
             "select id, artisan_id, debut_a, fin_a, lead_id, etat_conversation, "
-            "config_utilisee from appel where id = %s", (appel_id,), appel_id)
+            "config_utilisee, canal from appel where id = %s", (appel_id,), appel_id)
         return Appel(id=str(ligne[0]), artisan_id=ligne[1], debut_a=ligne[2],
                      fin_a=ligne[3], lead_id=str(ligne[4]) if ligne[4] else None,
-                     etat_conversation=ligne[5], config_utilisee=ligne[6])
+                     etat_conversation=ligne[5], config_utilisee=ligne[6],
+                     canal=ligne[7])
 
     def cloturer_appel(self, appel_id: str, lead_donnees: dict,
                        maintenant: dt.datetime) -> Lead:
@@ -393,13 +401,13 @@ class DepotPostgres:
     # une seule projection pour les deux lectures de lead : `debut_a` vient de la
     # jointure et doit être renseigné PARTOUT, sinon le champ devient un piège
     # (cf. le commentaire du dataclass `Lead`).
-    _COLS_LEAD = ("l.id, l.appel_id, l.artisan_id, l.donnees, a.debut_a, a.fin_a "
-                  "from lead l join appel a on a.id = l.appel_id")
+    _COLS_LEAD = ("l.id, l.appel_id, l.artisan_id, l.donnees, a.debut_a, a.fin_a, "
+                  "a.canal from lead l join appel a on a.id = l.appel_id")
 
     @staticmethod
     def _lead_de_ligne(l) -> Lead:
         return Lead(id=str(l[0]), appel_id=str(l[1]), artisan_id=l[2],
-                    donnees=l[3], debut_a=l[4], fin_a=l[5])
+                    donnees=l[3], debut_a=l[4], fin_a=l[5], canal=l[6])
 
     def lead(self, lead_id: str) -> Lead:
         lead_id = self._uuid(lead_id, lead_id)

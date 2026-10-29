@@ -5416,6 +5416,181 @@ def check_site_vitrine() -> bool:
     return True
 
 
+def check_canal_formulaire() -> bool:
+    """T23 : une demande venue du FORMULAIRE entre comme un appel, et se dit comme tel.
+
+    Troisième et dernière nouveauté de la maquette v5 (après la période et le
+    mini-calendrier). C'est aussi la seule qui change ce que le produit peut FAIRE :
+    jusqu'ici, capter un prospect exigeait qu'il appelle — donc un numéro joignable
+    depuis la France, qui n'existe toujours pas (dette n°1). Un artisan peut désormais
+    recevoir des demandes qualifiées sans ligne vocale.
+
+    CE QUE CE TEST GARDE, dans l'ordre :
+
+    1. **Le lead est fabriqué par le MÊME code.** `engine.lead_de_formulaire` remplit les
+       slots qu'une conversation remplit, et `scoring` les note. Un lead écrit à la main
+       serait une seconde définition du prospect, qui divergerait sans prévenir — la
+       leçon que `semer_demo.py` écrit déjà pour sa démo, et que j'ai reprise le même
+       jour en recopiant la moitié de sa boucle.
+    2. **La commune décide de la zone, et le contrôleur décide seul** (règle n°1) : une
+       commune hors zone sort `hors_zone`, score 0, sans que personne ne l'ait tapé.
+    3. **Sans numéro lisible, aucune promesse** (2bis + R79) : catégorie `injoignable`,
+       aucun SMS, et la page de remerciement le DIT au lieu d'annoncer un SMS qui ne
+       partira pas. Un numéro tronqué vaut un numéro absent (`_numero_fr`).
+    4. **Le piège à robots est silencieux** : la page de remerciement s'affiche, et rien
+       n'est écrit. Répondre « refusé » apprendrait quel champ éviter.
+    5. **La demande arrive dans « Demandes »**, avec son canal, et le filtre par canal
+       la retrouve sans perdre le filtre de catégorie.
+    6. **L'ancienne URL `/app/appels` survit** : elle a été la page pendant cinq
+       semaines, elle est dans des favoris.
+    """
+    try:
+        from fastapi.testclient import TestClient
+    except ImportError:
+        print("   fastapi/httpx absents : pip install -r requirements.txt")
+        return False
+
+    from relais_proto.api import creer_app
+    from relais_proto.depot import CANAL_FORMULAIRE, CANAL_TELEPHONE
+    from relais_proto.envoi import EnvoyeurJournal
+    from relais_proto.registre import Artisan, Registre, empreinte as emp_token
+
+    registre = Registre([Artisan("art-dupont", "+33189701234", emp_token("tok"), CFG,
+                                 telephone="+33612345678")],
+                        emp_token("secret-voix"))
+    depot = DepotMemoire()
+    app = creer_app(depot, registre, MockLLM, lambda: LUNDI_9H,
+                    base_url="https://nelyo.test", cookie_secure=False,
+                    envoyeur=EnvoyeurJournal())
+
+    with TestClient(app) as visiteur:
+        if visiteur.get("/formulaire/art-dupont").status_code != 200:
+            print("   le formulaire public ne s'ouvre pas")
+            return False
+        if visiteur.get("/formulaire/pas-un-artisan").status_code != 404:
+            print("   le formulaire s'ouvre pour un artisan qui n'existe pas")
+            return False
+
+        # 1 + 2. une demande complète, en zone, urgente
+        rep = visiteur.post("/formulaire/art-dupont", data={
+            "besoin": "Fuite sous l'évier, l'eau coule encore",
+            "commune": "Nogent-sur-Marne", "telephone": "06 12 34 56 78",
+            "nom": "Garcia", "urgence": "1"})
+        if rep.status_code != 200 or "SMS de confirmation" not in rep.text:
+            print(f"   demande valide refusée ({rep.status_code}) ou SMS non annoncé")
+            return False
+        leads = depot.leads("art-dupont", limite=20)
+        if len(leads) != 1:
+            print(f"   {len(leads)} lead(s) après une demande")
+            return False
+        d = leads[0].donnees
+        if leads[0].canal != CANAL_FORMULAIRE:
+            print(f"   la demande n'est pas marquée « formulaire » : {leads[0].canal}")
+            return False
+        if d.get("source") != "formulaire_site":
+            print(f"   la source du lead est fausse : {d.get('source')!r}")
+            return False
+        # Le CONTRÔLEUR a résolu la commune, personne n'a tapé le code postal.
+        # « Nogent-sur-marne » et non « Nogent-sur-Marne » : `_resoudre_commune`
+        # capitalise après les ESPACES, pas après les traits d'union. Comportement
+        # existant du moteur, repris tel quel ici — le corriger changerait l'affichage
+        # de tous les canaux à la fois, ce qui n'est pas le sujet de ce test.
+        if (d["slots"].get("code_postal") != "94130"
+                or d["slots"].get("commune") != "Nogent-sur-marne"):
+            print(f"   la commune n'a pas été résolue par le contrôleur : {d['slots']}")
+            return False
+        if d["categorie"] != "a_rappeler" or d["zone"] != "en_zone":
+            print(f"   catégorie/zone fausses : {d['categorie']} / {d['zone']}")
+            return False
+        if d["slots"].get("telephone_rappel") != "0612345678":
+            print(f"   le numéro n'a pas été normalisé : {d['slots']}")
+            return False
+        # Le transcript est CE QUE LE PROSPECT A ÉCRIT, et personne d'autre (R89).
+        if any(qui == "agent" for qui, _ in d.get("transcript") or []):
+            print("   le transcript d'un formulaire contient des répliques d'agent : "
+                  "le dossier affirmerait une conversation qui n'a pas eu lieu")
+            return False
+        # Un accusé est parti, et un seul.
+        accuses = [m for m in depot.messages()
+                   if m.cle_idempotence.startswith("accuse_formulaire:")]
+        if len(accuses) != 1 or accuses[0].cible != "0612345678":
+            print(f"   {len(accuses)} accusé(s) de réception, ou mauvaise cible")
+            return False
+
+        # 2 bis. hors zone : le contrôleur tranche, score 0
+        visiteur.post("/formulaire/art-dupont", data={
+            "besoin": "Pompe à chaleur", "commune": "Versailles",
+            "telephone": "0612345678"})
+        hors = depot.leads("art-dupont", limite=20)[0].donnees
+        if hors["categorie"] != "hors_zone" or hors["score"] != 0:
+            print(f"   une commune hors zone n'est pas classée : {hors['categorie']} "
+                  f"(score {hors['score']})")
+            return False
+
+        # 3. numéro TRONQUÉ = pas de numéro : aucune promesse, aucun SMS
+        avant = len([m for m in depot.messages()
+                     if m.cle_idempotence.startswith("accuse_formulaire:")])
+        rep = visiteur.post("/formulaire/art-dupont", data={
+            "besoin": "Chaudière en panne", "commune": "Nogent-sur-Marne",
+            "telephone": "06 12 34"})
+        muet = depot.leads("art-dupont", limite=20)[0].donnees
+        if muet["categorie"] != "injoignable":
+            print(f"   un numéro illisible donne {muet['categorie']!r} : sans numéro, "
+                  "aucune promesse de rappel (2bis, R79)")
+            return False
+        apres = len([m for m in depot.messages()
+                     if m.cle_idempotence.startswith("accuse_formulaire:")])
+        if apres != avant:
+            print("   un accusé est parti vers un numéro illisible")
+            return False
+        if "SMS de confirmation" in rep.text:
+            print("   la page annonce un SMS qui ne partira pas — c'est la promesse "
+                  "intenable que 2bis interdit, et le client l'attendrait")
+            return False
+
+        # 4. le piège : silencieux, et rien n'est écrit
+        combien = len(depot.leads("art-dupont", limite=50))
+        piege = visiteur.post("/formulaire/art-dupont", data={
+            "besoin": "Devis", "commune": "Nogent", "telephone": "0612345678",
+            "societe": "SEO Services Ltd"})
+        if piege.status_code != 200:
+            print("   le piège à robots répond autre chose que la page normale : "
+                  "il apprend quel champ éviter")
+            return False
+        if len(depot.leads("art-dupont", limite=50)) != combien:
+            print("   une soumission piégée est entrée en base")
+            return False
+
+        # 5 + 6. l'artisan la voit, avec son canal
+        if not connecter_par_sms(visiteur, depot, "06 12 34 56 78"):
+            print("   connexion par code SMS impossible")
+            return False
+        page = visiteur.get("/app/demandes").text
+        if "<th>Canal</th>" not in page or ">Formulaire<" not in page:
+            print("   la colonne Canal manque, ou la demande n'y est pas marquée")
+            return False
+        if ">Appel<" in page:
+            print("   un canal « Appel » apparaît alors qu'aucun appel n'a eu lieu")
+            return False
+        filtre = visiteur.get("/app/demandes?canal=formulaire").text
+        if filtre.count('<tr class="ligne">') != 3:
+            print(f"   le filtre par canal ne rend pas les 3 demandes du formulaire : "
+                  f"{filtre.count('<tr class=\"ligne\">')}")
+            return False
+        # les deux filtres se combinent au lieu de s'annuler
+        croise = visiteur.get("/app/demandes?canal=formulaire&categorie=hors_zone").text
+        if croise.count('<tr class="ligne">') != 1:
+            print("   croiser canal et catégorie ne garde pas les deux filtres")
+            return False
+        ancienne = visiteur.get("/app/appels", follow_redirects=False)
+        if ancienne.status_code != 308 \
+                or ancienne.headers.get("location") != "/app/demandes":
+            print(f"   l'ancienne URL ne redirige pas ({ancienne.status_code}) : elle "
+                  "a été la page pendant cinq semaines, elle est dans des favoris")
+            return False
+    return True
+
+
 def check_minical_agenda() -> bool:
     """T22 : le mini-calendrier mensuel de l'agenda — sans JavaScript.
 
@@ -6226,8 +6401,13 @@ def check_page_mes_appels() -> bool:
             # La maquette rend chaque appel dans une LIGNE de tableau, et son issue
             # dans la dernière cellule, en `.pill`. La découpe suit le balisage — donc
             # elle est refaite quand il change, ce qui est arrivé deux fois le 21/09.
+            # 29/10 : la dernière cellule peut porter une SECONDE pastille, le badge
+            # « Urgence » (R79 enfin affiché). La découpe l'admet sans l'exiger —
+            # troisième fois que ce balisage change, et troisième fois que le
+            # commentaire ci-dessus se vérifie.
             return _re_t12.findall(
-                r'<td><span class="pill p-[a-z]+">([^<]*)</span></td></tr>', html)
+                r'<td><span class="pill p-[a-z]+">([^<]*)</span>'
+                r'(?:<span class="pill[^"]*"[^>]*>[^<]*</span>)?</td></tr>', html)
 
         # 1. les trois appels sont là, dont les DEUX sans RDV
         vues = categories_affichees(page)
@@ -6287,14 +6467,15 @@ def check_page_mes_appels() -> bool:
         # aucun test ne le voyait, parce qu'ils vérifiaient le CONTENU.
         #
         # On vérifie donc la STRUCTURE, la seule chose dont l'alignement dépende :
-        # un tableau, sept colonnes déclarées, sept cellules par ligne.
+        # un tableau, HUIT colonnes déclarées, huit cellules par ligne. Sept jusqu'au
+        # 29/10, où « Canal » est entré en première position (maquette v5).
         if page.count("<table") != 1:
             print(f"   {page.count('<table')} tableaux sur la page : des colonnes "
                   f"réparties entre plusieurs tableaux ne peuvent pas s'aligner")
             return False
-        if len(_re_t12.findall(r"<th>", page)) != 7 \
-                or len(_re_t12.findall(r"<col ", page)) != 7:
-            print("   l'en-tête et les largeurs déclarées ne comptent pas 7 colonnes")
+        if len(_re_t12.findall(r"<th>", page)) != 8 \
+                or len(_re_t12.findall(r"<col ", page)) != 8:
+            print("   l'en-tête et les largeurs déclarées ne comptent pas 8 colonnes")
             return False
         if "table-layout:fixed" not in page:
             print("   sans `table-layout: fixed`, un motif bavard élargit sa colonne "
@@ -6302,12 +6483,12 @@ def check_page_mes_appels() -> bool:
             return False
         cellules = [len(_re_t12.findall(r"<td", bloc)) for bloc in
                     _re_t12.findall(r'<tr class="ligne">(.*?)</tr>', page, _re_t12.S)]
-        if not cellules or cellules != [7] * len(cellules):
-            print(f"   toutes les lignes n'ont pas 7 cellules : {cellules}")
+        if not cellules or cellules != [8] * len(cellules):
+            print(f"   toutes les lignes n'ont pas 8 cellules : {cellules}")
             return False
         # et le transcript enjambe la largeur entière, au lieu de tenir dans une cellule
-        if page.count('colspan="7"') != len(cellules):
-            print("   un transcript ne couvre pas les sept colonnes")
+        if page.count('colspan="8"') != len(cellules):
+            print("   un transcript ne couvre pas les huit colonnes")
             return False
 
         # 7. le transcript est consultable — c'est ce qui rend l'agent vérifiable.
@@ -6325,8 +6506,8 @@ def check_page_mes_appels() -> bool:
         # 8. la page est ATTEIGNABLE depuis la boîte de validation, dans les deux états.
         # Une page sans lien n'existe pas, et c'est l'écran « rien à valider » qui en a
         # le plus besoin : vide, il laisse croire qu'il ne s'est rien passé.
-        if 'href="/app/appels"' not in julien.get("/app").text:
-            print("   /app ne mène pas à « Mes appels » : la page est introuvable")
+        if 'href="/app/demandes"' not in julien.get("/app").text:
+            print("   /app ne mène pas à « Demandes » : la page est introuvable")
             return False
 
     # 9. sans session, une PAGE de connexion, pas un 401 nu (cohérent avec /app)
@@ -13657,6 +13838,15 @@ def run() -> int:
         print("   → aucune règle nue (nav/aside/header) ne peut fuir d'un rôle vers "
               "un autre : la barre mobile ne re-hérite plus du flex-direction de la "
               "barre latérale : ✅ PASS")
+    else:
+        print("   → ❌ FAIL")
+        echecs += 1
+
+    print(f"\n──── T23_canal_formulaire ────")
+    if check_canal_formulaire():
+        print("   → une demande écrite est scorée par le même code qu'un appel, le "
+              "contrôleur résout seul la commune, aucune promesse sans numéro "
+              "lisible, et elle arrive dans « Demandes » avec son canal : ✅ PASS")
     else:
         print("   → ❌ FAIL")
         echecs += 1

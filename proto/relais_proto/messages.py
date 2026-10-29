@@ -149,6 +149,19 @@ TEMPLATES = {
     "expiration_artisan": (
         "{produit} : RDV expiré sans validation - {creneau}, {client} ({commune}). "
         "Créneau libéré, client prévenu. Rappeler le {telephone}."),
+    # L'ACCUSÉ DU FORMULAIRE (29/10). Quelqu'un qui remplit un formulaire n'entend
+    # personne : sans ce SMS, il ne sait pas si sa demande est partie, et il va remplir
+    # celui du concurrent dans la minute.
+    #
+    # AUCUN DÉLAI N'EST PROMIS, et ce n'est pas de la prudence vague. La config porte
+    # bien `accueil.promesse_rappel` (« sous 2 heures », « demain matin avant 9h »),
+    # mais le moteur ne choisit JAMAIS entre les deux — il prend toujours `ouvree`. Le
+    # reprendre ici promettrait deux heures à quelqu'un qui écrit à 23 h un samedi.
+    # Règle 2bis : ce qu'on promet doit être tenable sur TOUS les chemins, et celui-ci
+    # est ouvert vingt-quatre heures sur vingt-quatre.
+    "accuse_formulaire": (
+        "Bonjour, c'est {nom_entreprise}. Votre demande est bien arrivée, {prenom} "
+        "vous rappelle."),
 }
 
 
@@ -296,3 +309,34 @@ def relance_artisan(rdv, lead_donnees: dict, cfg: dict) -> Brouillon:
                      client=slots.get("nom") or "un client",
                      commune=slots.get("commune") or slots.get("code_postal") or "?",
                      telephone=slots.get("telephone_rappel") or "?"))
+
+
+def accuse_formulaire(appel_id: str, artisan_id: str, lead_donnees: dict,
+                      cfg: dict) -> Brouillon:
+    """L'accusé de réception d'une demande venue du formulaire du site.
+
+    DESTINATAIRE CLIENT, donc soumis à la plage de silence (21 h–8 h). C'est le bon
+    comportement et non une gêne : un formulaire se remplit à toute heure, et réveiller
+    quelqu'un pour lui dire « bien reçu » transformerait une attention en nuisance. Il
+    partira au prochain passage du worker après 8 h.
+
+    SANS NUMÉRO, PAS DE MESSAGE — et pas de promesse non plus : le lead est alors classé
+    `injoignable` par le contrôleur (2bis). On lève plutôt que de rendre `None`, pour que
+    l'appelant décide explicitement ; `engine.lead_de_formulaire` a déjà tranché la
+    catégorie, les deux ne doivent pas pouvoir diverger.
+    """
+    telephone = (lead_donnees.get("slots") or {}).get("telephone_rappel")
+    if not telephone:
+        raise MessageInterdit(
+            f"demande {appel_id} : aucun numéro, donc aucun accusé — et aucune "
+            "promesse de rappel (règle 2bis)")
+    return Brouillon(
+        # Une demande = un accusé. Un réessai d'envoi ne double pas le SMS, et un
+        # prospect qui soumet deux fois le formulaire reçoit deux accusés : ce sont
+        # deux demandes, et le dire est plus honnête que d'en escamoter une.
+        cle_idempotence=f"accuse_formulaire:{appel_id}",
+        artisan_id=artisan_id,
+        destinataire=Destinataire.CLIENT, canal=Canal.SMS, cible=telephone,
+        texte=_texte("accuse_formulaire", cfg,
+                     nom_entreprise=cfg["entreprise"]["nom"],
+                     prenom=cfg["entreprise"]["prenom_patron"]))

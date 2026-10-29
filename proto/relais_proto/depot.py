@@ -25,11 +25,22 @@ class Introuvable(KeyError):
     """Identifiant absent du dépôt."""
 
 
+# LES CANAUX d'une demande entrante. Vocabulaire fermé, repris tel quel par la
+# contrainte SQL de la migration 016 : ce que le domaine refuse, la base le refuse.
+CANAL_TELEPHONE = "telephone"
+CANAL_FORMULAIRE = "formulaire"
+CANAUX = (CANAL_TELEPHONE, CANAL_FORMULAIRE)
+
+
 @dataclass
 class Appel:
     id: str
     artisan_id: str
     debut_a: dt.datetime
+    # PAR OÙ la demande est entrée (migration 016). `telephone` est le défaut, et
+    # pas par commodité : c'était le seul canal jusqu'au 29/10, et toute ligne
+    # antérieure en vient réellement.
+    canal: str = CANAL_TELEPHONE
     # blob versionné produit par Conversation.to_dict() : c'est lui qui permet au tour
     # suivant de tomber sur un autre process (cf. brique sérialisation, test R14)
     etat_conversation: dict | None = None
@@ -180,6 +191,9 @@ class Lead:
     # grandeur**, et c'est le début : « appel de 14h32 » désigne le moment où le téléphone
     # a sonné, pas celui où l'agent a raccroché.
     debut_a: dt.datetime | None = None
+    # LE CANAL, lu par la même jointure que `debut_a` : il vit sur `appel`, et la
+    # liste « Demandes » en a besoin sur chaque ligne.
+    canal: str = CANAL_TELEPHONE
     # FIN de l'appel — donc sa DURÉE, avec `debut_a`. Lue par la même jointure.
     # La maquette affiche la durée dans la liste des appels, et c'est une donnée
     # utile en soi : un appel de 22 secondes et un appel de quatre minutes ne
@@ -228,7 +242,8 @@ class Depot(Protocol):
 
     def ouvrir_appel(self, artisan_id: str, maintenant: dt.datetime,
                      appel_id: str | None = None,
-                     config: dict | None = None) -> Appel: ...
+                     config: dict | None = None,
+                     canal: str = CANAL_TELEPHONE) -> Appel: ...
 
     def enregistrer_etat(self, appel_id: str, etat: dict) -> None: ...
 
@@ -429,7 +444,8 @@ class DepotMemoire:
     # ---- appels ----
     def ouvrir_appel(self, artisan_id: str, maintenant: dt.datetime,
                      appel_id: str | None = None,
-                     config: dict | None = None) -> Appel:
+                     config: dict | None = None,
+                     canal: str = CANAL_TELEPHONE) -> Appel:
         """`appel_id` permet à l'appelant d'IMPOSER l'identifiant.
 
         Ajouté pour la voix : la plateforme vocale porte déjà un identifiant d'appel
@@ -439,8 +455,13 @@ class DepotMemoire:
 
         Sans argument, le comportement ne change pas : le dépôt génère l'identifiant.
         """
+        if canal not in CANAUX:
+            # Refusé ICI et pas seulement par la contrainte SQL : le dépôt mémoire
+            # doit se comporter comme Postgres, sinon un canal inventé passerait en
+            # test et exploserait en production (c'est tout l'objet du contrat).
+            raise ValueError(f"canal inconnu : {canal!r} (connus : {CANAUX})")
         appel = Appel(id=appel_id or self._id("apl"), artisan_id=artisan_id,
-                      debut_a=maintenant, config_utilisee=config)
+                      debut_a=maintenant, config_utilisee=config, canal=canal)
         self._appels[appel.id] = self._appel_en_dict(appel)
         return appel
 
@@ -477,6 +498,8 @@ class DepotMemoire:
         """
         return Lead(id=d["id"], appel_id=d["appel_id"], artisan_id=d["artisan_id"],
                     donnees=d["donnees"],
+                    canal=(self._appels[d["appel_id"]].get("canal")
+                           or CANAL_TELEPHONE),
                     debut_a=temps.depuis_iso(self._appels[d["appel_id"]]["debut_a"]),
                     fin_a=(temps.depuis_iso(self._appels[d["appel_id"]]["fin_a"])
                            if self._appels[d["appel_id"]]["fin_a"] else None))
@@ -725,6 +748,7 @@ class DepotMemoire:
     @staticmethod
     def _appel_en_dict(a: Appel) -> dict:
         return {"id": a.id, "artisan_id": a.artisan_id, "debut_a": a.debut_a.isoformat(),
+                "canal": a.canal,
                 "etat_conversation": a.etat_conversation,
                 "fin_a": a.fin_a.isoformat() if a.fin_a else None, "lead_id": a.lead_id,
                 "config_utilisee": a.config_utilisee}
@@ -733,6 +757,8 @@ class DepotMemoire:
     def _appel_de_dict(d: dict) -> Appel:
         return Appel(id=d["id"], artisan_id=d["artisan_id"],
                      debut_a=temps.depuis_iso(d["debut_a"]),
+                     # `.get` : un dépôt sérialisé AVANT la 016 n'a pas la clé.
+                     canal=d.get("canal") or CANAL_TELEPHONE,
                      etat_conversation=d["etat_conversation"],
                      config_utilisee=d.get("config_utilisee"),
                      fin_a=temps.depuis_iso(d["fin_a"]) if d["fin_a"] else None,

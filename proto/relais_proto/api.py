@@ -15,7 +15,7 @@ import datetime as dt
 import json as _json_mod
 import pathlib
 import re as _re_mod
-from urllib.parse import quote
+from urllib.parse import quote, urlencode
 
 from fastapi import Cookie, Depends, FastAPI, Form, Header, HTTPException, Request
 from fastapi.responses import (HTMLResponse, JSONResponse, PlainTextResponse,
@@ -32,8 +32,9 @@ from .calendar_stub import JOURS_FR, MOIS_FR, CalendarStub, libelle_creneau
 from .confirmation import creer_jeton, empreinte, lien
 from . import admin as admin_mdp
 from . import motdepasse
-from .depot import Introuvable, LigneArtisan
-from .engine import Conversation, formule_accueil
+from .depot import (CANAL_FORMULAIRE, CANAL_TELEPHONE, Introuvable,
+                    LigneArtisan)
+from .engine import Conversation, formule_accueil, lead_de_formulaire
 from .rdv import OCCUPENT, StatutRdv as _StatutRdv, TransitionInterdite
 from .registre import (Artisan, Registre, empreinte as registre_empreinte,
                        valider_config)
@@ -810,6 +811,106 @@ def creer_app(depot, registre: Registre, fabrique_llm, horloge=None,
     # Routes distinctes des routes JSON : celles-ci redirigent après action (303) pour que
     # le rechargement du navigateur ne rejoue pas le POST. Les routes JSON restent pour la
     # future app mobile.
+    # ---- le CANAL FORMULAIRE : la seule porte publique qui ÉCRIT (29/10) ----
+    #
+    # Pas d'authentification, par construction : c'est un formulaire de contact, et le
+    # client de l'artisan n'a pas de compte. L'identifiant de l'artisan est dans l'URL,
+    # et ce n'est pas un secret — c'est une adresse, comme un numéro de téléphone.
+    #
+    # CE QUI PROTÈGE N'EST DONC PAS UN JETON mais trois choses modestes et honnêtes :
+    # l.artisan doit être SERVABLE (le registre écarte déjà les lignes inutilisables),
+    # BORNÉS en longueur, et un champ-piège hors écran arrête les robots qui remplissent
+    # tout. Ce n'est pas une défense contre quelqu'un de déterminé, et il ne faut pas le
+    # croire : ce qu'un abus produirait, ce sont des demandes bidon dans une liste — pas
+    # un accès, pas une fuite. Le jour où ça deviendra un problème, la réponse sera une
+    # limitation de débit, pas un secret de plus.
+    _CHAMPS_MAX = {"besoin": 600, "commune": 80, "telephone": 25, "nom": 80}
+
+    def _artisan_public(artisan_id: str):
+        """L'artisan visé, s'il peut vraiment recevoir des demandes.
+
+        `registre.artisan` écarte DÉJÀ les lignes inutilisables (sans numéro Relais,
+        sans config servable) : on ne refait pas le tri ici, on s'appuie dessus. Un
+        second filtre finirait par diverger du premier, et l'écart se lirait comme un
+        bug du formulaire alors qu'il serait un bug du registre.
+        """
+        return registre.artisan(artisan_id)
+
+    @app.get("/formulaire/{artisan_id}", response_class=HTMLResponse)
+    def page_formulaire(artisan_id: str) -> HTMLResponse:
+        artisan = _artisan_public(artisan_id)
+        if artisan is None:
+            return HTMLResponse(pages.lien_invalide(NOM), status_code=404)
+        cfg = artisan.config
+        return HTMLResponse(pages.formulaire_public(
+            NOM, cfg["entreprise"]["nom"], cfg["entreprise"]["prenom_patron"],
+            artisan_id))
+
+    @app.post("/formulaire/{artisan_id}", response_class=HTMLResponse)
+    def recevoir_formulaire(artisan_id: str,
+                            besoin: str = Form(default=""),
+                            commune: str = Form(default=""),
+                            telephone: str = Form(default=""),
+                            nom: str = Form(default=""),
+                            urgence: str = Form(default=""),
+                            societe: str = Form(default="")) -> HTMLResponse:
+        """Une demande écrite entre comme un appel entre : même table, même lead.
+
+        LE PIÈGE EST SILENCIEUX. Un robot qui remplit le champ caché reçoit la page de
+        remerciement, exactement comme un humain — lui répondre « refusé » lui
+        apprendrait quel champ éviter. Rien n'est écrit en base.
+        """
+        artisan = _artisan_public(artisan_id)
+        if artisan is None:
+            return HTMLResponse(pages.lien_invalide(NOM), status_code=404)
+        cfg = artisan.config
+        entreprise = cfg["entreprise"]["nom"]
+        prenom = cfg["entreprise"]["prenom_patron"]
+
+        if societe.strip():
+            return HTMLResponse(
+                pages.formulaire_merci(NOM, entreprise, prenom, sms_envoye=False))
+
+        champs = {"besoin": besoin, "commune": commune, "telephone": telephone,
+                  "nom": nom, "urgence": bool(urgence)}
+        for cle, maxi in _CHAMPS_MAX.items():
+            # TRONQUÉ, PAS REFUSÉ : la borne protège la base, elle n'a pas à renvoyer
+            # quelqu'un qui a simplement été bavard sur sa panne.
+            champs[cle] = (champs[cle] or "").strip()[:maxi]
+        if not champs["besoin"]:
+            return HTMLResponse(
+                pages.formulaire_public(
+                    NOM, entreprise, prenom, artisan_id,
+                    erreur="Dites-nous en deux mots ce qu'il vous faut.",
+                    champs=champs),
+                status_code=422)
+
+        t = maintenant()
+        # `config=cfg` comme pour un appel : ce que l'agent savait au moment de la
+        # demande, figé à l'ouverture (migration 011). Une demande écrite n'y échappe
+        # pas — c'est la même preuve, pour la même question.
+        appel = depot.ouvrir_appel(artisan.id, t, config=cfg,
+                                   canal=CANAL_FORMULAIRE)
+        donnees = lead_de_formulaire(cfg, champs, t)
+        depot.cloturer_appel(appel.id, donnees, t)
+
+        # L'ACCUSÉ, et seulement s'il y a un numéro LISIBLE. `lead_de_formulaire` a déjà
+        # tranché : sans numéro, la catégorie est `injoignable` et aucune promesse n'est
+        # faite. Les deux décisions viennent donc de la même source (2bis).
+        sms = False
+        if (donnees.get("slots") or {}).get("telephone_rappel"):
+            brouillon = messages.accuse_formulaire(appel.id, artisan.id, donnees, cfg)
+            message, _ = depot.enfiler_message(brouillon, t)
+            # Expédié TOUT DE SUITE si un envoyeur est câblé, comme le code de
+            # connexion : un accusé qui arrive au prochain passage du cron n'accuse plus
+            # rien. La plage de silence reste respectée — c'est l'envoyeur qui la tient.
+            if expediteur is not None:
+                expediteur.passer(t, seulement={message.id})
+            sms = True
+
+        return HTMLResponse(
+            pages.formulaire_merci(NOM, entreprise, prenom, sms_envoye=sms))
+
     # ---- le site vitrine, et le rideau qui le garde tant qu'il n'est pas lancé ----
     def _page_vitrine_rendue() -> str:
         """LA PHRASE D'ACCUEIL AFFICHÉE EST CELLE QUE LE MOTEUR PRONONCE : la page
@@ -1535,8 +1636,14 @@ def creer_app(depot, registre: Registre, fabrique_llm, horloge=None,
                 "commune": commune, "a_valider": a_valider}
 
     def _duree(lead) -> str:
-        """« 2:41 », ou « — » si l'appel n'a pas de fin enregistrée."""
-        if not (lead.debut_a and lead.fin_a):
+        """« 2:41 », ou « — » si l'appel n'a pas de fin enregistrée.
+
+        UNE DEMANDE ÉCRITE N'A PAS DE DURÉE. Elle s'ouvre et se clôt dans la même
+        requête, donc le calcul rend « 0:00 » — un chiffre juste et dépourvu de sens,
+        qui se lit comme un appel instantané. Un tiret dit la vérité : la question ne
+        s'applique pas.
+        """
+        if lead.canal != CANAL_TELEPHONE or not (lead.debut_a and lead.fin_a):
             return "—"
         s = max(0, int((lead.fin_a - lead.debut_a).total_seconds()))
         return f"{s // 60}:{s % 60:02d}"
@@ -1653,14 +1760,25 @@ def creer_app(depot, registre: Registre, fabrique_llm, horloge=None,
             NOM, ctx["prenom"], ctx["entreprise"], cartes, chiffres, activite,
             salutation=salutation, commune=ctx["commune"], vue_admin=vue))
 
-    @app.get("/app/appels", response_class=HTMLResponse)
-    def page_appels(categorie: str = "",
+    # L'ANCIENNE URL SURVIT. Elle a été la page « Mes appels » du 21/09 au 29/10 :
+    # elle est dans des favoris, et c'est le lien que porte encore l'accueil des
+    # versions déployées avant celle-ci. 308 et non 302 : la redirection est
+    # permanente, et le navigateur peut l'apprendre.
+    @app.get("/app/appels")
+    def page_appels_ancienne(categorie: str = "", canal: str = ""):
+        suffixe = "?" + urlencode({k: v for k, v in
+                                   (("categorie", categorie), ("canal", canal)) if v})
+        return RedirectResponse("/app/demandes" + (suffixe if len(suffixe) > 1 else ""),
+                                status_code=308)
+
+    @app.get("/app/demandes", response_class=HTMLResponse)
+    def page_demandes(categorie: str = "", canal: str = "",
                     relais_session: str = Cookie(default="", alias=session.NOM_COOKIE),
                     nelyo_admin: str = Cookie(default="", alias=admin_mdp.NOM_COOKIE),
                     nelyo_vue: str = Cookie(default="",
                                             alias=admin_mdp.NOM_COOKIE_VUE),
                     authorization: str = Header(default="")) -> HTMLResponse:
-        """« Appels » : tout ce que l'agent a pris, RDV ou pas.
+        """« Demandes » : tout ce qui est entré, par quelque canal que ce soit.
 
         Le défaut fermé le 21/09 n'était pas une fonctionnalité manquante mais une
         moitié de promesse : `/app` ne montrait que les RDV à valider, et un appel qui
@@ -1680,16 +1798,27 @@ def creer_app(depot, registre: Registre, fabrique_llm, horloge=None,
         # Les compteurs portent sur TOUT, pas sur la vue filtrée : un filtre doit dire
         # combien il y a derrière lui, sinon il ne sert qu'à confirmer ce qu'on voit.
         comptes: dict[str, int] = {}
+        par_canal: dict[str, int] = {}
         for l in tous:
             c = l.donnees.get("categorie") or "autre"
             comptes[c] = comptes.get(c, 0) + 1
+            par_canal[l.canal] = par_canal.get(l.canal, 0) + 1
         filtres = [(None, "Tous", len(tous))]
         filtres += [(c, pages._CATEGORIES.get(c, (c, ""))[0], n)
                     for c, n in sorted(comptes.items(), key=lambda kv: -kv[1])]
+        # LA BARRE DES CANAUX N'APPARAÎT QUE S'IL Y EN A PLUSIEURS : un artisan qui ne
+        # reçoit que des appels n'a rien à filtrer, et une rangée de boutons dont un
+        # seul fait quelque chose apprend à ne plus les lire.
+        canaux = ([(None, "Tous les canaux", len(tous))]
+                  + [(c, pages._CANAUX.get(c, (c, ""))[0], n)
+                     for c, n in sorted(par_canal.items(), key=lambda kv: -kv[1])]
+                  if len(par_canal) > 1 else [])
 
         cartes = []
         for l in tous:
             if categorie and (l.donnees.get("categorie") or "autre") != categorie:
+                continue
+            if canal and l.canal != canal:
                 continue
             d = l.donnees
             s = d.get("slots") or {}
@@ -1703,13 +1832,16 @@ def creer_app(depot, registre: Registre, fabrique_llm, horloge=None,
                 "score": d.get("score", 0),
                 "duree": _duree(l),
                 "categorie": d.get("categorie") or "autre",
+                "canal": l.canal,
+                "urgent": scoring_est_urgent(s),
                 "transcript": d.get("transcript") or [],
             })
 
         return HTMLResponse(pages.liste_appels(
             NOM, ctx["prenom"], cartes, filtres, vue_admin=vue,
             entreprise=ctx["entreprise"], a_valider=ctx["a_valider"],
-            categorie=categorie, commune=ctx["commune"]))
+            categorie=categorie, commune=ctx["commune"],
+            canaux=canaux, canal=canal))
 
     # La vue qui n'a pas encore ses données. Elle existe pour que la navigation de la
     # maquette soit entière — un onglet qui mène à une 404 est pire qu'un onglet

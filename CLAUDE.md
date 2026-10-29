@@ -20,7 +20,7 @@ Cible V1 : plombiers/chauffagistes FR. Solo dev : Geoffrey (binôme Claude) ; ma
 ```bash
 cd proto
 pip install -r requirements.txt     # anthropic, python-dotenv (inutiles en mock)
-python run_scenario.py              # suite de non-régression (mock, sans clé, ~3 s) — 116 tests
+python run_scenario.py              # suite de non-régression (mock, sans clé, ~3 s) — 117 tests
                                     # « sans BASE » est désormais VÉRIFIÉ, pas promis (R93) :
                                     # la suite importait `serveur.py` — le câblage de prod,
                                     # qui ouvre une connexion Postgres à l'import — et
@@ -255,8 +255,12 @@ par `open()` — extraite le 24/09 pour que l'écran « Assistant IA » MONTRE l
 réelle plutôt qu'une copie, qui divergerait en silence (T17) ·
 `actions.py` le MENU d'actions fermé par état, la validation, et le bout de prompt qui le
 décrit — une seule source pour ce que le modèle peut proposer et ce que le code accepte ·
-`engine.py` contrôleur déterministe S0–S11 · `llm.py` extracteur+formuleur (Anthropic/Mock/Resilient,
-dégradation gracieuse : jamais muet) · `guards.py` invariants en code · `scoring.py` lead + score 0–5 · `produit.py` config PRODUIT — nom visible
+`engine.py` contrôleur déterministe S0–S11, et `lead_de_formulaire` qui fait entrer une
+demande ÉCRITE par le même chemin (mêmes slots, même zone, même score — jamais un lead
+fabriqué à la main) · `llm.py` extracteur+formuleur (Anthropic/Mock/Resilient,
+dégradation gracieuse : jamais muet) · `guards.py` invariants en code · `scoring.py` lead + score 0–5 (⚠️ le barème est bâti autour d'un CRÉNEAU RÉSERVÉ : une
+demande venue du formulaire plafonne donc à 2, urgence ou non — d'où le badge « Urgence »
+à l'écran, qui ne dépend pas du score) · `produit.py` config PRODUIT — nom visible
 (**Nelyo**) et expéditeur SMS unique (**nelyo**), contraintes AF2M vérifiées au
 démarrage ; « Relais » reste le nom de CODE (repo, modules, tables) ·
 `calendar_stub.py` règles agenda — et depuis R98 il REFUSE les plages déjà prises :

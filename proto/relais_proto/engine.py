@@ -1716,3 +1716,117 @@ class Conversation:
         # VERBATIM par R90, même motif : une phrase de fin n'a rien à reformuler, et c'est
         # elle que la plateforme reconnaît pour raccrocher.
         return self._say("Merci de votre appel, bonne journée !", verbatim=True)
+
+
+# ══════════════════════════════════════════ LE CANAL FORMULAIRE (29/10)
+#
+# Une demande peut entrer par le formulaire du site de l'artisan, et pas seulement par
+# un appel manqué. C'est la maquette v5, et c'est surtout **le seul canal qui capte un
+# prospect sans numéro de téléphone joignable depuis la France** — le dernier mur du
+# produit (dette n°1). Un artisan peut donc recevoir des demandes qualifiées avant même
+# que sa ligne vocale existe.
+#
+# LA DÉCISION RESTE AU CONTRÔLEUR (règle n°1). Le formulaire n'est qu'une façon de
+# remplir les MÊMES slots qu'une conversation remplit : la commune devient un code
+# postal par `_resoudre_commune`, la zone par `_zone_de`, le score par `scoring._score`.
+# Rien n'est recalculé ici, et c'est le point : un lead fabriqué à la main serait une
+# deuxième définition de ce qu'est un lead, et il divergerait du produit sans prévenir
+# (la leçon que `semer_demo.py` écrit déjà pour sa démo).
+#
+# CE QUI N'EST PAS LÀ, et qu'il ne faut pas lire entre les lignes : la qualification
+# par SMS. La maquette montre un échange avec le prospect venu du formulaire ; elle
+# suppose de RECEVOIR des SMS, ce que le produit ne sait pas faire (dette « réception
+# SMS », suspendue aux questions OVH). Le formulaire pose donc en une fois les questions
+# que l'agent poserait, et s'arrête là où l'agent s'arrêterait sans réponse.
+#
+# PAS DE RDV NON PLUS, et c'est délibéré plutôt que faute de temps : réserver un créneau
+# demande un aller-retour (proposer, entendre « oui »), et l'invariant n°5 exige un
+# téléphone CONFIRMÉ. Un formulaire ne confirme rien — personne n'a répété son numéro.
+# La demande sort donc en `a_rappeler`, ce que l'artisan peut effectivement faire.
+def lead_de_formulaire(cfg: dict, champs: dict, maintenant: dt.datetime) -> dict:
+    """Une demande écrite → le même lead qu'un appel, scoré par le même code.
+
+    `champs` : nom, telephone, commune, besoin, urgence (bool). Tous facultatifs sauf
+    `besoin` — c'est le formulaire qui décide ce qu'il exige, pas le domaine.
+
+    Rend les `donnees` du lead, prêtes pour `depot.cloturer_appel`.
+    """
+    from .scoring import build_lead
+
+    convo = Conversation(cfg, _LlmMuet(), CalendarStub(cfg, now=maintenant))
+
+    besoin = (champs.get("besoin") or "").strip()
+    nom = (champs.get("nom") or "").strip()
+    commune = (champs.get("commune") or "").strip()
+
+    # LE NUMÉRO passe par le MÊME contrôle qu'au téléphone : dix chiffres, pas de
+    # troncature, pas de tolérance. Un numéro à peu près juste est pire qu'un numéro
+    # absent (cf. `_numero_fr`). S'il est invalide, il n'y en a pas — et 2bis
+    # s'applique : aucune promesse de rappel, catégorie `injoignable`.
+    tel = Conversation._numero_fr(champs.get("telephone"))
+
+    convo.slots["nom"] = nom or None
+    convo.slots["probleme"] = besoin or None
+    convo.slots["telephone_rappel"] = tel
+    # CONFIRMÉ, et c'est défendable : au téléphone, `tel_confirme` atteste que l'appelant
+    # a répété son numéro à voix haute, parce que la dictée se trompe. À l'écrit, il l'a
+    # TAPÉ lui-même — il n'y a pas de canal de transmission à vérifier. Ce qui reste
+    # incertain (une faute de frappe) l'est aussi après une confirmation orale.
+    convo.slots["tel_confirme"] = bool(tel)
+    # L'URGENCE COCHÉE VAUT CONFIRMATION, pour la même raison : au téléphone, le
+    # contrôleur distingue « a décrit une urgence » (`intent`) de « l'a confirmée »
+    # (`urgence_reelle`) parce que l'agent pose une question de contrôle. Sur un
+    # formulaire, cocher la case EST la réponse à cette question — il n'y a personne
+    # pour la poser deux fois.
+    if champs.get("urgence"):
+        convo.slots["intent"] = "urgence"
+        convo.slots["urgence_reelle"] = True
+    else:
+        convo.slots["intent"] = "rdv"
+
+    # La commune est résolue par le contrôleur, jamais devinée : `_resoudre_commune`
+    # cherche d'abord la table de l'artisan, puis les 1 500 communes d'Île-de-France.
+    if commune:
+        convo.flags["commune_demandee"] = True
+        convo._resoudre_commune(commune)
+    convo.flags["zone"] = convo._zone_de(convo.slots["code_postal"])
+
+    # LA CATÉGORIE dit à l'artisan ce qu'il peut FAIRE (R79, 2bis). Trois cas, et aucun
+    # ne promet ce qu'on ne peut pas tenir :
+    if convo.flags["zone"] == "hors_zone" and convo.slots["code_postal"]:
+        convo.flags["categorie"] = "hors_zone"
+    elif tel:
+        convo.flags["categorie"] = "a_rappeler"
+    else:
+        # Sans numéro, aucun rappel n'est promis et le lead le dit (R79/R87).
+        convo.flags["categorie"] = "injoignable"
+
+    # LE TRANSCRIPT EST CE QUE LE PROSPECT A ÉCRIT, et rien d'autre. Aucune ligne
+    # « agent » : l'agent n'a rien dit, et fabriquer ses répliques ferait affirmer au
+    # dossier une conversation qui n'a pas eu lieu (R89, porté à l'écrit).
+    convo.transcript = [("client", ligne) for ligne in (
+        besoin,
+        f"Commune : {commune}" if commune else "",
+        f"Téléphone : {tel}" if tel else "",
+        "C'est une urgence." if champs.get("urgence") else "",
+    ) if ligne]
+
+    donnees = build_lead(convo)
+    donnees["source"] = "formulaire_site"
+    return donnees
+
+
+class _LlmMuet:
+    """Un interlocuteur qui n'est jamais interrogé.
+
+    `Conversation` exige un LLM à la construction, mais le chemin du formulaire ne lui
+    pose aucune question : tout est déjà écrit. Lever plutôt que rendre une réponse vide
+    rend l'erreur FRANCHE le jour où quelqu'un branchera un tour de conversation ici
+    sans s'en apercevoir."""
+    degradations: list = []
+
+    def __getattr__(self, nom):
+        def _refus(*_, **__):
+            raise RuntimeError(
+                f"le canal formulaire n'interroge pas le modèle ({nom} appelé)")
+        return _refus
