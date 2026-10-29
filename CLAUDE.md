@@ -54,6 +54,14 @@ python run_llm_eval.py [--n 3] [--only T05]   # éval LLM réel → evals/result
                                     # Le banc est au plafond : il ne peut pas justifier le
                                     # changement, il ne prouve pas que Sonnet n'aiderait
                                     # jamais. À rejouer quand le banc grossit.
+python apercu_local.py [--motdepasse X] [--port 8000]
+                                    # sert le SITE VITRINE en local, SANS BASE.
+                                    # `uvicorn serveur:app` exige Postgres et meurt
+                                    # sans lui ; la vitrine, elle, ne lit rien en
+                                    # base — faire dependre son apercu de Supabase
+                                    # etait un accident de cablage (meme esprit que
+                                    # R93). Avec --motdepasse : le portail d'apercu.
+                                    # Tout vit en memoire : pour REGARDER, pas servir.
 python chat.py [--mock]             # conversation interactive (tu joues l'appelant)
 python explore.py                   # banc d'essai libre (cas A–F)
 uvicorn serveur:app --port 8000     # API HTTP (DATABASE_URL, RELAIS_WEBHOOK_SECRET,
