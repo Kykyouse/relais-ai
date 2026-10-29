@@ -713,16 +713,44 @@ details.horaire input{width:100%;min-height:38px;border:1px solid var(--line);
   border-bottom:1px solid var(--line);padding:10px 28px;font-size:13px;display:flex;
   gap:12px;align-items:center;flex-wrap:wrap}
 .support form{margin-left:auto}
-.week{display:grid;grid-template-columns:repeat(6,1fr);gap:10px}
-.day{background:var(--surface);border:1px solid var(--line);border-radius:var(--r);
-  min-height:260px;display:flex;flex-direction:column}
-.day.today{border-color:var(--cuivre)}
-.day-h{padding:10px 12px;border-bottom:1px solid var(--line);font-weight:600;
-  font-size:13px}
-.day-h span{color:var(--faint);font-weight:400;display:block;font-size:11.5px}
-.day-b{padding:8px;display:flex;flex-direction:column;gap:7px}
-.evt{border-radius:8px;padding:8px 10px;font-size:12.5px;line-height:1.35;
-  border:1px solid transparent;position:relative}
+/* ---------- la GRILLE HORAIRE de la semaine (29/10) ---------- */
+/* `--pas` est la hauteur d'une DEMI-HEURE : toute la lisibilite en depend, et elle est
+   declaree une seule fois. L'axe vertical est le TEMPS — un RDV de 17 h tombe sous
+   celui de 8 h, et sa hauteur dit sa duree. Avant, la semaine etait six LISTES cote a
+   cote et rien n'etait aligne : « illisible », et c'etait exact. */
+.grille{--pas:22px;display:grid;grid-template-columns:46px repeat(6,1fr);gap:8px;
+  align-items:start}
+.gjour{background:var(--surface);border:1px solid var(--line);border-radius:var(--r)}
+.gouttiere{background:none;border:0}
+.gjour.today{border-color:var(--cuivre)}
+.gh{padding:9px 10px;border-bottom:1px solid var(--line);font-weight:600;font-size:13px;
+  min-height:46px}
+.gouttiere .gh{border-bottom:0}
+.gh span{color:var(--faint);font-weight:400;display:block;font-size:11.5px}
+.pistes{display:grid;grid-template-columns:repeat(var(--pistes,1),minmax(0,1fr));
+  grid-template-rows:repeat(var(--rangees,24),var(--pas));gap:0 2px;padding:0 2px 2px;
+  position:relative;
+  /* un trait par HEURE (deux rangees), pour que l'oeil compte sans lire la gouttiere */
+  background:repeating-linear-gradient(to bottom,transparent 0,
+    transparent calc(var(--pas) * 2 - 1px),var(--line) calc(var(--pas) * 2 - 1px),
+    var(--line) calc(var(--pas) * 2))}
+.gouttiere .pistes{background:none;padding:0}
+.hmark{font-size:10.5px;color:var(--faint);text-align:right;padding-right:6px;
+  line-height:1}
+/* CE QUI EST FERME SE VOIT : sans ca, une grille qui va de 7 h a 19 h laisse croire
+   que tout y est vendable, alors que l'agent ne propose jamais ces heures-la. */
+.ferme{grid-column:1/-1;border-radius:4px;
+  background:repeating-linear-gradient(45deg,transparent,transparent 5px,
+    var(--surface-2) 5px,var(--surface-2) 10px)}
+.rien{display:none}
+.evt{border-radius:8px;padding:5px 7px;font-size:12px;line-height:1.3;
+  border:1px solid transparent;position:relative;overflow:hidden;min-width:0}
+/* OUVERT, LE PANNEAU DEBORDE DE SA CASE au lieu de la faire grandir : une rangee de
+   grille a une hauteur fixe, et un bloc qui s'etire pousserait toute la journee. */
+.evt:has(details[open]){overflow:visible;z-index:6}
+.evt details[open] form,.evt details[open] .avis{position:absolute;left:0;top:100%;
+  width:max(210px,100%);background:var(--surface);border:1px solid var(--line);
+  border-radius:8px;box-shadow:var(--shadow);padding:9px;z-index:7}
 .evt time{display:block;font-size:11px;font-weight:600;opacity:.75;
   font-variant-numeric:tabular-nums}
 .evt b{font-size:12.5px}
@@ -786,14 +814,27 @@ details.horaire input{width:100%;min-height:38px;border:1px solid var(--line);
   display:inline-block}
 .mc-foot .ring{width:11px;height:11px;border-radius:4px;
   box-shadow:inset 0 0 0 1.5px var(--cuivre);display:inline-block;margin-left:10px}
+/* SUR MOBILE, LA MÊME GRILLE REDEVIENT UNE LISTE (choix de Geoffrey) : six colonnes
+   horaires sur 390 px seraient illisibles. `display:block` suffit — les `grid-row`
+   posés en ligne sont alors ignorés, et les blocs s'empilent dans l'ordre du DOM, qui
+   est l'ordre horaire. Un seul balisage, deux mises en page. */
 @media (max-width:940px){
-  .week{grid-template-columns:repeat(2,1fr)}
+  .grille{display:block}
+  .gouttiere{display:none}
+  .gjour{margin-bottom:10px}
+  .pistes{display:block;background:none;padding:8px;min-height:0}
+  .pistes .ferme{display:none}
+  .evt{margin-bottom:7px;font-size:12.5px;padding:8px 10px}
+  .evt:last-child{margin-bottom:0}
+  .evt details[open] form,.evt details[open] .avis{position:static;width:auto;
+    box-shadow:none;border:0;padding:0}
+  .rien{display:block;margin:0;padding:10px 12px 14px;color:var(--muted);
+    font-size:12.5px}
   /* Empilé, et le calendrier n'est plus collant : un bloc sticky de 300 px de haut
      mangerait l'écran d'un téléphone pendant qu'on fait défiler la semaine. */
   .agenda-wrap{grid-template-columns:1fr}
   .minical{position:static;max-width:340px}
 }
-@media (max-width:520px){.week{grid-template-columns:1fr}}
 .numline{display:flex;align-items:center;gap:16px;flex-wrap:wrap}
 .numline .n{font-family:"Bricolage Grotesque";font-size:22px;font-weight:700;
   letter-spacing:.5px}
@@ -1528,7 +1569,8 @@ def _minical(cal: dict) -> str:
 def agenda(produit: str, prenom: str, entreprise: str, jours: list[dict],
            semaine: str, precedente: str, suivante: str, a_valider: int = 0,
            commune: str = "", vue_admin: str = "", erreur: str = "",
-           calendrier: dict | None = None, aujourdhui: str = "") -> str:
+           calendrier: dict | None = None, aujourdhui: str = "",
+           plan: dict | None = None) -> str:
     """L'agenda de l'artisan — le SIEN, sans Google ni Outlook.
 
     Il montre DEUX choses dans la même grille : ce que Nelyo a réservé (validé ou en
@@ -1541,26 +1583,51 @@ def agenda(produit: str, prenom: str, entreprise: str, jours: list[dict],
     ceux-là portent un engagement pris envers un client, et se refusent depuis l'accueil
     (ce qui prévient le client), jamais en les effaçant d'un agenda.
     """
+    # UN SEUL BALISAGE, DEUX MISES EN PAGE. Sur grand écran `.pistes` est une grille
+    # dont les rangées sont des demi-heures, et chaque bloc est posé sur `grid-row` ;
+    # en dessous de 940 px la même grille passe en `display:block` et les blocs
+    # s'empilent dans l'ordre du DOM, qui est l'ordre horaire. Rendre DEUX fois le
+    # balisage aurait dupliqué les formulaires d'action — et deux fois le même
+    # `name` dans la page, donc un POST qui n'aurait plus su lequel écouter.
+    plan = plan or {"rangees": 1, "heures": []}
     cases = []
     for j in jours:
         blocs = []
+        for creux_debut, creux_fin in j.get("fermees") or ():
+            # CE QUI EST FERMÉ SE VOIT. Sans ça, une grille qui va de 7 h à 19 h laisse
+            # croire que tout y est vendable, alors que l'agent ne propose jamais ces
+            # heures-là.
+            blocs.append(f'<div class="ferme" style="grid-row:{creux_debut}/'
+                         f'{creux_fin}"></div>')
         for e in j["evenements"]:
-            actions = ""
-            if not vue_admin:
-                actions = _actions_evenement(e, j["iso"])
+            actions = "" if vue_admin else _actions_evenement(e, j["iso"])
+            # `1/-1` quand rien ne le chevauche : il prend toute la colonne au lieu
+            # de subir le nombre de pistes de sa journée (cf. `poser_sur_la_grille`).
+            colonne = ("1/-1" if e.get("etendu")
+                       else str(e.get("piste", 0) + 1))
+            place = ("grid-row:{}/{};grid-column:{}".format(
+                e.get("ligne_debut", 1), e.get("ligne_fin", 2), colonne)
+                if e.get("ligne_debut") else "")
             blocs.append(
-                f'<div class="evt {e["classe"]}">'
+                f'<div class="evt {e["classe"]}" style="{place}">'
                 f'<time>{escape(e["heures"])}</time>'
                 f'<b>{escape(e["titre"])}</b>'
                 + (f' — {escape(e["detail"])}' if e["detail"] else "")
                 + actions + "</div>")
-        if not blocs:
-            blocs.append('<div class="evt e-off" style="text-align:center">'
-                         "Rien de prévu</div>")
+        vide = ("" if j["evenements"] else
+                '<p class="rien">Rien de prévu</p>')
         cases.append(
-            f'<div class="day{" today" if j["aujourdhui"] else ""}">'
-            f'<div class="day-h">{escape(j["nom"])}<span>{escape(j["date"])}</span></div>'
-            f'<div class="day-b">{"".join(blocs)}</div></div>')
+            f'<div class="gjour{" today" if j["aujourdhui"] else ""}">'
+            f'<div class="gh">{escape(j["nom"])}<span>{escape(j["date"])}</span></div>'
+            f'<div class="pistes" style="--pistes:{j.get("pistes", 1)}">'
+            f'{"".join(blocs)}</div>{vide}</div>')
+
+    gouttiere = ('<div class="gouttiere"><div class="gh"></div>'
+                 '<div class="pistes" style="--pistes:1">'
+                 + "".join(f'<span class="hmark" style="grid-row:{h["ligne"]}/'
+                           f'{h["ligne"] + 2}">{escape(h["libelle"])}</span>'
+                           for h in plan["heures"])
+                 + "</div></div>")
 
     alerte = f'<div class="card aveu"><div class="card-b">{escape(erreur)}</div></div>' \
         if erreur else ""
@@ -1612,8 +1679,11 @@ def agenda(produit: str, prenom: str, entreprise: str, jours: list[dict],
         # qu'on choisit le jour, et le faire passer après six colonnes de semaine
         # obligerait à défiler pour naviguer.
         + ('<div class="agenda-wrap">' + _minical(calendrier)
-           + f'<div class="week">{"".join(cases)}</div></div>'
-           if calendrier else f'<div class="week">{"".join(cases)}</div>')
+           + '<div class="grille" style="--rangees:{}">{}{}</div></div>'.format(
+               plan["rangees"], gouttiere, "".join(cases))
+           if calendrier else
+           '<div class="grille" style="--rangees:{}">{}{}</div>'.format(
+               plan["rangees"], gouttiere, "".join(cases)))
         + formulaire)
     return _page_nelyo(produit, "agenda", corps, entreprise=entreprise, prenom=prenom,
                        commune=commune, a_valider=a_valider, vue_admin=vue_admin,

@@ -5989,6 +5989,132 @@ def check_canal_formulaire() -> bool:
     return True
 
 
+def check_grille_horaire() -> bool:
+    """T25 : la semaine est un CALENDRIER, pas six listes côte à côte.
+
+    Geoffrey : « un rendez-vous à 17 h ne peut pas être sur la même ligne que celui de
+    8 h du jour d'après, c'est illisible. » Il avait raison, et le défaut était
+    structurel : les événements s'empilaient dans l'ordre à l'intérieur de leur colonne,
+    donc rien n'était aligné sur l'heure. La maquette v5 a la même faiblesse — c'est donc
+    un pas au-delà d'elle, pas un rattrapage.
+
+    Ce qui est vérifié, et le premier point EST la plainte :
+
+    1. **la position verticale suit l'heure** : 17 h est strictement sous 8 h, et deux
+       événements à la même heure dans des jours différents sont à la même hauteur ;
+    2. **la hauteur dit la durée** : deux heures occupent deux fois un créneau d'une ;
+    3. **un chevauchement met les blocs CÔTE À CÔTE** (choix de Geoffrey) : deux blocs
+       superposés diraient « il y a quelque chose », côte à côte ils disent « il y a
+       DEUX choses en même temps » — et c'est ça qui appelle une décision ;
+    4. **ce qui ne chevauche rien prend toute la largeur.** Sans ça, un rendez-vous isolé
+       à 17 h se retrouvait à demi-largeur parce qu'une AUTRE heure de sa journée avait
+       deux pistes : il payait un conflit auquel il ne participe pas ;
+    5. **l'amplitude s'élargit pour ne rien cacher** : un bloc à 7 h, hors heures
+       ouvrées, doit rester visible — un agenda qui masque un engagement est pire qu'un
+       agenda absent (c'est la raison d'être de T15) ;
+    6. **les heures fermées sont marquées**, sinon la grille laisse croire que tout y est
+       vendable alors que l'agent ne propose jamais ces heures-là ;
+    7. **un seul balisage pour les deux mises en page.** Sur mobile la grille passe en
+       `display:block` et les blocs s'empilent dans l'ordre du DOM, qui est l'ordre
+       horaire. Rendre deux fois aurait dupliqué les formulaires d'action — donc deux
+       champs de même `name` dans la page, et un POST qui ne sait plus lequel écouter.
+    """
+    import datetime as _dt
+    import re as _re_t25
+
+    from relais_proto import grille, pages
+
+    def ev(de, a, titre, classe="e-ok"):
+        return {"id": "evt-" + titre.lower(), "tri": de, "heures": f"{de} – {a}",
+                "titre": titre, "detail": "", "classe": classe, "de": de, "a": a,
+                "type": "rdv", "supprimable": True}
+
+    # 1 + 2 + 3 + 4 : une journée chargée, et une autre pour comparer les hauteurs
+    charge = [ev("08:00", "10:00", "Tot"), ev("09:00", "11:30", "Chevauche"),
+              ev("17:00", "19:00", "Tard")]
+    autre = [ev("08:00", "09:00", "Court")]
+    jours = [
+        {"iso": "2026-10-26", "nom": "Lundi", "date": "26 octo",
+         "aujourdhui": False, "evenements": autre},
+        {"iso": "2026-10-29", "nom": "Jeudi", "date": "29 octo",
+         "aujourdhui": True, "evenements": charge},
+    ]
+    debut, fin = grille.amplitude_semaine(CFG, jours)
+    for j in jours:
+        j["pistes"] = grille.poser_sur_la_grille(j["evenements"], debut, fin)
+        j["fermees"] = grille.heures_fermees(
+            CFG, _dt.date.fromisoformat(j["iso"]), debut, fin)
+
+    par_titre = {e["titre"]: e for j in jours for e in j["evenements"]}
+    if not (par_titre["Tard"]["ligne_debut"] > par_titre["Tot"]["ligne_fin"]):
+        print("   un rendez-vous de 17 h n'est pas SOUS celui de 8 h : la position "
+              "verticale ne suit pas l'heure — c'est la plainte d'origine")
+        return False
+    if par_titre["Court"]["ligne_debut"] != par_titre["Tot"]["ligne_debut"]:
+        print("   deux événements de 8 h, deux jours différents, ne sont pas à la même "
+              "hauteur")
+        return False
+    haut_court = par_titre["Court"]["ligne_fin"] - par_titre["Court"]["ligne_debut"]
+    haut_long = par_titre["Tot"]["ligne_fin"] - par_titre["Tot"]["ligne_debut"]
+    if haut_long != haut_court * 2:
+        print(f"   la hauteur ne dit pas la durée : 1 h = {haut_court} rangée(s), "
+              f"2 h = {haut_long}")
+        return False
+    if par_titre["Tot"]["piste"] == par_titre["Chevauche"]["piste"]:
+        print("   deux événements qui se chevauchent sont sur la même piste : ils se "
+              "recouvriraient, et le conflit deviendrait invisible")
+        return False
+    if par_titre["Tard"]["etendu"] is not True:
+        print("   un événement qui ne chevauche rien n'occupe pas toute la largeur : "
+              "il paie un conflit auquel il ne participe pas")
+        return False
+    if par_titre["Tot"]["etendu"] is not False:
+        print("   un événement en conflit est annoncé comme isolé")
+        return False
+
+    # 5. l'amplitude s'élargit : un bloc à 7 h ne disparaît pas
+    hors = [{"iso": "2026-10-26", "nom": "Lundi", "date": "26 octo",
+             "aujourdhui": False, "evenements": [ev("07:00", "08:00", "Tres tot")]}]
+    d2, _ = grille.amplitude_semaine(CFG, hors)
+    if d2 > 7 * 60:
+        print(f"   la grille commence à {d2 // 60} h : un bloc posé à 7 h serait "
+              "invisible, et l'agenda cacherait un engagement (T15)")
+        return False
+
+    # 6. les heures fermées sont calculées (samedi ferme à 13 h dans la config)
+    samedi = grille.heures_fermees(CFG, _dt.date(2026, 10, 31), 7 * 60, 19 * 60)
+    if not samedi:
+        print("   aucune heure fermée le samedi : la grille laisse croire que tout y "
+              "est vendable")
+        return False
+
+    # 7. UN SEUL BALISAGE : chaque événement n'a qu'un formulaire d'action
+    rangees = (fin - debut) // grille.PAS_MINUTES
+    plan = {"rangees": rangees,
+            "heures": [{"libelle": f"{(debut + i * 30) // 60}h", "ligne": i + 1}
+                       for i in range(rangees) if (debut + i * 30) % 60 == 0]}
+    html = pages.agenda("Nelyo", "Julien", "Dupont Chauffage", jours,
+                        "Semaine du 26 au 31 octobre", "2026-10-19", "2026-11-02",
+                        plan=plan, aujourdhui="2026-10-29")
+    for titre in ("Tot", "Chevauche", "Tard", "Court"):
+        ident = "evt-" + titre.lower()
+        poses = html.count(f'action="/app/agenda/{ident}/modifier"')
+        if poses != 1:
+            print(f"   {poses} formulaire(s) pour « {titre} » : le balisage est rendu "
+                  "deux fois, donc deux champs de même `name` dans la page")
+            return False
+    if 'class="ferme"' not in html:
+        print("   les heures fermées ne sont pas rendues")
+        return False
+    # la position est posée EN LIGNE : c'est elle qui place le bloc, pas l'ordre du DOM
+    if not _re_t25.search(r'class="evt [^"]*" style="grid-row:\d+/\d+;grid-column:',
+                          html):
+        print("   les blocs ne portent pas leur position : on est retombé sur un "
+              "empilement dans l'ordre")
+        return False
+    return True
+
+
 def check_minical_agenda() -> bool:
     """T22 : le mini-calendrier mensuel de l'agenda — sans JavaScript.
 
@@ -14454,6 +14580,15 @@ def run() -> int:
         print("   → une demande écrite est scorée par le même code qu'un appel, le "
               "contrôleur résout seul la commune, aucune promesse sans numéro "
               "lisible, et elle arrive dans « Demandes » avec son canal : ✅ PASS")
+    else:
+        print("   → ❌ FAIL")
+        echecs += 1
+
+    print(f"\n──── T25_grille_horaire ────")
+    if check_grille_horaire():
+        print("   → la semaine est un calendrier : la position suit l'heure, la "
+              "hauteur dit la durée, les chevauchements sont côte à côte et rien "
+              "n'est caché hors heures ouvrées : ✅ PASS")
     else:
         print("   → ❌ FAIL")
         echecs += 1

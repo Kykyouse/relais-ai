@@ -16,7 +16,7 @@ Le produit s'appelle **NELYO** et **il tourne en ligne** :
 <https://nelyo-api.onrender.com>, cron compris, sur une base de production séparée.
 Depuis le 21/09 **un artisan s'inscrit sans commit ni redéploiement** : sa config vit en
 base et s'édite dans `/admin`. La compréhension est au LLM sous contrat fermé, mesurée à
-**68/70** au banc d'extraction et **57/57** en éval réelle ×3 ; **120 tests** de
+**68/70** au banc d'extraction et **57/57** en éval réelle ×3 ; **121 tests** de
 non-régression. Il reste **un seul mur** : aucun numéro n'est joignable depuis la France.
 
 > ⚠️ **ÉTAT RÉEL DE LA PRODUCTION AU 29/10 : à vérifier avant de rien croire du
@@ -40,7 +40,7 @@ les évals LLM réelles (la clé API ne voyage pas) et `run_depot_pg` (Supabase)
 
 ```bash
 cd proto
-python run_scenario.py                              # 120 tests, ~3 s — sans clé NI BASE (R93)
+python run_scenario.py                              # 121 tests, ~3 s — sans clé NI BASE (R93)
 python run_extract_eval.py [--mock] [--only …]      # banc d'EXTRACTION : 68/70, p50 1131 ms
 python run_llm_eval.py [--mock] [--n 3]             # éval appelant-simulé (19 personas)
 python run_depot_pg.py [--migrer]                   # contrat du port contre Supabase
@@ -652,6 +652,49 @@ Détail d'écran qui compte : quand on demande un code, le champ « mot de passe
 **disparaît** au lieu de cohabiter avec le champ « code ». Laisser les deux, c'est
 proposer une case que celui qui vient de dire « je ne le connais pas » ne peut pas
 remplir.
+
+### L'agenda devient un calendrier (T25)
+
+Geoffrey : « un rendez-vous à 17 h ne peut pas être sur la même ligne que celui de 8 h du
+jour d'après, c'est illisible. » Exact, et le défaut était structurel : la semaine
+n'était pas un calendrier mais **six listes côte à côte**, où les événements s'empilaient
+dans l'ordre. **La maquette v5 a la même faiblesse** — c'est donc un pas au-delà d'elle,
+pas un rattrapage.
+
+L'axe vertical devient le temps : une rangée par demi-heure, chaque bloc posé sur
+`grid-row`, et sa HAUTEUR dit sa durée. Tout en CSS — pas de JavaScript (écart n°2).
+
+Quatre décisions prises en écrivant :
+
+- **L'amplitude vient de `agenda.horaires_rdv`**, jamais d'un réglage en dur, et elle
+  s'ÉLARGIT si un événement déborde. Un bloc posé à 7 h doit se voir : une grille qui
+  s'arrête à l'heure d'ouverture le ferait disparaître, et un agenda qui cache un
+  engagement est pire qu'un agenda absent — c'est la raison d'être de T15.
+- **Les heures fermées sont hachurées.** Sans ça, une grille de 7 h à 19 h laisse croire
+  que tout y est vendable, alors que l'agent ne propose jamais ces heures-là.
+- **Les chevauchements vont côte à côte** (choix de Geoffrey) : deux blocs superposés
+  diraient « il y a quelque chose », côte à côte ils disent « il y a DEUX choses en même
+  temps » — et c'est ça qui appelle une décision.
+- **Ce qui ne chevauche rien prend toute la largeur.** Premier rendu : un rendez-vous
+  isolé à 17 h se retrouvait à demi-largeur parce qu'une AUTRE heure de sa journée avait
+  deux pistes. Il payait un conflit auquel il ne participe pas, et la colonne donnait à
+  lire un encombrement qui n'existait pas.
+
+**UN SEUL BALISAGE, DEUX MISES EN PAGE.** Sur mobile (choix de Geoffrey), la même grille
+passe en `display:block` et les blocs s'empilent dans l'ordre du DOM, qui est l'ordre
+horaire. Rendre deux fois aurait dupliqué les formulaires d'action — donc deux champs de
+même `name` dans la page, et un POST qui ne sait plus lequel écouter.
+
+Trois accidents de parcours, notés parce qu'ils se répètent :
+
+1. **Un script de correctif a échoué AVANT d'écrire**, et je ne l'ai pas vu : seules les
+   règles mobiles étaient passées, donc la page s'affichait en liste à toutes les
+   largeurs. Un `assert` qui tombe en fin de script annule tout ce qui précède.
+2. **Un nom local masquait le module** : `grille = [...]` pour les 42 cases du
+   mini-calendrier cachait `from . import grille`. Invisible à la lecture, fatal à
+   l'exécution, deux lignes plus bas.
+3. **Supprimer une clé dans la boucle qui lit celle des autres** : le calcul de
+   `etendu` effaçait `minutes` au premier tour et plantait au second.
 
 ### Se déconnecter ramène à la page d'accueil, et ouvre le rideau au passage
 

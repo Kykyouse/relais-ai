@@ -24,7 +24,7 @@ from pydantic import BaseModel, Field
 
 import secrets
 
-from . import (apercu, connexion, messages, pages, schema, session,
+from . import (apercu, connexion, grille, messages, pages, schema, session,
                sonde_dispo as _sonde_dispo,
                sonde_voix as _sonde, temps,
                vapi as _vapi)
@@ -2311,6 +2311,28 @@ def creer_app(depot, registre: Registre, fabrique_llm, horloge=None,
                 "aujourdhui": d == ajd, "evenements": liste,
             })
 
+        # ---- la GRILLE HORAIRE (29/10) ----
+        #
+        # L'axe vertical devient l'heure : un RDV de 17 h tombe sous celui de 8 h, et sa
+        # hauteur dit sa durée. Avant, la semaine était six LISTES côte à côte et rien
+        # n'était aligné — « illisible », et c'était exact.
+        #
+        # L'amplitude vient des `horaires_rdv` de la config, élargie par les événements :
+        # un bloc posé à 7 h doit se voir, sinon l'agenda cache un engagement (T15).
+        debut_min, fin_min = grille.amplitude_semaine(cfg, jours)
+        for j in jours:
+            j["pistes"] = grille.poser_sur_la_grille(j["evenements"], debut_min, fin_min)
+            j["fermees"] = grille.heures_fermees(
+                cfg, dt.date.fromisoformat(j["iso"]), debut_min, fin_min)
+        par_heure = grille.PAS_MINUTES
+        rangees = (fin_min - debut_min) // par_heure
+        heures = [
+            {"libelle": f"{(debut_min + i * par_heure) // 60}h",
+             "ligne": i + 1}
+            for i in range(rangees) if (debut_min + i * par_heure) % 60 == 0
+        ]
+        plan = {"rangees": rangees, "heures": heures}
+
         libelle = (f"Semaine du {lundi.day} au {fin.day} {MOIS_FR[fin.month - 1]}"
                    if lundi.month == fin.month else
                    f"Semaine du {lundi.day} {MOIS_FR[lundi.month - 1]} au "
@@ -2334,13 +2356,16 @@ def creer_app(depot, registre: Registre, fabrique_llm, horloge=None,
         # La grille part du lundi de la semaine du 1er et tient 6 rangs : 42 cases
         # couvrent tous les mois, y compris un mars de 31 jours commençant un dimanche.
         depart = premier - dt.timedelta(days=premier.weekday())
-        grille = [depart + dt.timedelta(days=i) for i in range(42)]
+        # `cases_mois` et non `grille` : ce nom masquait le MODULE `grille`,
+        # importé pour la grille horaire — et le masquage ne se voyait qu'à
+        # l'exécution, sur la ligne d'après.
+        cases_mois = [depart + dt.timedelta(days=i) for i in range(42)]
 
         # Ce qui « occupe » un jour, au sens du mini-calendrier : un RDV qui compte
         # (`OCCUPENT`, la même liste que la grille de la semaine) ou un bloc inscrit
         # par l'artisan. Deux sources, un seul point : la pastille dit « ce jour n'est
         # pas vide », pas « il y a un rendez-vous ».
-        du, au = grille[0].isoformat(), grille[-1].isoformat()
+        du, au = cases_mois[0].isoformat(), cases_mois[-1].isoformat()
         occupes = {r.creneau["date"] for r in depot.rdvs_entre(artisan.id, du, au)
                    if r.statut in OCCUPENT}
         occupes |= {e.jour for e in depot.evenements_entre(artisan.id, du, au)}
@@ -2356,7 +2381,7 @@ def creer_app(depot, registre: Registre, fabrique_llm, horloge=None,
                 "aujourdhui": d == ajd,
                 "dans_semaine": lundi <= d <= fin,
                 "occupe": d.isoformat() in occupes,
-            } for d in grille],
+            } for d in cases_mois],
         }
 
         return HTMLResponse(pages.agenda(
@@ -2364,7 +2389,8 @@ def creer_app(depot, registre: Registre, fabrique_llm, horloge=None,
             (lundi - dt.timedelta(days=7)).isoformat(),
             (lundi + dt.timedelta(days=7)).isoformat(),
             a_valider=ctx["a_valider"], commune=ctx["commune"], vue_admin=vue,
-            erreur=erreur, calendrier=calendrier, aujourdhui=ajd.isoformat()))
+            erreur=erreur, calendrier=calendrier, aujourdhui=ajd.isoformat(),
+            plan=plan))
 
     def _valider_evenement(artisan_id: str, titre: str, jour: str, de: str, a: str,
                            ignorer_rdv: str = "") -> tuple[str, str]:

@@ -202,6 +202,11 @@ def _effacer(depot) -> None:
             "delete from appel where artisan_id = %s",
             "delete from code_connexion where artisan_id = %s",
             "delete from session_artisan where artisan_id = %s",
+            # Oubliée jusqu'au 29/10 : la table est arrivée avec la migration 013, APRÈS
+            # ce script, et personne n'est revenu l'ajouter ici. Constaté en production,
+            # par une `ForeignKeyViolation` au moment de resemer la démo. Une liste
+            # écrite à la main vieillit en silence — celle-ci a mis cinq semaines.
+            "delete from evenement_agenda where artisan_id = %s",
             "delete from artisan where id = %s",
         ):
             cur.execute(sql, (ARTISAN_DEMO,))
