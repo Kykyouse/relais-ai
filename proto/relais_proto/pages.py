@@ -718,7 +718,7 @@ details.horaire input{width:100%;min-height:38px;border:1px solid var(--line);
    declaree une seule fois. L'axe vertical est le TEMPS — un RDV de 17 h tombe sous
    celui de 8 h, et sa hauteur dit sa duree. Avant, la semaine etait six LISTES cote a
    cote et rien n'etait aligne : « illisible », et c'etait exact. */
-.grille{--pas:22px;display:grid;grid-template-columns:46px repeat(6,1fr);gap:8px;
+.grille{--pas:28px;display:grid;grid-template-columns:46px repeat(6,1fr);gap:8px;
   align-items:start}
 .gjour{background:var(--surface);border:1px solid var(--line);border-radius:var(--r)}
 .gouttiere{background:none;border:0}
@@ -743,8 +743,29 @@ details.horaire input{width:100%;min-height:38px;border:1px solid var(--line);
   background:repeating-linear-gradient(45deg,transparent,transparent 5px,
     var(--surface-2) 5px,var(--surface-2) 10px)}
 .rien{display:none}
-.evt{border-radius:8px;padding:5px 7px;font-size:12px;line-height:1.3;
+.evt{border-radius:8px;padding:4px 7px 2px;font-size:11.5px;line-height:1.25;
   border:1px solid transparent;position:relative;overflow:hidden;min-width:0}
+/* LES ACTIONS NE MANGENT PAS UNE LIGNE DE TEXTE. Dans une case haute de 56 px (une
+   heure), « DÉPLACER » en flux coûtait la ligne qui portait la commune — le bloc
+   affichait « chantier geldro… » coupé en plein mot. Posé en bas à droite, il flotte
+   au-dessus du texte sans lui prendre de place. */
+.pistes .evt details{position:absolute;right:5px;bottom:2px;margin:0;z-index:2}
+/* 30 minutes : une seule ligne, tronquée à la fin plutôt qu'en plein mot. */
+.pistes .evt.court{display:flex;align-items:baseline;gap:5px;padding-top:3px;
+  white-space:nowrap}
+.pistes .evt.court time{display:inline;flex:0 0 auto}
+.pistes .evt.court b{flex:1 1 auto;overflow:hidden;text-overflow:ellipsis;min-width:0}
+/* 30 minutes : le motif et la commune sautent. Le NOM et l'HEURE sont ce qu'on lit en
+   diagonale ; le reste se déplie en ouvrant le bloc. */
+.pistes .evt.court .det{display:none}
+/* Les actions d'un bloc court n'apparaissent qu'au survol ou au clavier : elles
+   coûtent plus large que le nom qu'elles accompagnent. Sur mobile, la liste leur rend
+   leur place — il n'y a pas de survol sur un chantier. */
+.pistes .evt.court details{position:absolute;right:4px;top:2px;margin:0;
+  background:var(--surface);border-radius:4px;opacity:0}
+.pistes .evt.court:hover details,
+.pistes .evt.court:focus-within details{opacity:1}
+.pistes .evt details summary{background:var(--surface);border-radius:4px;padding:0 3px}
 /* OUVERT, LE PANNEAU DEBORDE DE SA CASE au lieu de la faire grandir : une rangee de
    grille a une hauteur fixe, et un bloc qui s'etire pousserait toute la journee. */
 .evt:has(details[open]){overflow:visible;z-index:6}
@@ -828,6 +849,9 @@ details.horaire input{width:100%;min-height:38px;border:1px solid var(--line);
   .evt:last-child{margin-bottom:0}
   .evt details[open] form,.evt details[open] .avis{position:static;width:auto;
     box-shadow:none;border:0;padding:0}
+  /* en liste, la case n'a plus de hauteur imposée : les actions redeviennent du flux */
+  .pistes .evt details{position:static;margin-top:7px}
+  .pistes .evt details summary{background:none;padding:0}
   .rien{display:block;margin:0;padding:10px 12px 14px;color:var(--muted);
     font-size:12.5px}
   /* Empilé, et le calendrier n'est plus collant : un bloc sticky de 300 px de haut
@@ -1608,11 +1632,26 @@ def agenda(produit: str, prenom: str, entreprise: str, jours: list[dict],
             place = ("grid-row:{}/{};grid-column:{}".format(
                 e.get("ligne_debut", 1), e.get("ligne_fin", 2), colonne)
                 if e.get("ligne_debut") else "")
+            # UN BLOC D'UNE DEMI-HEURE NE PEUT PAS TENIR DEUX LIGNES, et le forcer
+            # coupait le titre en plein mot. Marqué « court », il met l'heure et le
+            # nom sur la MÊME ligne, tronqués proprement — ce que fait n'importe quel
+            # calendrier. La durée vient du calcul, pas d'une devinette en CSS.
+            court = (e.get("ligne_fin", 2) - e.get("ligne_debut", 1)) <= 1
+            # SUR UNE DEMI-HEURE, L'HEURE DE DÉBUT SUFFIT. « 09:00 – 09:30 » coûte
+            # quarante pixels sur une colonne qui en fait cent dix, et en flex le
+            # titre est le seul élément rétrécissable : il tombait à zéro, et le bloc
+            # n'affichait qu'une heure sans savoir de qui.
+            heure = e["de"] if (court and e.get("de")) else e["heures"]
             blocs.append(
-                f'<div class="evt {e["classe"]}" style="{place}">'
-                f'<time>{escape(e["heures"])}</time>'
+                f'<div class="evt {e["classe"]}{" court" if court else ""}" '
+                f'style="{place}">'
+                f'<time>{escape(heure)}</time>'
                 f'<b>{escape(e["titre"])}</b>'
-                + (f' — {escape(e["detail"])}' if e["detail"] else "")
+                # ENVELOPPÉ, et pas laissé en texte nu : CSS ne peut ni masquer ni
+                # rétrécir un nœud de texte. Dans un bloc d'une demi-heure il refusait
+                # de céder la place et réduisait le titre à rien.
+                + (f'<span class="det"> — {escape(e["detail"])}</span>'
+                   if e["detail"] else "")
                 + actions + "</div>")
         vide = ("" if j["evenements"] else
                 '<p class="rien">Rien de prévu</p>')

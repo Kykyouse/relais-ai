@@ -6106,6 +6106,41 @@ def check_grille_horaire() -> bool:
     if 'class="ferme"' not in html:
         print("   les heures fermées ne sont pas rendues")
         return False
+
+    # 8. UN BLOC D'UNE DEMI-HEURE TIENT SUR UNE LIGNE. Vu au rendu : 28 px ne peuvent
+    #    pas porter deux lignes, et le titre était coupé en plein mot. Marqué « court »,
+    #    il n'affiche que l'heure de DÉBUT et le nom — « 09:00 – 09:30 » coûte quarante
+    #    pixels sur une colonne qui en fait cent dix, et en flex le titre est le seul
+    #    élément rétrécissable : il tombait à zéro, et le bloc disait une heure sans
+    #    dire de qui.
+    bref = [{"iso": "2026-10-26", "nom": "Lundi", "date": "26 octo",
+             "aujourdhui": False,
+             "evenements": [ev("09:00", "09:30", "Rappel Moreau")]}]
+    bref[0]["evenements"][0]["detail"] = "Vincennes"
+    d3, f3 = grille.amplitude_semaine(CFG, bref)
+    bref[0]["pistes"] = grille.poser_sur_la_grille(bref[0]["evenements"], d3, f3)
+    bref[0]["fermees"] = []
+    r3 = (f3 - d3) // grille.PAS_MINUTES
+    court_html = pages.agenda(
+        "Nelyo", "Julien", "Dupont", bref, "Semaine", "2026-10-19", "2026-11-02",
+        plan={"rangees": r3, "heures": []}, aujourdhui="2026-10-26")
+    if 'class="evt e-ok court"' not in court_html:
+        print("   un événement d'une demi-heure n'est pas marqué « court » : il "
+              "essaiera de tenir sur deux lignes dans 28 px")
+        return False
+    if "<time>09:00</time>" not in court_html:
+        print("   un bloc court affiche la plage entière au lieu de l'heure de début : "
+              "le titre n'a plus la place de s'afficher")
+        return False
+    if "Rappel Moreau" not in court_html:
+        print("   le nom disparaît du bloc court — on saurait l'heure sans savoir "
+              "de qui")
+        return False
+    # le détail est ENVELOPPÉ, sinon CSS ne peut ni le masquer ni le rétrécir
+    if '<span class="det">' not in court_html:
+        print("   le détail est un nœud de texte nu : il refusera de céder la place "
+              "et réduira le titre à rien")
+        return False
     # la position est posée EN LIGNE : c'est elle qui place le bloc, pas l'ordre du DOM
     if not _re_t25.search(r'class="evt [^"]*" style="grid-row:\d+/\d+;grid-column:',
                           html):
