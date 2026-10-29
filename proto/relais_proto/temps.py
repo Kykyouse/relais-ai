@@ -115,3 +115,120 @@ def depuis_iso(texte: str, cfg: dict | None = None) -> dt.datetime:
     if valeur.tzinfo is None:
         valeur = valeur.replace(tzinfo=fuseau(cfg))
     return valeur.astimezone(UTC)
+
+
+# ══════════════════════════════════════════ LES PÉRIODES D'ÉCRAN (29/10)
+#
+# Un écran qui agrège demande « sur quoi ? ». La maquette v5 répond par quatre
+# raccourcis — Ce mois, 3 mois, 12 mois, Tout — et une plage libre « du … au … », en
+# disant que **les raccourcis ne sont que des préréglages** : ils se résolvent dans la
+# même paire de dates que la plage libre, et il n'y a donc qu'un seul chemin de calcul.
+#
+# CE SONT DES DATES DE PENDULE, et c'est la raison d'être de ce code ici plutôt que
+# dans `api.py`. « Ce mois » se lit dans le calendrier de l'artisan : pour quelqu'un à
+# La Réunion, le 1er octobre ne commence pas au même instant que pour quelqu'un à Paris.
+# Toute la règle n°7 tient dans cette phrase — on borne en dates locales, et c'est à
+# l'appelant de convertir ses INSTANTS (`en_local(...).date()`) avant de comparer.
+# `Rdv.creneau["date"]` est déjà une date de pendule : il se compare directement.
+PERIODES = {
+    "mois": "Ce mois",
+    "3mois": "3 mois",
+    "12mois": "12 mois",
+    "tout": "Tout",
+}
+
+# LE DÉFAUT EST « TOUT », ET PAS « CE MOIS » comme dans la maquette. Décidé le 29/10
+# parce que T18 l'a attrapé : sa pendule avance de 30 jours entre le chantier et la
+# consultation, et le CA déclaré disparaissait de l'écran.
+#
+# Ce n'était pas un artefact de test, c'est le cas NORMAL. Un chantier se déclare après
+# coup — on borne sur la date du CRÉNEAU, pas sur celle de la déclaration — donc tout
+# chantier de fin de mois se déclare au mois suivant. Avec « Ce mois » par défaut,
+# l'artisan qui vient de saisir « 1 480 € » rouvre l'écran et lit **0 €**. Sur la seule
+# page qui répond à « qu'est-ce que ça me rapporte ? », et juste après le geste qu'elle
+# existe pour encourager.
+#
+# La maquette a raison pour un tableau de bord dont les données sont toujours récentes ;
+# les siennes sont fictives et datées d'aujourd'hui. Les raccourcis restent à un clic.
+DEFAUT = "tout"
+
+# Les bornes de « Tout ». Mêmes valeurs que celles qu'`api.py` passait en dur avant
+# d'avoir des périodes : « depuis toujours » reste une fenêtre, pas un cas particulier
+# — sinon chaque appelant devrait porter une branche « si pas de période ».
+TOUT_DEBUT = "2000-01-01"
+TOUT_FIN = "2100-12-31"
+
+
+def _fin_de_mois(jour: dt.date) -> dt.date:
+    suivant = jour.replace(day=28) + dt.timedelta(days=4)
+    return suivant - dt.timedelta(days=suivant.day)
+
+
+def _recul_mois(jour: dt.date, mois: int) -> dt.date:
+    """Le 1er du mois, `mois` mois plus tôt. Jamais d'arithmétique sur 30 jours :
+    « 3 mois » dans un tableau de bord désigne trois mois CIVILS, pas 90 jours."""
+    total = (jour.year * 12 + jour.month - 1) - mois
+    return dt.date(total // 12, total % 12 + 1, 1)
+
+
+def _libelle_date(jour: dt.date) -> str:
+    from .calendar_stub import MOIS_FR
+    return f"{jour.day} {MOIS_FR[jour.month - 1]} {jour.year}"
+
+
+def fenetre(aujourdhui: dt.date, preset: str = "", du: str = "",
+            au: str = "") -> dict:
+    """Résout une période d'écran en deux dates de pendule, bornes INCLUSES.
+
+    Rend `{du, au, preset, libelle, erreur}`. `preset` est `None` quand la plage a été
+    saisie à la main — c'est ce qui permet à l'écran de n'allumer aucun raccourci.
+
+    `erreur` n'est pas une exception : une date mal tapée dans une barre d'outils ne
+    doit pas rendre l'écran inatteignable. On retombe sur le défaut ET on dit pourquoi
+    — un tableau de bord qui se réaffiche silencieusement sur une autre période que
+    celle demandée est pire qu'un message, parce qu'on lit ses chiffres en croyant
+    autre chose.
+    """
+    if du or au:
+        try:
+            debut = dt.date.fromisoformat(du)
+            fin = dt.date.fromisoformat(au)
+        except ValueError:
+            return {**fenetre(aujourdhui, DEFAUT),
+                    "erreur": "Dates illisibles — période remise au défaut."}
+        if debut > fin:
+            # Inverser en silence serait une politesse mensongère : l'écran afficherait
+            # une période que personne n'a demandée, avec l'air d'avoir obéi.
+            return {**fenetre(aujourdhui, DEFAUT),
+                    "erreur": "La date de début est après celle de fin — période "
+                              "remise au défaut."}
+        return {"du": debut.isoformat(), "au": fin.isoformat(), "preset": None,
+                "libelle": f"du {_libelle_date(debut)} au {_libelle_date(fin)}",
+                "erreur": ""}
+
+    preset = preset if preset in PERIODES else DEFAUT
+    if preset == "tout":
+        return {"du": TOUT_DEBUT, "au": TOUT_FIN, "preset": "tout",
+                "libelle": "depuis le début", "erreur": ""}
+
+    mois_en_arriere = {"mois": 0, "3mois": 2, "12mois": 11}[preset]
+    debut = _recul_mois(aujourdhui, mois_en_arriere)
+    fin = _fin_de_mois(aujourdhui)
+    libelle = (f"du {_libelle_date(debut)} au {_libelle_date(fin)}"
+               if mois_en_arriere else f"{_libelle_date(debut).split(' ', 1)[1]}")
+    return {"du": debut.isoformat(), "au": fin.isoformat(), "preset": preset,
+            "libelle": libelle, "erreur": ""}
+
+
+def dans_fenetre(instant: dt.datetime | None, fen: dict,
+                 cfg: dict | None = None) -> bool:
+    """Un INSTANT tombe-t-il dans une fenêtre de dates locales ?
+
+    Le pont entre les deux natures d'horodatage, et le seul endroit où il se fait pour
+    les écrans : `debut_a` d'un appel est un instant UTC, la fenêtre est un calendrier.
+    Comparer l'un à l'autre sans convertir décale la frontière de deux heures, c'est-
+    à-dire range les appels du soir dans le mauvais mois une fois sur douze.
+    """
+    if instant is None:
+        return False
+    return fen["du"] <= en_local(instant, cfg).date().isoformat() <= fen["au"]

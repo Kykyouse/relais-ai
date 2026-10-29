@@ -1134,7 +1134,8 @@ def page_a_venir(produit: str, vue: str, entreprise: str, prenom: str,
 def stats(produit: str, prenom: str, entreprise: str, ca_eur: int, gagnes: int,
           gagnes_sans_montant: int, perdus: int, tuiles: list[tuple],
           a_declarer: list[dict], declares: list[dict], a_valider: int = 0,
-          commune: str = "", vue_admin: str = "") -> str:
+          commune: str = "", vue_admin: str = "",
+          fenetre: dict | None = None) -> str:
     """« Statistiques » : ce que Nelyo rapporte — en déclarations de l'artisan, jamais
     en inventions.
 
@@ -1156,10 +1157,48 @@ def stats(produit: str, prenom: str, entreprise: str, ca_eur: int, gagnes: int,
          pas : la lecture seule est STRUCTURELLE côté serveur (T14), l'écran ne promet
          donc pas un geste que le POST refuserait.
 
-    La sélection de période « du … au … » de la maquette viendra quand il y aura assez
-    de données pour qu'une période se discute ; V1 : depuis le début, et la page le dit.
+    LA PÉRIODE est arrivée le 29/10 (maquette v5). Quatre raccourcis et une plage libre,
+    et **le libellé exact de la fenêtre est répété sur la carte du CA** : c'est le
+    chiffre qu'on retient, et celui qu'on cite de mémoire trois jours plus tard. Un
+    total sans sa période est un total faux dès qu'on change de période.
+
+    La plage libre est un formulaire GET à deux `input type="date"` — la maquette
+    ouvrait un calendrier en JavaScript, l'espace artisan n'en a pas (écart assumé n°2).
+    Le sélecteur natif du navigateur fait le même travail, y compris sur mobile, et
+    chaque période reste une URL qu'on peut mettre en favori ou envoyer à son comptable.
     """
+    fen = fenetre or {"du": "", "au": "", "preset": "tout",
+                      "libelle": "depuis le début", "erreur": ""}
     corps = []
+
+    # ---- la période : quatre préréglages, puis la plage libre ----
+    raccourcis = "".join(
+        '<a class="fbtn{}" href="/app/stats?preset={}">{}</a>'.format(
+            " on" if fen.get("preset") == cle else "", cle, escape(libelle))
+        for cle, libelle in (("mois", "Ce mois"), ("3mois", "3 mois"),
+                             ("12mois", "12 mois"), ("tout", "Tout")))
+    champ = ('min-height:34px;border:1px solid var(--line);border-radius:8px;'
+             'padding:0 9px;background:var(--surface);color:var(--ink);'
+             'font:500 12.5px "Instrument Sans",sans-serif')
+    # « Tout » est borné par des sentinelles (01/01/2000 → 31/12/2100). Les recopier
+    # dans les champs donnerait l'air d'une plage que quelqu'un aurait demandée, et
+    # un clic sur « Appliquer » la figerait pour de bon. Vu au rendu.
+    val_du, val_au = (("", "") if fen.get("preset") == "tout"
+                      else (fen.get("du", ""), fen.get("au", "")))
+    corps.append(
+        '<div class="filters">' + raccourcis
+        + '<form method="get" action="/app/stats" '
+          'style="display:flex;gap:6px;align-items:center;flex-wrap:wrap">'
+          '<label for="du" style="font-size:12.5px;color:var(--muted)">du</label>'
+          f'<input id="du" type="date" name="du" value="{escape(val_du)}" '
+          f'style="{champ}">'
+          '<label for="au" style="font-size:12.5px;color:var(--muted)">au</label>'
+          f'<input id="au" type="date" name="au" value="{escape(val_au)}" '
+          f'style="{champ}">'
+          '<button class="btn" type="submit">Appliquer</button></form></div>')
+    if fen.get("erreur"):
+        corps.append('<div class="card aveu"><div class="card-b">'
+                     f'<p style="margin:0">{escape(fen["erreur"])}</p></div></div>')
 
     # ---- la métrique reine, et d'où elle sort ----
     quali = (f"{gagnes} chantier{'s' if gagnes > 1 else ''} déclaré"
@@ -1170,7 +1209,8 @@ def stats(produit: str, prenom: str, entreprise: str, ca_eur: int, gagnes: int,
         '<div class="card" style="background:var(--marine-deep);border:0">'
         '<div class="card-b" style="color:#fff">'
         '<span style="font-size:12px;letter-spacing:.04em;text-transform:uppercase;'
-        'opacity:.75">CA récupéré par ' + escape(produit) + " — depuis le début</span>"
+        'opacity:.75">CA récupéré par ' + escape(produit) + " — "
+        + escape(fen.get("libelle") or "depuis le début") + "</span>"
         f'<div class="num" style="font-size:34px;font-weight:700;margin:2px 0">'
         f"{_eur(ca_eur)}</div>"
         '<p style="margin:0;font-size:12.5px;opacity:.75">'
@@ -1221,8 +1261,12 @@ def stats(produit: str, prenom: str, entreprise: str, ca_eur: int, gagnes: int,
             '<div class="card-h"><h3>Chantier gagné ?</h3>'
             f'<span class="pill p-warn">{len(a_declarer)} RDV passé'
             f"{'s' if len(a_declarer) > 1 else ''} sans déclaration</span>"
+            # HORS PÉRIODE, et il faut le dire : sans cette mention, la liste
+            # contredirait le total juste au-dessus dès qu'on resserre la fenêtre, et
+            # on chercherait l'erreur dans les chiffres au lieu de la lire ici.
             '<span class="sub" style="margin-left:auto">C&#x27;est cette saisie qui '
-            "fait le chiffre ci-dessus</span></div>" + "".join(lignes) + "</div>")
+            "fait le chiffre ci-dessus — <b>toutes périodes confondues</b></span>"
+            "</div>" + "".join(lignes) + "</div>")
     else:
         corps.append(
             '<div class="card"><div class="vide">'

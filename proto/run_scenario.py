@@ -5416,6 +5416,177 @@ def check_site_vitrine() -> bool:
     return True
 
 
+def check_periode_stats() -> bool:
+    """T21 : la période des Statistiques — et le défaut qui ne fait pas mentir le total.
+
+    Posée le 29/10 avec la sélection de période de la maquette v5 (Ce mois / 3 mois /
+    12 mois / Tout, plus une plage « du … au … »).
+
+    LE CŒUR DU TEST N'EST PAS LE FILTRE, C'EST SON DÉFAUT. La maquette met « Ce mois »
+    par défaut. Appliqué tel quel, T18 est tombé — et pas par accident de test : sa
+    pendule avance de 30 jours entre le chantier et la consultation, ce qui est le
+    déroulé NORMAL. On borne sur la date du CRÉNEAU, et un chantier se déclare après
+    coup : tout chantier de fin de mois se déclare au mois suivant. L'artisan qui vient
+    de saisir « 1 480 € » rouvrait l'écran et lisait **0 €**, sur la seule page qui
+    répond à « qu'est-ce que ça me rapporte ? », juste après le geste qu'elle existe
+    pour encourager. D'où `temps.DEFAUT = "tout"`, vérifié ici en premier.
+
+    Ce qui est vérifié ensuite :
+
+    2. **les raccourcis sont des préréglages**, pas un second chemin de calcul : chacun
+       se résout dans la même paire de dates que la plage libre, et un seul est allumé ;
+    3. **la plage libre borne vraiment**, et une période vide dit zéro sans rien casser ;
+    4. **une saisie fautive se voit.** Dates inversées ou illisibles : on retombe sur le
+       défaut ET on l'écrit. Un tableau de bord qui se réaffiche en silence sur une
+       autre période que celle demandée est pire qu'un message — on lit ses chiffres
+       en croyant autre chose ;
+    5. **les appels sont comptés en date LOCALE** (règle n°7). Le cas qui mord : un
+       appel reçu le 1er septembre à 00 h 30 à Paris est daté du 31 août en UTC. Compté
+       sur l'instant brut, il tombe dans le mois précédent — une fois sur douze, les
+       appels de fin de soirée changent de mois ;
+    6. **la liste « Chantier gagné ? » IGNORE la période**, délibérément. Ce n'est pas
+       un chiffre, c'est une tâche : la restreindre cacherait les chantiers les plus
+       anciens, c'est-à-dire précisément ceux qu'on a oublié de déclarer. L'écran le
+       dit, sans quoi la liste contredirait le total juste au-dessus.
+    """
+    try:
+        from fastapi.testclient import TestClient
+    except ImportError:
+        print("   fastapi/httpx absents : pip install -r requirements.txt")
+        return False
+
+    from relais_proto import temps
+    from relais_proto.api import creer_app
+    from relais_proto.envoi import EnvoyeurJournal
+    from relais_proto.pages import _eur
+    from relais_proto.registre import Artisan, Registre, empreinte as emp_token
+
+    # `_eur` compose avec des espaces INSÉCABLES : chercher « 1 480 » avec une
+    # espace normale ne trouverait rien, et le test passerait pour un défaut.
+    somme = _eur(1480)
+
+    # ---- 1. la résolution elle-même, sans HTTP ----
+    ajd = dt.date(2026, 9, 23)
+    if temps.fenetre(ajd)["preset"] != "tout":
+        print("   le défaut n'est pas « Tout » : un CA déclaré le mois suivant le "
+              "chantier disparaîtrait de l'écran (cf. T18)")
+        return False
+    attendus = {"mois": ("2026-09-01", "2026-09-30"),
+                "3mois": ("2026-07-01", "2026-09-30"),
+                "12mois": ("2025-10-01", "2026-09-30"),
+                "tout": (temps.TOUT_DEBUT, temps.TOUT_FIN)}
+    for cle, (d, a) in attendus.items():
+        f = temps.fenetre(ajd, cle)
+        if (f["du"], f["au"]) != (d, a):
+            print(f"   raccourci {cle} : {f['du']}→{f['au']}, attendu {d}→{a}")
+            return False
+    # mois civils, pas 30 jours : février et le passage d'année sont les deux pièges
+    if temps.fenetre(dt.date(2024, 2, 10), "mois")["au"] != "2024-02-29":
+        print("   fin de mois fausse en année bissextile")
+        return False
+    if temps.fenetre(dt.date(2026, 1, 15), "12mois")["du"] != "2025-02-01":
+        print("   « 12 mois » ne franchit pas correctement l'année")
+        return False
+    for mauvais in ({"du": "2026-09-30", "au": "2026-09-01"},
+                    {"du": "pas-une-date", "au": "2026-09-01"}):
+        f = temps.fenetre(ajd, **mauvais)
+        if not f["erreur"] or f["preset"] != temps.DEFAUT:
+            print(f"   saisie fautive {mauvais} acceptée en silence : {f}")
+            return False
+
+    # ---- l'écran ----
+    registre = Registre([Artisan("art-dupont", "+33189701234", emp_token("tok"), CFG,
+                                 telephone="+33612345678")],
+                        emp_token("secret-voix"))
+    depot = DepotMemoire()
+    pendule = [LUNDI_9H]                       # 24/08/2026, heure de Paris
+    app = creer_app(depot, registre, MockLLM, lambda: pendule[0],
+                    base_url="https://nelyo.test", cookie_secure=False,
+                    envoyeur=EnvoyeurJournal())
+
+    # un chantier d'AOÛT, déclaré gagné pour 1 480 €
+    _, aout = _appel_avec_rdv(depot, "T01_urgence_fuite", LUNDI_9H)
+    aout.notifier(LUNDI_9H)
+    aout.valider(LUNDI_9H + dt.timedelta(minutes=1))
+    aout.creneau["date"] = "2026-08-25"
+    depot.sauver_rdv(aout)
+
+    # UN APPEL À CHEVAL SUR MINUIT : 1ᵉʳ septembre 00 h 30 à Paris = 31 août 22 h 30 UTC.
+    # C'est lui qui distingue « compté en local » de « compté en UTC ».
+    minuit = temps.instant_de(dt.date(2026, 9, 1), "00:30", CFG)
+    if minuit.date().isoformat() != "2026-08-31":
+        print("   le cas limite n'en est pas un : revoir la date choisie")
+        return False
+    appel = depot.ouvrir_appel("art-dupont", minuit)
+    depot.cloturer_appel(appel.id, {"categorie": "a_rappeler", "score": 3,
+                                    "slots": {"nom": "Minuit"}}, minuit)
+
+    pendule[0] = LUNDI_9H + dt.timedelta(days=30)        # 23/09/2026
+    with TestClient(app) as julien:
+        if not connecter_par_sms(julien, depot, "06 12 34 56 78"):
+            print("   connexion par code SMS impossible")
+            return False
+        aout_rdv = depot.rdv(aout.id)
+        aout_rdv.declarer_issue("gagne", 1480, pendule[0])
+        depot.sauver_rdv(aout_rdv)
+
+        # 1 bis. le défaut montre le CA d'août, un mois après le chantier
+        defaut = julien.get("/app/stats").text
+        if somme not in defaut:
+            print("   le CA déclaré d'août n'apparaît pas par défaut en septembre — "
+                  "c'est le défaut de période qui le cache (T18)")
+            return False
+        if "depuis le début" not in defaut:
+            print("   la carte du CA ne dit pas sur quelle période elle porte")
+            return False
+
+        # 2. un seul raccourci allumé, et c'est celui demandé
+        for cle in ("mois", "3mois", "12mois", "tout"):
+            page = julien.get(f"/app/stats?preset={cle}").text
+            if page.count('class="fbtn on"') != 1:
+                print(f"   {page.count('class=\"fbtn on\"')} raccourcis allumés "
+                      f"pour preset={cle}")
+                return False
+            if f'class="fbtn on" href="/app/stats?preset={cle}"' not in page:
+                print(f"   le raccourci allumé n'est pas {cle}")
+                return False
+
+        # 3. « Ce mois » = septembre : le chantier d'août en sort, son CA aussi
+        sept = julien.get("/app/stats?preset=mois").text
+        if somme in sept:
+            print("   un chantier d'août compte dans « Ce mois » de septembre")
+            return False
+        # …et la plage libre sur août le ramène
+        plage = julien.get("/app/stats?du=2026-08-01&au=2026-08-31").text
+        if somme not in plage:
+            print("   la plage libre d'août ne retrouve pas le chantier d'août")
+            return False
+        if plage.count('class="fbtn on"') != 0:
+            print("   une plage saisie à la main allume quand même un raccourci")
+            return False
+
+        # 4. la saisie fautive se voit à l'écran
+        fautif = julien.get("/app/stats?du=2026-09-30&au=2026-09-01").text
+        if "après celle de fin" not in fautif:
+            print("   des dates inversées sont corrigées SANS LE DIRE : on lirait les "
+                  "chiffres d'une période qu'on n'a pas demandée")
+            return False
+
+        # 5. l'appel de minuit est compté en SEPTEMBRE (date locale), pas en août
+        if ">1<" not in sept.split("Demandes prises en charge")[0][-400:]:
+            print("   l'appel du 1ᵉʳ septembre 00 h 30 n'est pas compté en septembre : "
+                  "il a été rangé sur sa date UTC (31 août) — règle n°7")
+            return False
+
+        # 6. la tâche « Chantier gagné ? » survit au resserrement de la période
+        for page, quand in ((sept, "Ce mois"), (plage, "plage d'août")):
+            if "Chantier gagné ?" in page and "toutes périodes confondues" not in page:
+                print(f"   ({quand}) la liste à déclarer ne dit pas qu'elle ignore la "
+                      "période : elle contredit le total juste au-dessus")
+                return False
+    return True
+
+
 def check_portail_apercu() -> bool:
     """T20 : le rideau devant le site vitrine, et son absence qui vaut lancement.
 
@@ -13311,6 +13482,15 @@ def run() -> int:
         print("   → aucune règle nue (nav/aside/header) ne peut fuir d'un rôle vers "
               "un autre : la barre mobile ne re-hérite plus du flex-direction de la "
               "barre latérale : ✅ PASS")
+    else:
+        print("   → ❌ FAIL")
+        echecs += 1
+
+    print(f"\n──── T21_periode_stats ────")
+    if check_periode_stats():
+        print("   → les raccourcis et la plage libre bornent les mêmes dates, une saisie "
+              "fautive se voit, les appels sont comptés en date LOCALE, et le défaut "
+              "ne cache pas un CA déclaré le mois suivant le chantier : ✅ PASS")
     else:
         print("   → ❌ FAIL")
         echecs += 1

@@ -20,7 +20,7 @@ Cible V1 : plombiers/chauffagistes FR. Solo dev : Geoffrey (binôme Claude) ; ma
 ```bash
 cd proto
 pip install -r requirements.txt     # anthropic, python-dotenv (inutiles en mock)
-python run_scenario.py              # suite de non-régression (mock, sans clé, ~3 s) — 113 tests
+python run_scenario.py              # suite de non-régression (mock, sans clé, ~3 s) — 114 tests
                                     # « sans BASE » est désormais VÉRIFIÉ, pas promis (R93) :
                                     # la suite importait `serveur.py` — le câblage de prod,
                                     # qui ouvre une connexion Postgres à l'import — et
@@ -263,8 +263,14 @@ démarrage ; « Relais » reste le nom de CODE (repo, modules, tables) ·
 l'API lui passe `occupes` (RDV qui occupent + agenda propre de l'artisan), il ne
 connaît toujours pas le dépôt, ce qui permettra de le remplacer par une lecture
 Google/Outlook sans rien changer ailleurs ·
-`temps.py` instants UTC vs heures de pendule (règle n°7,
-à lire avant de toucher à une échéance) · `version.py` la révision qui tourne
+`temps.py` instants UTC vs heures de pendule (règle n°7), **et depuis le 29/10 les
+PÉRIODES d'écran** : `fenetre()` résout « Ce mois / 3 mois / 12 mois / Tout » et la plage
+libre en deux dates de pendule — un seul chemin de calcul, les raccourcis ne sont que des
+préréglages ; `dans_fenetre()` est le pont pour un INSTANT (`Lead.debut_a`), là où
+`Rdv.creneau["date"]` se compare directement. ⚠️ `DEFAUT = "tout"` et NON « Ce mois »
+comme la maquette : un chantier se déclare APRÈS coup, donc celui de fin de mois se
+déclare le mois suivant, et « Ce mois » affichait 0 € à qui venait de saisir son montant
+(T21). À lire avant de toucher à une échéance · `version.py` la révision qui tourne
 (`RELAIS_VERSION`, puis git, puis « inconnue ») — **module sans effet à l'import,
 délibérément** : il vivait dans `serveur.py`, et l'éprouver y importait le câblage de
 production, donc ouvrait une connexion Postgres (R93) · `nombres.py` nombres PRONONCÉS en toutes

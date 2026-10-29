@@ -16,7 +16,7 @@ Le produit s'appelle **NELYO** et **il tourne en ligne** :
 <https://nelyo-api.onrender.com>, cron compris, sur une base de production séparée.
 Depuis le 21/09 **un artisan s'inscrit sans commit ni redéploiement** : sa config vit en
 base et s'édite dans `/admin`. La compréhension est au LLM sous contrat fermé, mesurée à
-**68/70** au banc d'extraction et **57/57** en éval réelle ×3 ; **113 tests** de
+**68/70** au banc d'extraction et **57/57** en éval réelle ×3 ; **114 tests** de
 non-régression. Il reste **un seul mur** : aucun numéro n'est joignable depuis la France.
 
 > ⚠️ **ÉTAT RÉEL DE LA PRODUCTION AU 29/10 : à vérifier avant de rien croire du
@@ -40,7 +40,7 @@ les évals LLM réelles (la clé API ne voyage pas) et `run_depot_pg` (Supabase)
 
 ```bash
 cd proto
-python run_scenario.py                              # 113 tests, ~3 s — sans clé NI BASE (R93)
+python run_scenario.py                              # 114 tests, ~3 s — sans clé NI BASE (R93)
 python run_extract_eval.py [--mock] [--only …]      # banc d'EXTRACTION : 68/70, p50 1131 ms
 python run_llm_eval.py [--mock] [--n 3]             # éval appelant-simulé (19 personas)
 python run_depot_pg.py [--migrer]                   # contrat du port contre Supabase
@@ -342,6 +342,72 @@ Le mode d'emploi des sondes et le détail de la récolte du 25/08 sont dans les 
 datées ; l'en-tête de `vapi.py` porte le format de fil SSE. **Les lire avant de toucher au
 chantier voix.**
 
+
+---
+
+## 29/10 (fin) — `main` déployé, et la période des statistiques
+
+### La mise en production
+
+`main` fusionné et poussé : **révision `6777138` en ligne**, worker à l'heure, racine à
+200. Sont partis d'un coup R102 (la connexion qui se rouvre), la vitrine, le portail
+d'aperçu, et T18 + R100 de Fable qui n'avaient jamais quitté `wip`.
+
+Avant ça, le redémarrage manuel du service avait bien relevé la prod — Geoffrey a cru
+que non parce que `/sante` continuait d'afficher `6abaa63` : un *restart* relance le
+processus, il ne change pas le code servi. **La révision déployée et l'état de santé
+sont deux questions distinctes, et `/sante` répond aux deux ; encore faut-il lire la
+bonne ligne.**
+
+⚠️ **La vitrine est en ligne et PUBLIQUE** : `RELAIS_VITRINE_MOTDEPASSE` n'est pas posée
+côté Render. Le portail existe, il n'est pas armé. Et les mentions légales manquent
+toujours.
+
+### La période des statistiques (T21) — où le défaut comptait plus que le filtre
+
+Première des trois nouveautés de la maquette v5 reprises (ordre choisi par Geoffrey :
+période → mini-calendrier → Demandes). Quatre raccourcis et une plage libre, résolus par
+`temps.fenetre` en **deux dates de pendule** : les raccourcis ne sont que des
+préréglages, il n'y a donc qu'un seul chemin de calcul. La plage libre est un formulaire
+GET à deux `input type="date"` — la maquette ouvrait un calendrier en JavaScript, et
+l'espace artisan n'en a pas (écart assumé n°2) ; le sélecteur natif fait le même travail,
+et chaque période reste une URL qu'on peut mettre en favori.
+
+**Le vrai sujet n'était pas le filtre, c'était son défaut.** La maquette met « Ce mois ».
+Appliqué tel quel, **T18 est tombé** — et pas par accident de test : sa pendule avance de
+30 jours entre le chantier et la consultation, ce qui est le déroulé normal. On borne sur
+la date du CRÉNEAU, et un chantier se déclare après coup : tout chantier de fin de mois se
+déclare au mois suivant. L'artisan qui venait de saisir « 1 480 € » rouvrait l'écran et
+lisait **0 €** — sur la seule page qui répond à « qu'est-ce que ça me rapporte ? », juste
+après le geste qu'elle existe pour encourager. D'où `temps.DEFAUT = "tout"`.
+
+C'est la deuxième fois en deux jours qu'un test attrape une décision de produit plutôt
+qu'un bug de code. La maquette n'avait pas tort : ses données sont fictives et datées
+d'aujourd'hui, et « Ce mois » est le bon défaut pour un tableau de bord dont les chiffres
+sont toujours récents. Elle ne pouvait pas savoir que la déclaration est décalée.
+
+Deux autres décisions, prises en écrivant :
+
+- **La liste « Chantier gagné ? » ignore la période**, et l'écran le dit (« toutes
+  périodes confondues »). Ce n'est pas un chiffre, c'est une TÂCHE : la restreindre
+  cacherait les chantiers les plus anciens, donc exactement ceux qu'on a oublié de
+  déclarer. Sans la mention, elle contredirait le total juste au-dessus et on
+  chercherait l'erreur dans les chiffres.
+- **Une saisie fautive se voit.** Dates inversées ou illisibles : retour au défaut ET un
+  message. Inverser en silence serait une politesse mensongère — l'écran afficherait une
+  période que personne n'a demandée, avec l'air d'avoir obéi.
+
+Le piège de règle n°7 est dans les APPELS, pas dans les RDV : `creneau["date"]` est déjà
+une date de pendule et se compare directement, mais `Lead.debut_a` est un INSTANT.
+`temps.dans_fenetre` fait le pont, et T21 le verrouille avec le seul cas qui mord — un
+appel du 1ᵉʳ septembre à 00 h 30 à Paris, daté du 31 août en UTC. Compté brut, il change
+de mois. Vérifié en remettant la comparaison UTC : le test tombe, en nommant la règle.
+
+Vu au rendu (390 et 1280 px) : avec « Tout », les champs de date affichaient les bornes
+sentinelles `01/01/2000` → `31/12/2100`, ce qui donnait l'air d'une plage demandée — et
+un clic sur « Appliquer » l'aurait figée. Vidés.
+
+**Suite : 114/114.**
 
 ---
 

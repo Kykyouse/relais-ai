@@ -1735,7 +1735,8 @@ def creer_app(depot, registre: Registre, fabrique_llm, horloge=None,
             a_valider=ctx["a_valider"], commune=ctx["commune"], vue_admin=vue))
 
     @app.get("/app/stats", response_class=HTMLResponse)
-    def page_stats(relais_session: str = Cookie(default="", alias=session.NOM_COOKIE),
+    def page_stats(preset: str = "", du: str = "", au: str = "",
+                   relais_session: str = Cookie(default="", alias=session.NOM_COOKIE),
                    nelyo_admin: str = Cookie(default="", alias=admin_mdp.NOM_COOKIE),
                    nelyo_vue: str = Cookie(default="", alias=admin_mdp.NOM_COOKIE_VUE),
                    authorization: str = Header(default="")) -> HTMLResponse:
@@ -1749,9 +1750,21 @@ def creer_app(depot, registre: Registre, fabrique_llm, horloge=None,
         (RDV validés dont le créneau est passé, sans déclaration) vit sous le total,
         pour que la cause du chiffre soit visible avec le chiffre.
 
-        Tous les compteurs sortent des MÊMES lignes (`rdvs_entre` sur une fenêtre
-        ouverte + `leads`), comme sur l'accueil : des chiffres qui ne s'additionnent
-        pas entre eux condamnent le tableau entier.
+        Tous les compteurs sortent des MÊMES lignes (`rdvs_entre` + `leads`), comme sur
+        l'accueil : des chiffres qui ne s'additionnent pas entre eux condamnent le
+        tableau entier.
+
+        LA PÉRIODE (29/10, maquette v5). Quatre raccourcis et une plage libre, résolus
+        par `temps.fenetre` en DEUX DATES DE PENDULE — les raccourcis ne sont que des
+        préréglages, il n'y a donc qu'un seul chemin de calcul. Les RDV se bornent sur
+        `creneau["date"]`, qui est déjà une date locale ; les appels sur `debut_a`, qui
+        est un INSTANT et passe donc par `temps.dans_fenetre` (règle n°7).
+
+        UNE SEULE CHOSE ÉCHAPPE À LA PÉRIODE, délibérément : la liste « Chantier
+        gagné ? ». Ce n'est pas un chiffre, c'est une TÂCHE — et la restreindre au mois
+        courant cacherait précisément les chantiers qu'on a oublié de déclarer, c'est-à-
+        dire les plus anciens. L'écran dit qu'elle est hors période ; sans cette ligne,
+        elle contredirait le total juste au-dessus.
         """
         artisan, vue = _artisan_espace(authorization, relais_session,
                                        nelyo_admin, nelyo_vue)
@@ -1764,7 +1777,9 @@ def creer_app(depot, registre: Registre, fabrique_llm, horloge=None,
         t = maintenant()
         ajd = temps.en_local(t, cfg).date().isoformat()
 
-        rdvs = depot.rdvs_entre(artisan.id, "2000-01-01", "2100-12-31")
+        fen = temps.fenetre(temps.en_local(t, cfg).date(), preset, du, au)
+
+        rdvs = depot.rdvs_entre(artisan.id, fen["du"], fen["au"])
         valides = [r for r in rdvs if r.statut is _StatutRdv.VALIDE]
         gagnes = [r for r in valides if r.issue == "gagne"]
         perdus = [r for r in valides if r.issue == "perdu"]
@@ -1778,10 +1793,14 @@ def creer_app(depot, registre: Registre, fabrique_llm, horloge=None,
         # à déclarer : validé, créneau passé (en DATE LOCALE de l'artisan — règle n°7 :
         # la date du créneau est une heure de pendule, elle se compare à aujourd'hui
         # local, pas à un instant UTC), aucune issue encore déclarée.
+        # HORS PÉRIODE, exprès (cf. docstring) : une tâche oubliée est d'autant plus
+        # ancienne, donc d'autant plus sûrement hors de la fenêtre choisie.
+        passes = depot.rdvs_entre(artisan.id, temps.TOUT_DEBUT, ajd)
         a_declarer = [
             {**_client(r), "id": r.id, "creneau": r.creneau.get("label") or
              r.creneau.get("date") or ""}
-            for r in sorted((r for r in valides if r.issue is None
+            for r in sorted((r for r in passes if r.statut is _StatutRdv.VALIDE
+                             and r.issue is None
                              and (r.creneau.get("date") or "9999") < ajd),
                             key=lambda r: r.creneau.get("date") or "", reverse=True)
         ][:20]
@@ -1793,8 +1812,12 @@ def creer_app(depot, registre: Registre, fabrique_llm, horloge=None,
                             key=lambda r: r.issue_le or r.cree_a, reverse=True)
         ][:20]
 
+        # `debut_a` est un INSTANT ; la fenêtre est un calendrier local. Comparer sans
+        # convertir rangerait les appels du soir dans le mauvais mois (règle n°7).
+        demandes = sum(1 for l in depot.leads(artisan.id, limite=500)
+                       if temps.dans_fenetre(l.debut_a, fen, cfg))
         tuiles = [
-            ("Demandes prises en charge", len(depot.leads(artisan.id, limite=500))),
+            ("Demandes prises en charge", demandes),
             ("RDV validés", len(valides)),
             ("Chantiers gagnés (déclarés)", len(gagnes)),
             ("Sans suite (déclarés)", len(perdus)),
@@ -1803,7 +1826,7 @@ def creer_app(depot, registre: Registre, fabrique_llm, horloge=None,
             NOM, ctx["prenom"], ctx["entreprise"], ca, len(gagnes),
             sum(1 for r in gagnes if not r.issue_montant_eur), len(perdus),
             tuiles, a_declarer, declares, a_valider=ctx["a_valider"],
-            commune=ctx["commune"], vue_admin=vue))
+            commune=ctx["commune"], vue_admin=vue, fenetre=fen))
 
     @app.get("/app/facturation", response_class=HTMLResponse)
     def page_facturation(
