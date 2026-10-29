@@ -624,6 +624,64 @@ déclarée AVANT `/app/{rdv_id}/{action}`, sinon « compte » tombe dans `{rdv_i
 en 404 d'identifiant inconnu. Exactement ce qui était arrivé à `/app/{rdv_id}/issue` le
 26/10. L'avertissement est maintenant écrit aux deux endroits.
 
+### Et « Mon compte » avait le sien, trouvé en trois secondes
+
+Geoffrey, juste après la livraison : « comment avoir un mot de passe actuel s'il n'en
+existe pas, pour changer le mdp ? »
+
+**L'écran était une impasse pour la population même qu'il visait.** « L'ancien exigé »
+suppose qu'on le connaisse — or jusqu'au 29/10 le SEUL moyen d'avoir un mot de passe
+était que l'admin en ENGENDRE un, affiché une seule fois. L'artisan qui ne l'avait pas
+noté ne pouvait donc plus jamais le changer.
+
+Deux conceptions se tenaient. **A** : la session se souvient comment elle s'est ouverte,
+et une session née d'un code SMS dispense de l'ancien — correct, mais migration, port,
+deux dépôts et contrat, et ça ne sauve que la session du jour. **B** : l'artisan prouve
+son téléphone sur place, et le formulaire accepte **l'ancien mot de passe OU un code
+frais**. B gagne sur les trois plans : rien à migrer, marche quelle que soit l'ancienneté
+de la session, et la propriété de sécurité est la même voire meilleure — qui a trouvé un
+navigateur ouvert sur un chantier n'a pas le mobile du patron. C'est le « mot de passe
+oublié » de n'importe quel site.
+
+Le code SMS et sa vérification ont été **extraits** de `/connexion` en deux helpers
+partagés (`_poser_et_envoyer_code`, `_code_accepte`) plutôt que recopiés : le frein au
+renvoi, les essais comptés et l'usage unique sont de la logique de sécurité, et deux
+copies divergeraient — l'une des deux étant la mauvaise.
+
+Détail d'écran qui compte : quand on demande un code, le champ « mot de passe actuel »
+**disparaît** au lieu de cohabiter avec le champ « code ». Laisser les deux, c'est
+proposer une case que celui qui vient de dire « je ne le connais pas » ne peut pas
+remplir.
+
+### R105 — la page de connexion mentait, et ses en-têtes parlaient
+
+Tiré du fil d'une perte de temps : Geoffrey a cherché dans les journaux de l'hébergeur un
+code que la page lui promettait et qui n'avait jamais existé.
+
+**Elle affirmait** « Envoyé au 06 … ». Or cet écran s'affiche à l'identique dans quatre
+cas où RIEN n'est parti : numéro inconnu, frein au renvoi (moins de 60 s), mobile partagé
+par deux artisans (R96), gabarit refusé par les garde-fous. L'identité des cas est
+délibérée — distinguer dirait à qui tâtonne quels mobiles sont chez nous — mais
+**générique n'oblige pas à mentir**, et c'est ce que le projet s'interdit partout ailleurs
+(T17). Formulation désormais conditionnelle, sans rien révéler de plus.
+
+**Et en creusant, le défaut que personne ne cherchait.** Le corps de la page était déjà
+identique à l'octet près, et le code le proclamait trois lignes plus haut : « ne dirait à
+quiconque la sollicite si tel numéro est celui d'un de nos artisans ». Mais `Set-Cookie`
+n'apparaissait **que pour un numéro connu**. Une boucle sur dix mille mobiles aurait rendu
+la liste de nos artisans **sans lire une seule page**.
+
+C'est le défaut le plus instructif de la journée, et il rime avec les deux autres :
+**une réponse HTTP ne se résume pas à son corps**, comme un test ne se résume pas à ce
+qu'il compare à lui-même. La promesse était écrite, juste, et vérifiée sur le seul canal
+qu'on regardait. Le cookie est maintenant posé dans tous les cas, avec un leurre tiré au
+hasard — pas une valeur fixe qui se reconnaîtrait — qui ne désigne aucun artisan et ne
+trouve donc aucun code.
+
+R105 compare statut, corps (chiffres retirés : la page réaffiche légitimement le numéro
+saisi) et **en-têtes**. Premier essai tombé sur cette normalisation : neutraliser « le
+numéro tel que saisi » ne suffisait pas, il est masqué à l'affichage donc écrit autrement.
+
 ### R103 avait un trou, et le nouvel écran l'a trouvé le jour même
 
 Les libellés de « Mon compte » se sont placés **à côté** de leurs champs — le défaut que
